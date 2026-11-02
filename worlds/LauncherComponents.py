@@ -96,9 +96,14 @@ class Component:
 
 
 processes = weakref.WeakSet()
+run_in_process = False
+"""Set by frontends that need components in the current process, e.g. to keep the terminal's stdin."""
 
 
 def launch_subprocess(func: Callable, name: str | None = None, args: tuple[str, ...] = ()) -> None:
+    if run_in_process:
+        func(*args)
+        return
     import multiprocessing
     process = multiprocessing.Process(target=func, name=name, args=args)
     process.start()
