@@ -147,12 +147,23 @@ def runner(component: Component) -> Run | None:
     if override.run:
         return override.run
     if component.func:
-        return lambda *args: _run_func(component, *args)
-    if component.script_name and component.cli:
+        run = lambda *args: _run_func(component, *args)  # noqa: E731
+    elif component.script_name and component.cli:
         return lambda *args: _run_cli_script(component, *args)
-    if component.script_name and component.type == Type.CLIENT:
+    elif component.script_name and component.type == Type.CLIENT:
         return lambda *args: _run_client_script(component, *args)
-    return None
+    elif component.script_name and component.type == Type.ADJUSTER:
+        run = lambda *args: _run_gui_script(component, *args)  # noqa: E731
+    else:
+        return None
+    if component.type != Type.ADJUSTER:
+        return run
+
+    def with_notice(*args: str) -> None:  # adjusters are desktop (tkinter) windows; the terminal just waits
+        print(f"{component.display_name} is open in its own window. Close it to return to the launcher.",
+              flush=True)
+        run(*args)
+    return with_notice
 
 
 def runnable(component: Component) -> bool:
@@ -190,6 +201,21 @@ def _run_cli_script(component: Component, *args: str) -> None:
     script = Utils.local_path(f"{component.script_name}.py")
     import aplite
     sys.exit(subprocess.call([sys.executable, "-m", "aplite.script", script, *args], env=aplite.child_env()))
+
+
+def _run_gui_script(component: Component, *args: str) -> None:
+    """Desktop tool scripts (LttP/OoT Adjuster: tkinter): a child process like upstream's, without aplite's terminal
+    prompts so their own file dialogs show. Waits for the window to close."""
+    script = Utils.local_path(f"{component.script_name}.py")
+    import aplite
+    env = {**aplite.child_env(), "SKIP_REQUIREMENTS_UPDATE": "1"}  # ModuleUpdate's check would include kivy
+    status = subprocess.call([sys.executable, script, *args], env=env)
+    if status:  # e.g. no display: keep the error on screen
+        try:
+            input(f"\n{component.display_name} failed (exit {status}). Press Enter to return to the launcher…")
+        except EOFError:
+            pass
+    sys.exit(status)
 
 
 def _run_client_script(component: Component, *args: str) -> None:
