@@ -30,6 +30,7 @@ if typing.TYPE_CHECKING:
     from worlds.AutoWorld import World
 
 MAX_NAME = 16  # Generate rejects longer slot names
+NARROW = 140  # below this many columns, picking a game hides the games list (ctrl+g brings it back)
 DEFAULT_DIR = Utils.user_path("Players")
 EDITOR_DELAY = 0.06  # seconds the options-list highlight must rest before its editor is built
 
@@ -197,7 +198,8 @@ class OptionsApp(App[None]):
     #doc { height: 1fr; border-top: solid $panel; padding: 0 1; }
     #error { color: $error; }
     """
-    BINDINGS = [Binding("ctrl+o", "load", "Load"), Binding("ctrl+s", "save", "Save"),
+    BINDINGS = [Binding("ctrl+g", "toggle_games", "Games"), Binding("ctrl+o", "load", "Load"),
+                Binding("ctrl+s", "save", "Save"),
                 Binding("ctrl+r", "reset", "Reset option"), Binding("ctrl+q", "quit", "Quit")]
 
     def __init__(self, load_worlds: typing.Callable[[], typing.Any] | None = None) -> None:
@@ -291,6 +293,9 @@ class OptionsApp(App[None]):
                     self.values_by_game[game][key] = normalize(self.options[key], value)
         self.values = self.values_by_game[game]  # switching games keeps each game's edits
         self.query_one("#game-label", Label).update(f"Game: {game}")
+        if self.size.width < NARROW and self.query_one("#games-pane").display:
+            self.query_one("#games-pane").display = False
+            self.call_after_refresh(self.refresh_rows)  # the options list just got wider
         self.name_width = max((len(getattr(option, "display_name", key)) for key, option in self.options.items()),
                               default=10)
         self.current = None  # the new game may have an option with the same key
@@ -519,6 +524,15 @@ class OptionsApp(App[None]):
                 return
         self.error("")
         self.set_value(self.editor_key, value)
+
+    def action_toggle_games(self) -> None:
+        pane = self.query_one("#games-pane")
+        pane.display = not pane.display
+        if pane.display:
+            self.query_one("#game-filter", Input).focus()
+        elif self.game:
+            self.query_one("#options", OptionList).focus()
+        self.call_after_refresh(self.on_resize)  # rows are fitted to the options list's width
 
     async def action_quit(self) -> None:
         if self.dirty and not self.quit_armed:
