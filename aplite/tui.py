@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import sys
 import threading
@@ -49,6 +50,20 @@ class LogBuffer(logging.Handler):
 
 
 log_buffer = LogBuffer()
+
+
+@contextlib.contextmanager
+def quiet_terminal() -> typing.Iterator[None]:
+    """Detach root log handlers that write to the terminal while an app is on screen (they'd scribble over it)."""
+    root = logging.getLogger()
+    streams = [h for h in root.handlers if type(h) is logging.StreamHandler and h.stream in (sys.stdout, sys.stderr)]
+    for handler in streams:
+        root.removeHandler(handler)
+    try:
+        yield
+    finally:
+        for handler in streams:
+            root.addHandler(handler)
 
 
 def install_log_handler() -> None:

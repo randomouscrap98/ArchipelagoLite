@@ -50,6 +50,8 @@ def load() -> list:
 
     import worlds.LauncherComponents as LauncherComponents
     LauncherComponents.run_in_process = True  # core hook: clients need this terminal's stdin
+    from aplite import web_options
+    LauncherComponents.components.append(web_options.component())  # aplite's own tools
 
     import Launcher
     return LauncherComponents.components

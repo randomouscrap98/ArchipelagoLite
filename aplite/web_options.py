@@ -7,12 +7,22 @@ WebHostLib/__init__.py pulls in pony, caching, compression etc., so it is never 
 """
 from __future__ import annotations
 
+import logging
 import os
+import subprocess
 import sys
+import threading
 import types
 import typing
+from shutil import which
+
+from rich.text import Text
+from textual.app import App, ComposeResult
+from textual.binding import Binding
+from textual.widgets import Footer, RichLog, Static
 
 import Utils
+from aplite import prefs
 
 if typing.TYPE_CHECKING:
     from flask import Flask
@@ -69,9 +79,129 @@ def create_app() -> Flask:
     def index():
         return redirect("/games")
 
+    @app.route("/games")
+    def games():
+        from flask import render_template_string
+        from worlds.AutoWorld import AutoWorldRegister
+        worlds = {game: world for game, world in sorted(AutoWorldRegister.world_types.items(),
+                                                        key=lambda item: item[0].lower())
+                  if not world.hidden and world.web.options_page}
+        return render_template_string(GAMES_PAGE, worlds=worlds)
+
     @app.errorhandler(404)
     def elsewhere(error):
         # site links in the page headers (other pages of archipelago.gg) go to the real site
         return redirect(f"https://archipelago.gg{request.full_path.rstrip('?')}")
 
     return app
+
+
+GAMES_PAGE = """
+{% extends 'pageWrapper.html' %}
+{% block head %}
+    <title>Options (local)</title>
+    <link rel="stylesheet" type="text/css" href="{{ url_for('static', filename='styles/markdown.css') }}" />
+{% endblock %}
+{% block body %}
+    {% include 'header/grassHeader.html' %}
+    <div class="markdown" style="max-width: 60rem; margin: 1rem auto; padding: 1rem 2rem;">
+        <h1>Options for installed games</h1>
+        <p>A local copy of archipelago.gg's options pages, served by aplite for the worlds installed here
+           (including custom apworlds). Export Options saves a YAML for Generate.</p>
+        <table>
+            {% for game, world in worlds.items() %}
+            <tr>
+                <td>{{ game }}</td>
+                {% if world.web.options_page is string %}
+                <td colspan="2"><a href="{{ world.web.options_page }}">Options on the game's website</a></td>
+                {% else %}
+                <td><a href="{{ url_for('player_options', game=game) }}">Player options</a></td>
+                <td><a href="{{ url_for('weighted_options', game=game) }}">Weighted options</a></td>
+                {% endif %}
+            </tr>
+            {% endfor %}
+        </table>
+    </div>
+{% endblock %}
+"""
+
+
+def open_browser(url: str) -> None:
+    """Like webbrowser.open, but on Linux keeps the browser's chatter off our terminal."""
+    if sys.platform.startswith("linux") and which("xdg-open"):
+        subprocess.Popen(["xdg-open", url], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL, start_new_session=True)
+    else:
+        import webbrowser
+        webbrowser.open(url)
+
+
+class WebOptionsApp(App[None]):
+    TITLE = "Web Options"
+    CSS = """
+    #link { padding: 1 2; height: auto; }
+    RichLog { height: 1fr; border-top: solid $panel; }
+    """
+    BINDINGS = [Binding("ctrl+o", "open_browser", "Open browser"), Binding("ctrl+q", "quit", "Stop server")]
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.server = None
+        self.url = ""
+
+    def compose(self) -> ComposeResult:
+        yield Static("Starting server…", id="link")
+        yield RichLog(wrap=True)
+        yield Footer()
+
+    def on_mount(self) -> None:
+        prefs.bind_theme(self)
+        from werkzeug.serving import make_server
+        self.server = make_server("127.0.0.1", 0, create_app(), threaded=True)
+        self.url = f"http://127.0.0.1:{self.server.server_port}/games"
+        handler = _LogToApp(self)
+        logging.getLogger("werkzeug").addHandler(handler)
+        logging.getLogger("werkzeug").propagate = False  # requests show here, not in the log file per request
+        threading.Thread(target=self.server.serve_forever, name="web options", daemon=True).start()
+        self.query_one("#link", Static).update(Text.assemble(
+            "Options pages are running at  ", (self.url, "bold underline"), "\n",
+            ("Opened in your browser; if it didn't open, copy the link. Ctrl+Q stops the server.", "dim")))
+        open_browser(self.url)
+
+    def log_line(self, line: str) -> None:
+        self.query_one(RichLog).write(line)
+
+    def action_open_browser(self) -> None:
+        open_browser(self.url)
+
+    def on_unmount(self) -> None:
+        if self.server:
+            self.server.shutdown()
+
+
+class _LogToApp(logging.Handler):
+    def __init__(self, app: WebOptionsApp) -> None:
+        super().__init__()
+        self.app = app
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            self.app.call_from_thread(self.app.log_line, record.getMessage())
+        except Exception:
+            pass  # app shutting down
+
+
+def run(*args: str) -> None:
+    from aplite.tui import quiet_terminal
+    with quiet_terminal():
+        WebOptionsApp().run()
+
+
+def component():
+    """Launcher entry for this tool (added to the component list by aplite)."""
+    from worlds.LauncherComponents import Component, Type
+    entry = Component("Web Options", func=run, component_type=Type.TOOL,
+                      description="The website's options pages for your installed games, served locally in your "
+                                  "browser.")
+    entry.aplite_tool = True  # returns to the launcher when stopped
+    return entry

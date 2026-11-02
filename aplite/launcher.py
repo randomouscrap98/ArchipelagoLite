@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import logging
-import sys
 import typing
 
 from rich.text import Text
@@ -22,6 +21,11 @@ Components = typing.Sequence["Component"]
 def is_options_creator(component: Component) -> bool:
     """Upstream's is kivy; aplite runs its own (aplite/options_creator.py)."""
     return component.script_name == "OptionsCreator"
+
+
+def returns_to_launcher(component: Component) -> bool:
+    """aplite's own tools go back to the launcher when they exit (clients quit, as decided)."""
+    return is_options_creator(component) or getattr(component, "aplite_tool", False)
 
 
 def runnable(component: Component) -> bool:
@@ -173,7 +177,7 @@ class LauncherApp(App[Choice]):
             from aplite.patch_picker import PatchPicker
             self.push_screen(PatchPicker(), self.patch_chosen)
         else:
-            self.exit((component, (), is_options_creator(component)))
+            self.exit((component, (), returns_to_launcher(component)))
 
     def patch_chosen(self, path) -> None:
         if path is None:
@@ -200,13 +204,6 @@ class LauncherApp(App[Choice]):
 def pick(components: Components | typing.Callable[[], Components], subtitle: str = "") -> Choice | None:
     """Show the launcher; returns the chosen component and its args, or None if the user quit.
     `components` may be a function that loads them; the launcher shows while it runs in a thread."""
-    # log lines written to the real terminal would scribble over the app
-    root = logging.getLogger()
-    streams = [h for h in root.handlers if type(h) is logging.StreamHandler and h.stream in (sys.stdout, sys.stderr)]
-    for handler in streams:
-        root.removeHandler(handler)
-    try:
+    from aplite.tui import quiet_terminal
+    with quiet_terminal():
         return LauncherApp(components, subtitle).run()
-    finally:
-        for handler in streams:
-            root.addHandler(handler)
