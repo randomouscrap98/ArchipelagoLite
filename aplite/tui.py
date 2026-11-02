@@ -11,6 +11,8 @@ from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.widgets import Footer, Input, RichLog
 
+from aplite import prefs
+
 if typing.TYPE_CHECKING:
     from CommonClient import CommonContext
 
@@ -70,6 +72,10 @@ class ClientApp(App):
 
     def on_mount(self) -> None:
         self.title = type(self.ctx).__name__
+        theme = prefs.get("theme")
+        if theme in self.available_themes:
+            self.theme = theme
+        self.theme_changed_signal.subscribe(self, lambda theme: prefs.set("theme", theme.name))
         log = self.query_one(RichLog)
         for msg in log_buffer.records:
             log.write(Text.from_ansi(msg))
