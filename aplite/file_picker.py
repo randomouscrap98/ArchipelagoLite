@@ -22,12 +22,53 @@ class FilteredTree(DirectoryTree):
         self.show_all = False
 
     def filter_paths(self, paths: typing.Iterable[Path]) -> typing.Iterable[Path]:
-        return [p for p in paths if not p.name.startswith(".") and
-                (p.is_dir() or self.show_all or p.name.endswith(self.suffixes))]
+        return [p for p in paths if self.shows(p)]
+
+    def shows(self, path: Path) -> bool:
+        if path.name == "..":
+            return True
+        return not path.name.startswith(".") and \
+            (path.is_dir() or self.show_all or path.name.endswith(self.suffixes))
+
+    def _directory_content(self, location: Path, worker) -> typing.Iterator[Path]:
+        # private DirectoryTree method (no public hook): adds ".." to the root folder; sorting puts it first
+        root = Path(self.path).expanduser().resolve()
+        if location == root and root.parent != root:
+            yield location / ".."
+        yield from super()._directory_content(location, worker)
 
     def action_parent(self) -> None:
         self.path = Path(self.path).resolve().parent
         self.screen.update_folder()
+
+
+class PathInput(Input):
+    """Tab completes the path like a shell (shift+tab leaves)."""
+    BINDINGS = [Binding("tab", "complete", "Complete path", show=False)]
+
+    def action_complete(self) -> None:
+        tree = self.screen.query_one(FilteredTree)
+        typed = os.path.expanduser(self.value)
+        folder, prefix = os.path.split(typed)
+        folder = folder or "."
+        try:
+            names = [entry.name for entry in os.scandir(folder) if entry.name.startswith(prefix)]
+        except OSError:
+            return
+        matches = sorted(name for name in names if tree.shows(Path(folder, name)))
+        if not matches:
+            self.screen.notify("No matches", timeout=2)
+            return
+        common = os.path.commonprefix(matches)
+        completed = os.path.join(folder if folder != "." or typed.startswith(".") else "", common)
+        if len(matches) == 1 and os.path.isdir(completed):
+            completed += os.sep
+        if completed != typed:
+            self.value = completed
+            self.cursor_position = len(completed)
+        elif len(matches) > 1:
+            shown = ", ".join(matches[:20]) + (f", … ({len(matches)} total)" if len(matches) > 20 else "")
+            self.screen.notify(shown, timeout=6)
 
 
 class FilePicker(Screen[Path | None]):
@@ -49,7 +90,7 @@ class FilePicker(Screen[Path | None]):
     def compose(self) -> ComposeResult:
         yield Static(id="folder")
         yield FilteredTree(self.start, self.suffixes)
-        yield Input(placeholder="Path to a file or folder. Enter opens; Tab switches between list and path.")
+        yield PathInput(placeholder="Path to a file or folder. Enter opens, Tab completes, Shift+Tab: back to list.")
         yield Footer()
 
     def on_mount(self) -> None:
@@ -61,6 +102,13 @@ class FilePicker(Screen[Path | None]):
         shown = "all files" if tree.show_all else ", ".join(self.suffixes)
         self.query_one("#folder", Static).update(f"{self.title_text}: {Path(tree.path).resolve()}  ({shown})")
 
+    def on_directory_tree_directory_selected(self, event: DirectoryTree.DirectorySelected) -> None:
+        if event.path.name == "..":
+            event.stop()
+            tree = self.query_one(FilteredTree)
+            tree.path = Path(tree.path).resolve().parent
+            self.update_folder()
+
     def on_directory_tree_file_selected(self, event: DirectoryTree.FileSelected) -> None:
         event.stop()
         self.choose(event.path)
@@ -68,11 +116,11 @@ class FilePicker(Screen[Path | None]):
     def on_tree_node_highlighted(self, event) -> None:
         entry = event.node.data
         if entry is not None:
-            self.query_one(Input).value = str(entry.path)
+            self.query_one(PathInput).value = str(entry.path.resolve())
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         event.stop()  # the app below may handle Input.Submitted too
-        path = Path(os.path.expanduser(event.value.strip()))
+        path = Path(os.path.expanduser(event.value.strip())).resolve()
         tree = self.query_one(FilteredTree)
         if path.is_dir():
             tree.path = path
