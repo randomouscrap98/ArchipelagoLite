@@ -22,16 +22,23 @@ EDITOR_DELAY = 0.06
 """Seconds the row highlight must rest before its editor is built, so holding an arrow key only scrolls."""
 CONFIRM_SECONDS = 6
 """How long a "press again to confirm" warning stays armed."""
+SIDE_WIDTH = 30
+"""Columns of the side list; its entries are cut to fit (SIDE_TEXT_WIDTH, leaving room for border and padding)."""
+SIDE_TEXT_WIDTH = SIDE_WIDTH - 4
+MIN_ROW_WIDTH = 30
+"""Rows are fitted to at least this many columns, even if #rows hasn't been laid out yet."""
+MIN_VALUE_WIDTH = 16
+"""Columns kept for a row's value when names are long (names get cut first)."""
 
-CSS = """
-#side { width: 30; }
-#rows { width: 3fr; }
-#detail { width: 2fr; }
-#editor { height: auto; max-height: 60%; }
-#editor OptionList, #editor SelectionList { height: auto; max-height: 20; }
-#editor TextArea { height: 12; }
-#doc { height: 1fr; border-top: solid $panel; padding: 0 1; }
-#error { color: $error; }
+CSS = f"""
+#side {{ width: {SIDE_WIDTH}; }}
+#rows {{ width: 3fr; }}
+#detail {{ width: 2fr; }}
+#editor {{ height: auto; max-height: 60%; }}
+#editor OptionList, #editor SelectionList {{ height: auto; max-height: 20; }}
+#editor TextArea {{ height: 12; }}
+#doc {{ height: 1fr; border-top: solid $panel; padding: 0 1; }}
+#error {{ color: $error; }}
 """
 
 
@@ -79,8 +86,8 @@ class MasterDetailApp(App):
 
     def fitted_row(self, name: str, value: str, changed: bool, note: Text | None = None) -> Text:
         """One line fitted to #rows by hand (OptionList wraps long prompts): name column, then the value."""
-        width = max(30, self.query_one("#rows", OptionList).scrollable_content_region.width - 1)
-        name_width = min(self.name_width, width - 16)
+        width = max(MIN_ROW_WIDTH, self.query_one("#rows", OptionList).scrollable_content_region.width - 1)
+        name_width = min(self.name_width, width - MIN_VALUE_WIDTH)
         text = Text("  " + fit(name, name_width).ljust(name_width + 2))
         note_width = len(note) if note else 0
         text.append(fit(value, width - name_width - 4 - note_width), style="bold" if changed else "dim")

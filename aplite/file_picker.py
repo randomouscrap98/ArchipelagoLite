@@ -16,10 +16,10 @@ from aplite import prefs
 class FilteredTree(DirectoryTree):
     BINDINGS = [Binding("backspace", "parent", "Parent folder")]
 
-    def __init__(self, path: Path, suffixes: typing.Sequence[str]) -> None:
+    def __init__(self, path: Path, suffixes: typing.Sequence[str], show_all: bool = False) -> None:
         super().__init__(path)
         self.suffixes = tuple(suffixes)
-        self.show_all = False
+        self.show_all = show_all
 
     def filter_paths(self, paths: typing.Iterable[Path]) -> typing.Iterable[Path]:
         return [p for p in paths if self.shows(p)]
@@ -42,11 +42,18 @@ class FilteredTree(DirectoryTree):
         self.screen.update_folder()
 
 
+def _not_hidden(path: Path) -> bool:
+    return not path.name.startswith(".")
+
+
 class PathInput(Input):
     """Tab completes the path like a shell (shift+tab leaves)."""
     BINDINGS = [Binding("tab", "complete", "Complete path", show=False)]
-    shows: typing.Callable[[Path], bool] = staticmethod(lambda path: not path.name.startswith("."))
-    """Which entries completion offers; the file picker sets this to its tree's filter."""
+
+    def __init__(self, *args, shows: typing.Callable[[Path], bool] = _not_hidden, **kwargs) -> None:
+        """`shows` decides which entries completion offers."""
+        super().__init__(*args, **kwargs)
+        self.shows = shows
 
     def action_complete(self) -> None:
         typed = os.path.expanduser(self.value)
@@ -81,11 +88,13 @@ class FilePicker(Screen[Path | None]):
                 Binding("ctrl+l", "use_folder", "Use this folder")]
 
     def __init__(self, title: str, suffixes: typing.Sequence[str], pref_key: str, default_dir: str,
-                 folders: bool = False) -> None:
-        """Starts in the folder saved under `pref_key`, else `default_dir`; only shows `suffixes` until toggled.
-        With `folders`, it picks a folder: Ctrl+L uses the shown one, Enter on a folder path picks it."""
+                 folders: bool = False, show_all: bool = False) -> None:
+        """Starts in the folder saved under `pref_key`, else `default_dir`; only shows `suffixes` until Ctrl+T (or
+        everything with `show_all`). With `folders`, it picks a folder: Ctrl+L uses the shown one, Enter on a
+        folder path picks it."""
         super().__init__()
         self.folders = folders
+        self.show_all = show_all
         self.title_text = title
         self.suffixes = suffixes
         self.pref_key = pref_key
@@ -94,12 +103,13 @@ class FilePicker(Screen[Path | None]):
 
     def compose(self) -> ComposeResult:
         yield Static(id="folder")
-        yield FilteredTree(self.start, self.suffixes)
-        yield PathInput(placeholder="Path to a file or folder. Enter opens, Tab completes, Shift+Tab: back to list.")
+        tree = FilteredTree(self.start, self.suffixes, self.show_all)
+        yield tree
+        yield PathInput(placeholder="Path to a file or folder. Enter opens, Tab completes, Shift+Tab: back to list.",
+                        shows=tree.shows)
         yield Footer()
 
     def on_mount(self) -> None:
-        self.query_one(PathInput).shows = self.query_one(FilteredTree).shows
         self.update_folder()
         self.query_one(FilteredTree).focus()
 
@@ -110,12 +120,12 @@ class FilePicker(Screen[Path | None]):
         self.choose_folder(Path(self.query_one(FilteredTree).path).resolve())
 
     def choose_folder(self, path: Path) -> None:
-        prefs.set(self.pref_key, str(path))
+        prefs.put(self.pref_key, str(path))
         self.dismiss(path)
 
     def update_folder(self) -> None:
         tree = self.query_one(FilteredTree)
-        shown = "all files" if tree.show_all else ", ".join(self.suffixes)
+        shown = "all files" if tree.show_all or not self.suffixes else ", ".join(self.suffixes)
         self.query_one("#folder", Static).update(f"{self.title_text}: {Path(tree.path).resolve()}  ({shown})")
 
     def on_directory_tree_directory_selected(self, event: DirectoryTree.DirectorySelected) -> None:
@@ -150,7 +160,7 @@ class FilePicker(Screen[Path | None]):
             self.notify(f"Not found: {path}", severity="error")
 
     def choose(self, path: Path) -> None:
-        prefs.set(self.pref_key, str(path.resolve().parent))
+        prefs.put(self.pref_key, str(path.resolve().parent))
         self.dismiss(path.resolve())
 
     def action_back(self) -> None:

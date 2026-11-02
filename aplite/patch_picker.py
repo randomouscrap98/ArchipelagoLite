@@ -13,5 +13,5 @@ def patch_suffixes() -> list[str]:
                    for suffix in c.file_identifier.suffixes})
 
 
-def PatchPicker() -> FilePicker:
+def patch_picker() -> FilePicker:
     return FilePicker("Open patch", patch_suffixes(), "patch_dir", Utils.local_path())

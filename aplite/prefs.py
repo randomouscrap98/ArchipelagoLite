@@ -40,7 +40,7 @@ def get(key: str) -> typing.Any:
     return _load().get(key, DEFAULTS.get(key))
 
 
-def set(key: str, value: typing.Any) -> None:
+def put(key: str, value: typing.Any) -> None:
     prefs = _load()
     if prefs.get(key) == value:
         return
@@ -57,4 +57,4 @@ def bind_theme(app: "App") -> None:
     theme = get("theme")
     if theme in app.available_themes:
         app.theme = theme
-    app.theme_changed_signal.subscribe(app, lambda theme: set("theme", theme.name))
+    app.theme_changed_signal.subscribe(app, lambda theme: put("theme", theme.name))

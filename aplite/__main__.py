@@ -5,19 +5,18 @@ Import order matters: patches must land before CommonClient/clients import the p
 Worlds are loaded by load(), which the launcher runs in the background so it can show immediately.
 """
 import os
-import re
 import sys
 import tempfile
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
 import ModuleUpdate
+
+import aplite
+from aplite.requirements import lite_requirements
 
 
 def _use_lite_requirements() -> None:
     """Swap core requirements.txt for a copy without kivy, so ModuleUpdate doesn't try to install it."""
-    with open(ModuleUpdate.core_constraints) as f:
-        lines = [line for line in f if not re.match(r"\s*kivy", line, re.IGNORECASE)]
+    lines = lite_requirements(ModuleUpdate.core_constraints)
     lite = os.path.join(tempfile.gettempdir(), "aplite-requirements.txt")
     with open(lite, "w") as f:
         f.writelines(lines)
@@ -117,7 +116,7 @@ def launch_from_launcher() -> None:
             pass
     # a fresh process rather than looping, so nothing the component left behind leaks into the launcher
     sys.stdout.flush()
-    os.execv(sys.executable, [sys.executable, "-m", "aplite"])
+    os.execve(sys.executable, [sys.executable, "-m", "aplite"], aplite.child_env())
 
 
 if __name__ == "__main__":

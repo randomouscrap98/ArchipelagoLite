@@ -541,7 +541,7 @@ class OptionsApp(MasterDetailApp):
         except OSError as e:
             self.notify(f"Could not save: {e}", severity="error", timeout=10)
             return
-        prefs.set("options_dir", str(path.parent))
+        prefs.put("options_dir", str(path.parent))
         self.loaded, self.loaded_path = data, path
         self.dirty = False
         self.notify(f"Saved {path}")

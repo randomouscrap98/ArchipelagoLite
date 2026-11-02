@@ -1,0 +1,10 @@
+# aplite's own dependencies, on top of Archipelago's requirements.txt (minus kivy, see requirements.py)
+textual
+# ModuleUpdate needs pkg_resources, which setuptools 81 removes
+setuptools>=75,<81
+# used by several worlds (ffmq, messenger, osrs, sm) but not declared in any requirements file
+requests
+# imported by the fftii apworld, which can't declare dependencies
+docutils
+# Web Options: aplite's local copy of the website's options pages
+flask

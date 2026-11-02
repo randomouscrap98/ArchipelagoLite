@@ -26,7 +26,7 @@ from textual.widgets.option_list import Option as ListOption
 import settings
 from aplite import prefs
 from aplite.file_picker import FilePicker, PathInput
-from aplite.master_detail import CSS as MASTER_DETAIL_CSS, MasterDetailApp, describe, fit, to_yaml
+from aplite.master_detail import CSS as MASTER_DETAIL_CSS, SIDE_TEXT_WIDTH, MasterDetailApp, describe, fit, to_yaml
 
 if typing.TYPE_CHECKING:
     from pathlib import Path
@@ -164,7 +164,7 @@ class SettingsApp(MasterDetailApp):
         search = self.query_one("#side-filter", Input).value.strip().casefold()
         sections = self.query_one("#side-list", OptionList)
         sections.clear_options()
-        sections.add_options([ListOption(Text(fit(s.title, 26), style="" if s.editable else "dim"), id=key)
+        sections.add_options([ListOption(Text(fit(s.title, SIDE_TEXT_WIDTH), style="" if s.editable else "dim"), id=key)
                               for key, s in self.sections.items()
                               if search in s.title.casefold() or search in key])
 
@@ -292,9 +292,9 @@ class SettingsApp(MasterDetailApp):
                 self.set_value(self.editor_key, str(path))
                 self.update_exists()
 
-        self.push_screen(FilePicker(f"Choose {self.editor_key}", [""], "settings_browse_dir",
+        self.push_screen(FilePicker(f"Choose {self.editor_key}", [], "settings_browse_dir",
                                     start if os.path.isdir(start) else os.path.expanduser("~"),
-                                    folders=setting.kind == "folder"), chosen)
+                                    folders=setting.kind == "folder", show_all=True), chosen)
 
     @on(Checkbox.Changed, "#bool")
     def bool_changed(self, event: Checkbox.Changed) -> None:
@@ -375,7 +375,7 @@ class SettingsApp(MasterDetailApp):
         self.quit_unless_unsaved(self.dirty)
 
 
-def run(*args: str) -> None:
+def run() -> None:
     from aplite.tui import quiet_terminal
     with quiet_terminal():
         SettingsApp().run()

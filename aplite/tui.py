@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import functools
 import logging
 import sys
 import threading
@@ -15,10 +16,29 @@ from textual.suggester import Suggester
 from textual.widgets.tabbed_content import ContentTab
 from textual.widgets import DataTable, Footer, Input, RichLog, Static, TabbedContent, TabPane
 
-from aplite import prefs
+from aplite import prefs, prompts
 
 if typing.TYPE_CHECKING:
     from CommonClient import CommonContext
+
+STATE_REFRESH = 0.5
+"""Seconds between status bar / hints checks (upstream tells the kivy UI through ctx.ui, which aplite leaves None)."""
+
+@functools.cache
+def hint_status_display() -> tuple[dict[int, str], dict[int, str], dict[int, int]]:
+    """(names, colors, sort order; higher first) per hint status. Copied from kvui.py (status_names, status_colors,
+    status_sort_weights), since importing kvui loads kivy: keep in sync when upstream changes them. Built on first use
+    because importing NetUtils takes ~150ms, which the launcher shouldn't pay."""
+    from NetUtils import HintStatus
+    names = {HintStatus.HINT_FOUND: "Found", HintStatus.HINT_UNSPECIFIED: "Unspecified",
+             HintStatus.HINT_NO_PRIORITY: "No Priority", HintStatus.HINT_AVOID: "Avoid",
+             HintStatus.HINT_PRIORITY: "Priority"}
+    colors = {HintStatus.HINT_FOUND: "green", HintStatus.HINT_UNSPECIFIED: "white",
+              HintStatus.HINT_NO_PRIORITY: "cyan", HintStatus.HINT_AVOID: "salmon", HintStatus.HINT_PRIORITY: "plum"}
+    order = {HintStatus.HINT_FOUND: 0, HintStatus.HINT_UNSPECIFIED: 1, HintStatus.HINT_NO_PRIORITY: 2,
+             HintStatus.HINT_AVOID: 3, HintStatus.HINT_PRIORITY: 4}
+    return names, colors, order
+
 
 ARCHIPELAGO_LOGGERS = {"Client", "StreamLog"}
 """Top-level logger names shown in the Archipelago tab (StreamLog carries server messages)."""
@@ -193,7 +213,7 @@ class ClientApp(App):
         for name, msg in log_buffer.records:
             self.route_log(name, msg)
         log_buffer.sink = self.write_log
-        self.set_interval(0.5, self.refresh_state)
+        self.set_interval(STATE_REFRESH, self.refresh_state)
         self.refresh_state()
         self.query_one(CommandInput).focus()
 
@@ -256,16 +276,9 @@ class ClientApp(App):
         if hints == self._hints_snapshot:
             return
         self._hints_snapshot = [dict(hint) for hint in hints]
-
         from NetUtils import HintStatus
-        names = {HintStatus.HINT_FOUND: "Found", HintStatus.HINT_UNSPECIFIED: "Unspecified",
-                 HintStatus.HINT_NO_PRIORITY: "No Priority", HintStatus.HINT_AVOID: "Avoid",
-                 HintStatus.HINT_PRIORITY: "Priority"}
-        colors = {HintStatus.HINT_FOUND: "green", HintStatus.HINT_UNSPECIFIED: "white",
-                  HintStatus.HINT_NO_PRIORITY: "cyan", HintStatus.HINT_AVOID: "salmon",
-                  HintStatus.HINT_PRIORITY: "plum"}
-        weights = {HintStatus.HINT_FOUND: 0, HintStatus.HINT_UNSPECIFIED: 1, HintStatus.HINT_NO_PRIORITY: 2,
-                   HintStatus.HINT_AVOID: 3, HintStatus.HINT_PRIORITY: 4}
+        names, colors, order = hint_status_display()
+
 
         def render(node: dict) -> Text:
             return Text.from_ansi(ctx.jsontotextparser.handle_node(node))
@@ -278,7 +291,7 @@ class ClientApp(App):
         table = self.query_one("#hints", DataTable)
         cursor, scroll = table.cursor_row, table.scroll_y
         table.clear()
-        for hint in sorted(hints, key=lambda h: weights.get(status_of(h), 0), reverse=True):
+        for hint in sorted(hints, key=lambda h: order.get(status_of(h), 0), reverse=True):
             status = status_of(hint)
             status_text = Text(names.get(status, "Unknown"), style=colors.get(status, "red"))
             if status != HintStatus.HINT_FOUND and ctx.slot_concerns_self(hint["receiving_player"]):
@@ -323,7 +336,6 @@ RUNNING = "_aplite_tui"
 
 
 async def console_loop(ctx: CommonContext) -> None:
-    from aplite import prompts
     if getattr(ctx, RUNNING, False):  # fallback already started it, then the client called run_cli late
         return
     setattr(ctx, RUNNING, True)

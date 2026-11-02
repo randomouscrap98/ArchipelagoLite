@@ -80,8 +80,8 @@ def _open_patch(*args: str) -> None:
 
 
 def _patch_picker() -> Screen:
-    from aplite.patch_picker import PatchPicker
-    return PatchPicker()
+    from aplite.patch_picker import patch_picker
+    return patch_picker()
 
 
 def _patch_picked(component: Component, path) -> tuple[Component, tuple[str, ...]] | str:
@@ -188,9 +188,8 @@ def _run_cli_script(component: Component, *args: str) -> None:
     """Command-line scripts (Generate, Host) need a process without worlds loaded (Generate.py refuses otherwise):
     a child process in the same terminal, via aplite.script."""
     script = Utils.local_path(f"{component.script_name}.py")
-    pythonpath = os.pathsep.join(filter(None, [Utils.local_path(), os.environ.get("PYTHONPATH")]))
-    env = {**os.environ, "PYTHONPATH": pythonpath}
-    sys.exit(subprocess.call([sys.executable, "-m", "aplite.script", script, *args], env=env))
+    import aplite
+    sys.exit(subprocess.call([sys.executable, "-m", "aplite.script", script, *args], env=aplite.child_env()))
 
 
 def _run_client_script(component: Component, *args: str) -> None:

@@ -186,7 +186,7 @@ class _LogToApp(logging.Handler):
             pass  # app shutting down
 
 
-def run(*args: str) -> None:
+def run(*args: str) -> None:  # a component func: the launcher may pass args, which it doesn't use
     from aplite.tui import quiet_terminal
     with quiet_terminal():
         WebOptionsApp().run()
@@ -195,7 +195,6 @@ def run(*args: str) -> None:
 def component():
     """Launcher entry for this tool (added to the component list by aplite)."""
     from worlds.LauncherComponents import Component, Type
-    entry = Component("Web Options", func=run, component_type=Type.TOOL,
-                      description="The website's options pages for your installed games, served locally in your "
-                                  "browser.")
-    return entry
+    return Component("Web Options", func=run, component_type=Type.TOOL,
+                     description="The website's options pages for your installed games, served locally in your "
+                                 "browser.")
