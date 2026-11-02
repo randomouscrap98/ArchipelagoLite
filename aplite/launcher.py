@@ -19,10 +19,16 @@ if typing.TYPE_CHECKING:
 Components = typing.Sequence["Component"]
 
 
+def is_options_creator(component: Component) -> bool:
+    """Upstream's is kivy; aplite runs its own (aplite/options_creator.py)."""
+    return component.script_name == "OptionsCreator"
+
+
 def runnable(component: Component) -> bool:
     """Whether aplite can run this component in the terminal (see __main__.run)."""
     from worlds.LauncherComponents import Type
-    return bool(component.func or component.script_name and (component.type == Type.CLIENT or component.cli))
+    return bool(component.func or is_options_creator(component) or
+                component.script_name and (component.type == Type.CLIENT or component.cli))
 
 
 def load_favorites() -> list[str]:
@@ -167,7 +173,7 @@ class LauncherApp(App[Choice]):
             from aplite.patch_picker import PatchPicker
             self.push_screen(PatchPicker(), self.patch_chosen)
         else:
-            self.exit((component, (), False))
+            self.exit((component, (), is_options_creator(component)))
 
     def patch_chosen(self, path) -> None:
         if path is None:

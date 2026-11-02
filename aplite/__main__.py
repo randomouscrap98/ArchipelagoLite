@@ -39,8 +39,10 @@ bytecode_cache.install()  # before any .apworld is imported
 
 
 def load() -> list:
-    """Load all worlds and apply the patches that need them. Returns the launcher components."""
+    """Load all worlds and apply the patches that need them. Returns the launcher components. Safe to call twice."""
     global LauncherComponents, Launcher
+    if "Launcher" in globals():
+        return LauncherComponents.components
     import CommonClient  # loads all worlds
 
     CommonClient.console_loop = tui.console_loop  # before clients do `from CommonClient import console_loop`
@@ -107,7 +109,10 @@ def main() -> None:
 
 def run(component: "LauncherComponents.Component", *args: str) -> None:
     """Run a component in this process, so it gets the terminal and aplite's patches."""
-    if component.func:
+    if launcher.is_options_creator(component):
+        from aplite import options_creator
+        options_creator.run()
+    elif component.func:
         # some clients parse sys.argv themselves and/or take no func args (e.g. civ6, kh1)
         sys.argv = [sys.argv[0], *args]
         Launcher.run_component(component, *(args if _accepts_args(component.func) else ()))
