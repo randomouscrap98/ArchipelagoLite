@@ -84,6 +84,11 @@ def main() -> None:
         except SystemExit:
             if not come_back:
                 raise
+        if come_back and launcher.pauses_after(component):
+            try:
+                input("\nPress Enter to return to the launcher…")
+            except EOFError:
+                pass
         if come_back:
             # a fresh process rather than looping, so nothing the client left behind leaks into the launcher
             sys.stdout.flush()
@@ -112,9 +117,14 @@ def main() -> None:
 
 def run(component: "LauncherComponents.Component", *args: str) -> None:
     """Run a component in this process, so it gets the terminal and aplite's patches."""
+    from worlds.LauncherComponents import export_datapackage, generate_yamls
     if launcher.is_options_creator(component):
         from aplite import options_creator
         options_creator.run()
+    elif component.func is export_datapackage:
+        _export_datapackage()
+    elif component.func is generate_yamls:
+        _generate_templates(*args)
     elif component.func:
         # some clients parse sys.argv themselves and/or take no func args (e.g. civ6, kh1)
         sys.argv = [sys.argv[0], *args]
@@ -134,6 +144,31 @@ def run(component: "LauncherComponents.Component", *args: str) -> None:
         runpy.run_path(script, run_name="__main__")
     else:
         sys.exit(f"{component.display_name} needs the full Archipelago GUI and isn't supported by aplite.")
+
+
+def _export_datapackage() -> None:
+    """Upstream's opens the file with xdg-open and asserts if there isn't one; this shows the path instead."""
+    import json
+    from aplite.desktop import open_path
+    from worlds import network_data_package
+    path = Utils.user_path("datapackage_export.json")
+    with open(path, "w") as f:
+        json.dump(network_data_package, f, indent=4)
+    print(f"Wrote the data package for {len(network_data_package['games'])} games to:\n  {path}")
+    if open_path(path):
+        print("(opened it with your default app)")
+
+
+def _generate_templates(*args: str) -> None:
+    """Upstream's opens a file manager at the end; this shows the folder (and opens it when there's a desktop)."""
+    from aplite.desktop import open_path
+    from worlds.LauncherComponents import generate_yamls
+    print("Generating template YAMLs for every installed game…")
+    generate_yamls("--skip_open_folder", *args)
+    folder = Utils.user_path("Players", "Templates")
+    print(f"Templates are in:\n  {folder}")
+    if "--skip_open_folder" not in args and open_path(folder):
+        print("(opened the folder)")
 
 
 def _accepts_args(func) -> bool:

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import typing
 
 from rich.text import Text
@@ -24,8 +25,15 @@ def is_options_creator(component: Component) -> bool:
 
 
 def returns_to_launcher(component: Component) -> bool:
-    """aplite's own tools go back to the launcher when they exit (clients quit, as decided)."""
-    return is_options_creator(component) or getattr(component, "aplite_tool", False)
+    """Everything but clients goes back to the launcher when it's done; exiting a client means you're done."""
+    from worlds.LauncherComponents import Type
+    return component.type != Type.CLIENT
+
+
+def pauses_after(component: Component) -> bool:
+    """Tools whose terminal output matters: wait for Enter before the launcher redraws over it."""
+    from worlds.LauncherComponents import export_datapackage, generate_yamls, install_apworld
+    return bool(component.cli) or component.func in (install_apworld, export_datapackage, generate_yamls)
 
 
 def runnable(component: Component) -> bool:
@@ -172,10 +180,14 @@ class LauncherApp(App[Choice]):
         component = self.selected()
         if not component:
             return
-        from worlds.LauncherComponents import open_patch
+        from worlds.LauncherComponents import install_apworld, open_patch
         if component.func is open_patch:  # upstream's opens a native dialog, then a new kivy launcher process
             from aplite.patch_picker import PatchPicker
             self.push_screen(PatchPicker(), self.patch_chosen)
+        elif component.func is install_apworld:
+            from aplite.file_picker import FilePicker
+            picker = FilePicker("Install APWorld", [".apworld"], "apworld_dir", os.path.expanduser("~"))
+            self.push_screen(picker, lambda path: path and self.exit((component, (str(path),), True)))
         else:
             self.exit((component, (), returns_to_launcher(component)))
 

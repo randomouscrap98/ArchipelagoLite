@@ -9,12 +9,10 @@ from __future__ import annotations
 
 import logging
 import os
-import subprocess
 import sys
 import threading
 import types
 import typing
-from shutil import which
 
 from rich.text import Text
 from textual.app import App, ComposeResult
@@ -127,11 +125,8 @@ GAMES_PAGE = """
 
 
 def open_browser(url: str) -> None:
-    """Like webbrowser.open, but on Linux keeps the browser's chatter off our terminal."""
-    if sys.platform.startswith("linux") and which("xdg-open"):
-        subprocess.Popen(["xdg-open", url], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                         stderr=subprocess.DEVNULL, start_new_session=True)
-    else:
+    from aplite.desktop import open_path
+    if not open_path(url):
         import webbrowser
         webbrowser.open(url)
 
@@ -203,5 +198,4 @@ def component():
     entry = Component("Web Options", func=run, component_type=Type.TOOL,
                       description="The website's options pages for your installed games, served locally in your "
                                   "browser.")
-    entry.aplite_tool = True  # returns to the launcher when stopped
     return entry
