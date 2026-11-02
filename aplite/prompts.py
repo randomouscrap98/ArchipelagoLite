@@ -14,6 +14,8 @@ import Utils
 
 active_app = None
 """The Textual app currently on screen that a prompt has to step around (set by aplite.tui)."""
+_cancelled: set[tuple[str, bool]] = set()
+"""Prompts the user cancelled this run; not asked again (e.g. SNI asks for its folder on every reconnect)."""
 
 
 def install() -> None:
@@ -33,6 +35,16 @@ def open_directory(title: str, suggest: str = "") -> str | None:
 
 
 def ask(title: str, folder: bool, suffixes: tuple[str, ...], suggest: str) -> str | None:
+    if (title, folder) in _cancelled:
+        return None
+    answer = _ask(title, folder, suffixes, suggest)
+    if answer is None:
+        _cancelled.add((title, folder))
+        logging.info(f"{title}: cancelled; won't ask again until aplite restarts.")
+    return answer
+
+
+def _ask(title: str, folder: bool, suffixes: tuple[str, ...], suggest: str) -> str | None:
     app = active_app
     if app is None:
         return _prompt(title, folder, suffixes, suggest)

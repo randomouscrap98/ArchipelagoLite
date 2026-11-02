@@ -119,8 +119,15 @@ def run(component: "LauncherComponents.Component", *args: str) -> None:
         # some clients parse sys.argv themselves and/or take no func args (e.g. civ6, kh1)
         sys.argv = [sys.argv[0], *args]
         Launcher.run_component(component, *(args if _accepts_args(component.func) else ()))
+    elif component.script_name and component.cli:
+        # command-line scripts (Generate, Host) need a process without worlds loaded; same terminal, foreground
+        import subprocess
+        script = Utils.local_path(f"{component.script_name}.py")
+        env = {**os.environ, "PYTHONPATH": os.pathsep.join(filter(None, [Utils.local_path(),
+                                                                         os.environ.get("PYTHONPATH")]))}
+        sys.exit(subprocess.call([sys.executable, "-m", "aplite.script", script, *args], env=env))
     elif launcher.runnable(component):
-        # script components (SNIClient, Generate, ...) would otherwise be a new process without the patches
+        # client scripts (SNIClient, ...) would otherwise be a new process without the patches
         import runpy
         script = Utils.local_path(f"{component.script_name}.py")
         sys.argv = [script, *args]
