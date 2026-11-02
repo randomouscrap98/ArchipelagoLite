@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import logging
-import os
 import typing
 
 from rich.text import Text
@@ -12,35 +11,12 @@ from textual.widgets.option_list import Option
 
 import Utils
 from aplite import prefs
+from aplite.components import override_for, returns_to_launcher, runnable
 
 if typing.TYPE_CHECKING:
     from worlds.LauncherComponents import Component  # importing worlds loads all of them, so only lazily
 
 Components = typing.Sequence["Component"]
-
-
-def is_options_creator(component: Component) -> bool:
-    """Upstream's is kivy; aplite runs its own (aplite/options_creator.py)."""
-    return component.script_name == "OptionsCreator"
-
-
-def returns_to_launcher(component: Component) -> bool:
-    """Everything but clients goes back to the launcher when it's done; exiting a client means you're done."""
-    from worlds.LauncherComponents import Type
-    return component.type != Type.CLIENT
-
-
-def pauses_after(component: Component) -> bool:
-    """Tools whose terminal output matters: wait for Enter before the launcher redraws over it."""
-    from worlds.LauncherComponents import export_datapackage, generate_yamls, install_apworld
-    return bool(component.cli) or component.func in (install_apworld, export_datapackage, generate_yamls)
-
-
-def runnable(component: Component) -> bool:
-    """Whether aplite can run this component in the terminal (see __main__.run)."""
-    from worlds.LauncherComponents import Type
-    return bool(component.func or is_options_creator(component) or
-                component.script_name and (component.type == Type.CLIENT or component.cli))
 
 
 def load_favorites() -> list[str]:
@@ -180,26 +156,21 @@ class LauncherApp(App[Choice]):
         component = self.selected()
         if not component:
             return
-        from worlds.LauncherComponents import install_apworld, open_patch
-        if component.func is open_patch:  # upstream's opens a native dialog, then a new kivy launcher process
-            from aplite.patch_picker import PatchPicker
-            self.push_screen(PatchPicker(), self.patch_chosen)
-        elif component.func is install_apworld:
-            from aplite.file_picker import FilePicker
-            picker = FilePicker("Install APWorld", [".apworld"], "apworld_dir", os.path.expanduser("~"))
-            self.push_screen(picker, lambda path: path and self.exit((component, (str(path),), True)))
+        override = override_for(component)
+        if override.picker:  # e.g. Open Patch: pick a file first, then run what it resolves to
+            self.push_screen(override.picker(), lambda result: self.picked(component, result))
         else:
             self.exit((component, (), returns_to_launcher(component)))
 
-    def patch_chosen(self, path) -> None:
-        if path is None:
-            return  # back to the launcher
-        from worlds.LauncherComponents import identify
-        file, component = identify(str(path))
-        if component and runnable(component):
-            self.exit((component, (file,), True))
-        else:
-            self.notify(f"No client can open {path.name}", severity="error")
+    def picked(self, component: Component, result: typing.Any) -> None:
+        if result is None:
+            return  # backed out of the picker: stay in the launcher
+        outcome = override_for(component).picked(component, result)
+        if isinstance(outcome, str):
+            self.notify(outcome, severity="error")
+            return
+        target, args = outcome
+        self.exit((target, args, returns_to_launcher(component)))
 
     def action_toggle_favorite(self) -> None:
         component = self.selected()

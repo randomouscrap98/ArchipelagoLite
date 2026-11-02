@@ -10,7 +10,6 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.environ["SKIP_REQUIREMENTS_UPDATE"] = "1"  # aplite already handled requirements (and they'd include kivy)
 
-import Utils  # noqa: E402
 from aplite import bytecode_cache, prompts  # noqa: E402
 
 bytecode_cache.install()

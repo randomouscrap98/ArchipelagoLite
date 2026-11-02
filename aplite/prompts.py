@@ -5,6 +5,7 @@ While a client's TUI is on screen, it is suspended for the prompt and restored a
 """
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
 import threading
@@ -13,9 +14,20 @@ import typing
 import Utils
 
 active_app = None
-"""The Textual app currently on screen that a prompt has to step around (set by aplite.tui)."""
+"""The Textual app currently on screen that a prompt has to step around; set via around()."""
 _cancelled: set[tuple[str, bool]] = set()
 """Prompts the user cancelled this run; not asked again (e.g. SNI asks for its folder on every reconnect)."""
+
+
+@contextlib.contextmanager
+def around(app) -> typing.Iterator[None]:
+    """While `app` is on screen, prompts suspend it to ask in the terminal."""
+    global active_app
+    previous, active_app = active_app, app
+    try:
+        yield
+    finally:
+        active_app = previous
 
 
 def install() -> None:

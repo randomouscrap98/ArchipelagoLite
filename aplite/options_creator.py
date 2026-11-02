@@ -1,6 +1,5 @@
 """
-Terminal Options Creator. Master-detail: the options list is plain text rows, and only the highlighted option gets
-editor widgets, so games with hundreds of options stay fast. Loads existing YAMLs and keeps their unrelated content.
+Terminal Options Creator (see master_detail.py for the layout). Loads existing YAMLs and keeps their unrelated content.
 """
 from __future__ import annotations
 
@@ -11,28 +10,32 @@ import typing
 from inspect import cleandoc
 from pathlib import Path
 
-import yaml
 from rich.text import Text
 from textual import on
-from textual.app import App, ComposeResult
+from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
-from textual.widgets import (Checkbox, Footer, Input, Label, OptionList, SelectionList, Static, TextArea)
+from textual.widgets import Checkbox, Footer, Input, Label, OptionList, SelectionList, Static, TextArea
 from textual.widgets.option_list import Option as ListOption
 
 import Utils
 from aplite import prefs
 from aplite.file_picker import FilePicker
+from aplite.master_detail import CSS as MASTER_DETAIL_CSS, MasterDetailApp, describe, to_yaml
 
 if typing.TYPE_CHECKING:
     from Options import Option
     from worlds.AutoWorld import World
 
 MAX_NAME = 16  # Generate rejects longer slot names
-NARROW = 140  # below this many columns, picking a game hides the games list (ctrl+g brings it back)
 DEFAULT_DIR = Utils.user_path("Players")
-EDITOR_DELAY = 0.06  # seconds the options-list highlight must rest before its editor is built
+
+# editor kinds (see kind())
+CHOICE_KINDS = frozenset({"choice", "textchoice"})
+RANGE_KINDS = frozenset({"range", "named"})
+LIST_KINDS = frozenset({"set", "list"})
+MAPPING_KINDS = frozenset({"counter", "dict"})
 
 
 @functools.cache
@@ -70,7 +73,7 @@ def _default_value(option: type[Option]) -> typing.Any:
         return list(default)
     if isinstance(default, dict):
         return dict(default)
-    if kind(option) in ("choice", "textchoice") and isinstance(default, int):
+    if kind(option) in CHOICE_KINDS and isinstance(default, int):
         return option.name_lookup.get(default, default)
     return default
 
@@ -90,7 +93,7 @@ def is_random(value: typing.Any) -> bool:
 
 def is_weighted(option: type[Option], value: typing.Any) -> bool:
     """A {value: weight} dict from a loaded YAML, for an option whose plain value isn't a dict."""
-    return isinstance(value, dict) and kind(option) not in ("counter", "dict")
+    return isinstance(value, dict) and kind(option) not in MAPPING_KINDS
 
 
 def normalize(option: type[Option], value: typing.Any) -> typing.Any:
@@ -100,23 +103,9 @@ def normalize(option: type[Option], value: typing.Any) -> typing.Any:
         if len(nonzero) != 1:
             return value
         value = nonzero[0]
-    if isinstance(value, bool) and kind(option) in ("choice", "textchoice"):
+    if isinstance(value, bool) and kind(option) in CHOICE_KINDS:
         return option.name_lookup.get(int(value), str(value).lower())
     return value
-
-
-def fit(text: str, width: int) -> str:
-    return text if len(text) <= width else text[:max(width - 1, 0)] + "…"
-
-
-def describe(value: typing.Any) -> str:
-    """Short text for the options list."""
-    if isinstance(value, dict):
-        return f"{{{len(value)} entries}}" if value else "{}"
-    if isinstance(value, list):
-        text = ", ".join(map(str, value))
-        return f"[{text}]" if len(text) < 30 else f"[{len(value)} entries]"
-    return str(value)
 
 
 def game_options(world: type[World]) -> dict[str, dict[str, type[Option]]]:
@@ -183,22 +172,14 @@ class GamePicker(ModalScreen[str | None]):
         self.dismiss(None)
 
 
-class OptionsApp(App[None]):
+class OptionsApp(MasterDetailApp):
     TITLE = "Options Creator"
-    CSS = """
+    CSS = MASTER_DETAIL_CSS + """
     #top { height: 3; }
     #name { width: 30; }
     #game-label { padding: 1 2; }
-    #games-pane { width: 30; }
-    #options { width: 3fr; }
-    #detail { width: 2fr; }
-    #editor { height: auto; max-height: 60%; }
-    #editor SelectionList, #editor OptionList { height: auto; max-height: 20; }
-    #editor TextArea { height: 12; }
-    #doc { height: 1fr; border-top: solid $panel; padding: 0 1; }
-    #error { color: $error; }
     """
-    BINDINGS = [Binding("ctrl+g", "toggle_games", "Games"), Binding("ctrl+o", "load", "Load"),
+    BINDINGS = [Binding("ctrl+g", "toggle_side", "Games"), Binding("ctrl+o", "load", "Load"),
                 Binding("ctrl+s", "save", "Save"),
                 Binding("ctrl+r", "reset", "Reset option"), Binding("ctrl+q", "quit", "Quit")]
 
@@ -210,15 +191,9 @@ class OptionsApp(App[None]):
         self.game: str | None = None
         self.groups: dict[str, dict[str, type[Option]]] = {}
         self.options: dict[str, type[Option]] = {}
-        self.values: dict[str, typing.Any] = {}
-        self.values_by_game: dict[str, dict[str, typing.Any]] = {}
-        self.current: str | None = None  # highlighted option
-        self.editor_key: str | None = None  # option the editor widgets belong to; their events edit this one
-        self.rebuild_timer = None
-        self.name_width = 10
+        self.values: dict[str, typing.Any] = {}  # the current game's entry in values_by_game
+        self.values_by_game: dict[str, dict[str, typing.Any]] = {}  # switching games keeps each game's edits
         self.dirty = False  # unsaved changes
-        self.quit_armed = False
-        self.load_armed = False
         self.loaded: dict = {}  # the YAML we loaded, kept so saving preserves everything we don't edit
         self.loaded_path: Path | None = None
 
@@ -227,10 +202,10 @@ class OptionsApp(App[None]):
             yield Input(placeholder="Player name", id="name", max_length=MAX_NAME)
             yield Label("Game: (pick one)", id="game-label")
         with Horizontal():
-            with Vertical(id="games-pane"):
-                yield Input(placeholder="Filter games", id="game-filter")
-                yield OptionList(ListOption("Loading worlds…", disabled=True), id="games")
-            yield OptionList(id="options")
+            with Vertical(id="side"):
+                yield Input(placeholder="Filter games", id="side-filter")
+                yield OptionList(ListOption("Loading worlds…", disabled=True), id="side-list")
+            yield OptionList(id="rows")
             with Vertical(id="detail"):
                 yield Vertical(id="editor")
                 with VerticalScroll(id="doc"):
@@ -255,91 +230,66 @@ class OptionsApp(App[None]):
                        if not world.hidden and world.web.options_page}
         self.fill_games()
 
-    # games
+    # games (side list)
 
     def fill_games(self) -> None:
-        search = self.query_one("#game-filter", Input).value.strip().casefold()
-        games = self.query_one("#games", OptionList)
+        search = self.query_one("#side-filter", Input).value.strip().casefold()
+        games = self.query_one("#side-list", OptionList)
         games.clear_options()
         games.add_options([ListOption(f"{game} (website)" if isinstance(world.web.options_page, str) else game, id=game)
                            for game, world in self.worlds.items() if search in game.casefold()])
 
-    @on(Input.Changed, "#game-filter")
+    @on(Input.Changed, "#side-filter")
     def filter_games(self) -> None:
         self.fill_games()
 
-    @on(Input.Submitted, "#game-filter")
+    @on(Input.Submitted, "#side-filter")
     def pick_first_game(self) -> None:
-        games = self.query_one("#games", OptionList)
+        games = self.query_one("#side-list", OptionList)
         if games.option_count:
             self.select_game(games.get_option_at_index(0).id)
 
-    @on(OptionList.OptionSelected, "#games")
+    @on(OptionList.OptionSelected, "#side-list")
     def game_selected(self, event: OptionList.OptionSelected) -> None:
         self.select_game(event.option.id)
 
     def select_game(self, game: str, values: dict | None = None) -> None:
+        """Show a game's options; `values` (from a loaded file) replace any edits made to it so far."""
         world = self.worlds[game]
         if isinstance(world.web.options_page, str):
-            url = world.web.options_page
-            self.notify(f"{game} configures its options on its website: {url}", timeout=10)
+            self.notify(f"{game} configures its options on its website: {world.web.options_page}", timeout=10)
             return
         self.game = game
         self.groups = game_options(world)
         self.options = {key: option for group in self.groups.values() for key, option in group.items()}
-        if values is not None or game not in self.values_by_game:  # loading a file, or first visit
+        if values is not None or game not in self.values_by_game:
             self.values_by_game[game] = {key: default_value(option) for key, option in self.options.items()}
             for key, value in (values or {}).items():
                 if key in self.options:
                     self.values_by_game[game][key] = normalize(self.options[key], value)
-        self.values = self.values_by_game[game]  # switching games keeps each game's edits
+        self.values = self.values_by_game[game]
         self.query_one("#game-label", Label).update(f"Game: {game}")
-        if self.size.width < NARROW and self.query_one("#games-pane").display:
-            self.query_one("#games-pane").display = False
-            self.call_after_refresh(self.refresh_rows)  # the options list just got wider
+        self.collapse_side_if_narrow()
         self.name_width = max((len(getattr(option, "display_name", key)) for key, option in self.options.items()),
                               default=10)
-        self.current = None  # the new game may have an option with the same key
-        self.fill_options()
-        self.query_one("#options", OptionList).focus()
-
-    # options list
-
-    def row(self, key: str) -> Text:
-        """One line, fitted to the list's width by hand (OptionList wraps long prompts)."""
-        option = self.options[key]
-        value = self.values[key]
-        width = max(30, self.query_one("#options", OptionList).scrollable_content_region.width - 1)
-        name_width = min(self.name_width, width - 16)
-        name = fit(getattr(option, "display_name", key), name_width)
-        shown = describe(value) + ("  (weighted)" if is_weighted(option, value) else "")
-        changed = value != default_value(option)
-        text = Text("  " + name.ljust(name_width + 2))
-        text.append(fit(shown, width - name_width - 4), style="bold" if changed else "dim")
-        return text
-
-    def on_resize(self) -> None:
-        if self.game:
-            self.call_after_refresh(self.refresh_rows)
-
-    def refresh_rows(self) -> None:
-        for key in self.options:
-            self.refresh_row(key)
-
-    def fill_options(self) -> None:
         rows = []
         for group, members in self.groups.items():
             rows.append(ListOption(Text(group, style="bold underline"), disabled=True))
             rows += [ListOption(self.row(key), id=key) for key in members]
-        options = self.query_one("#options", OptionList)
-        options.clear_options()
-        options.add_options(rows)
-        first = next((i for i, o in enumerate(options.options) if not o.disabled), None)
-        if first is not None:
-            options.highlighted = first
+        self.show_rows(rows)
+        self.query_one("#rows", OptionList).focus()
 
-    def refresh_row(self, key: str) -> None:
-        self.query_one("#options", OptionList).replace_option_prompt(key, self.row(key))
+    # rows
+
+    def row_keys(self) -> typing.Iterable[str]:
+        return self.options
+
+    def row(self, key: str) -> Text:
+        option = self.options[key]
+        value = self.values[key]
+        note = Text("  (weighted)", style="italic") if is_weighted(option, value) else None
+        return self.fitted_row(getattr(option, "display_name", key), describe(value),
+                               value != default_value(option), note)
 
     def set_value(self, key: str, value: typing.Any) -> None:
         if self.values.get(key) != value:
@@ -347,24 +297,10 @@ class OptionsApp(App[None]):
         self.values[key] = value
         self.refresh_row(key)
 
-    @on(OptionList.OptionHighlighted, "#options")
-    def option_highlighted(self, event: OptionList.OptionHighlighted) -> None:
-        # build the editor once the highlight settles, so holding an arrow key only scrolls the list
-        if event.option.id != self.current:
-            self.current = event.option.id
-            if self.rebuild_timer:
-                self.rebuild_timer.stop()
-            self.rebuild_timer = self.set_timer(EDITOR_DELAY, self.build_editor)
-
     # editor for the highlighted option
 
     async def build_editor(self) -> None:
-        self.rebuild_timer = None
-        editor = self.query_one("#editor", Vertical)
-        await editor.remove_children()
-        key = self.editor_key = self.current
-        if key is None:
-            return
+        key = self.editor_key
         option = self.options[key]
         value = self.values[key]
         option_kind = kind(option)
@@ -375,13 +311,13 @@ class OptionsApp(App[None]):
 
         if is_weighted(option, value) or not isinstance(value, (str, int, bool, list, dict)):
             widgets += self.yaml_editor(value, "Weighted values; edit as YAML.")
-        elif option_kind in ("choice", "textchoice"):
+        elif option_kind in CHOICE_KINDS:
             names = list(option.name_lookup.values())
             widgets.append(OptionList(*[ListOption(name) for name in names], id="choice"))
             if option_kind == "textchoice":
                 custom = value if isinstance(value, str) and value not in names and not is_random(value) else ""
                 widgets.append(Input(custom, placeholder="Custom value (Enter to set)", id="custom"))
-        elif option_kind in ("named", "range"):
+        elif option_kind in RANGE_KINDS:
             if option_kind == "named":
                 widgets.append(OptionList(*[ListOption(f"{name} ({number})")
                                             for name, number in option.special_range_names.items()], id="special"))
@@ -401,30 +337,25 @@ class OptionsApp(App[None]):
         else:
             widgets += self.yaml_editor(value, "Edit as YAML.")
         widgets.append(Label("", id="error"))
+        editor = self.query_one("#editor")
         await editor.mount_all(widgets)
         self.sync_disabled()
-        if option_kind in ("choice", "textchoice"):
+        if option_kind in CHOICE_KINDS:
             names = list(option.name_lookup.values())
             if value in names:
                 editor.query_one("#choice", OptionList).highlighted = names.index(value)
 
-        doc = cleandoc(option.__doc__ or "No description.")
-        self.query_one("#doc-text", Static).update(Text(doc))
+        self.query_one("#doc-text", Static).update(Text(cleandoc(option.__doc__ or "No description.")))
         self.query_one("#doc", VerticalScroll).scroll_home(animate=False)
 
     @staticmethod
     def yaml_editor(value: typing.Any, hint: str) -> list:
-        text = yaml.safe_dump(value, sort_keys=False, allow_unicode=True).replace("...\n", "") if value not in \
-            (None, "") else ""
-        return [Label(Text(hint, style="dim")), TextArea(text, id="yaml")]
+        return [Label(Text(hint, style="dim")), TextArea(to_yaml(value), id="yaml")]
 
     @staticmethod
     def selections(option: type[Option], value: typing.Any, search: str) -> list[tuple[str, str, bool]]:
         chosen = set(value) if isinstance(value, list) else set()
         return [(key, key, key in chosen) for key in sorted(option.valid_keys) if search in key.casefold()]
-
-    def error(self, message: str) -> None:
-        self.query_one("#error", Label).update(message)
 
     def sync_disabled(self) -> None:
         """Random disables the other editor widgets."""
@@ -446,7 +377,7 @@ class OptionsApp(App[None]):
     def fallback(self, key: str) -> typing.Any:
         """A concrete value for options whose default is random."""
         option = self.options[key]
-        if kind(option) in ("range", "named"):
+        if kind(option) in RANGE_KINDS:
             return option.range_start
         return next(iter(getattr(option, "name_lookup", {}).values()), "")
 
@@ -504,17 +435,15 @@ class OptionsApp(App[None]):
     def yaml_changed(self, event: TextArea.Changed) -> None:
         option = self.options[self.editor_key]
         option_kind = kind(option)
-        try:
-            value = yaml.safe_load(event.text_area.text)
-        except yaml.YAMLError as e:
-            self.error(f"Invalid YAML: {str(e).splitlines()[0]}")
+        ok, value = self.parse_yaml(event.text_area.text)
+        if not ok:
             return
         if value is None:
-            value = [] if option_kind in ("set", "list") else {} if option_kind in ("counter", "dict") else ""
-        if option_kind in ("set", "list") and not isinstance(value, list):
+            value = [] if option_kind in LIST_KINDS else {} if option_kind in MAPPING_KINDS else ""
+        if option_kind in LIST_KINDS and not isinstance(value, list):
             self.error("Expected a list (one '- entry' per line).")
             return
-        if option_kind in ("counter", "dict") and not isinstance(value, dict):
+        if option_kind in MAPPING_KINDS and not isinstance(value, dict):
             self.error("Expected a mapping (one 'name: count' per line).")
             return
         valid = getattr(option, "valid_keys", None)
@@ -523,42 +452,23 @@ class OptionsApp(App[None]):
             if unknown:
                 self.error(f"Unknown: {', '.join(map(str, unknown[:5]))}")
                 return
-        self.error("")
         self.set_value(self.editor_key, value)
-
-    def action_toggle_games(self) -> None:
-        pane = self.query_one("#games-pane")
-        pane.display = not pane.display
-        if pane.display:
-            self.query_one("#game-filter", Input).focus()
-        elif self.game:
-            self.query_one("#options", OptionList).focus()
-        self.call_after_refresh(self.on_resize)  # rows are fitted to the options list's width
-
-    async def action_quit(self) -> None:
-        if self.dirty and not self.quit_armed:
-            self.quit_armed = True
-            self.notify("Unsaved changes. Press Ctrl+Q again to quit without saving, or Ctrl+S to save.",
-                        severity="warning", timeout=6)
-            self.set_timer(6, lambda: setattr(self, "quit_armed", False))
-            return
-        self.exit()
 
     async def action_reset(self) -> None:
         if self.editor_key:
             self.set_value(self.editor_key, default_value(self.options[self.editor_key]))
-            await self.build_editor()
+            await self._build_editor_now()
+
+    def action_quit(self) -> None:
+        self.quit_unless_unsaved(self.dirty)
 
     # load / save
 
     def action_load(self) -> None:
-        if self.dirty and not self.load_armed:
-            self.load_armed = True
-            self.notify("Unsaved changes. Loading a file replaces this game's edits: press Ctrl+O again to load "
-                        "anyway, or Ctrl+S to save first.", severity="warning", timeout=6)
-            self.set_timer(6, lambda: setattr(self, "load_armed", False))
+        if self.dirty and not self.confirm_twice(
+                "load", "Unsaved changes. Loading a file replaces this game's edits: press Ctrl+O again to load "
+                        "anyway, or Ctrl+S to save first."):
             return
-        self.load_armed = False
         self.push_screen(FilePicker("Load options", [".yaml", ".yml"], "options_dir", DEFAULT_DIR), self.load_file)
 
     def load_file(self, path: Path | None) -> None:

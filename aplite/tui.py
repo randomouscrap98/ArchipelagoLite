@@ -27,8 +27,14 @@ NO_TAB_LOGGERS = ARCHIPELAGO_LOGGERS | {"root", "FileLog", "websockets", "asynci
 """Top-level logger names that never get their own tab; anything else that logs gets one (e.g. FactorioServer)."""
 
 
+def _terminal_handlers(root: logging.Logger) -> list[logging.Handler]:
+    """Root handlers that print to the terminal (Utils.init_logging adds one); they'd scribble over an app."""
+    return [h for h in root.handlers if type(h) is logging.StreamHandler and h.stream in (sys.stdout, sys.stderr)]
+
+
 class LogBuffer(logging.Handler):
-    """Root log handler; keeps history so records logged before the app mounts can be replayed."""
+    """Root log handler owned by this module: keeps history so records logged before the client TUI mounts can be
+    replayed, and forwards new ones to the TUI (sink) while it runs."""
 
     def __init__(self) -> None:
         super().__init__()
@@ -48,15 +54,33 @@ class LogBuffer(logging.Handler):
         if self.sink:
             self.sink(name, msg)
 
+    def attach(self, replace_terminal: bool = False) -> None:
+        """Start collecting. Safe to call again (Utils.init_logging wipes root handlers). With `replace_terminal`,
+        records stop going to the terminal too (the TUI shows them instead)."""
+        root = logging.getLogger()
+        if replace_terminal:
+            for handler in _terminal_handlers(root):
+                root.removeHandler(handler)
+        if self not in root.handlers:
+            root.addHandler(self)
+
+    def detach(self) -> None:
+        """Stop forwarding; later records (e.g. shutdown messages) go to the terminal again."""
+        self.sink = None
+        root = logging.getLogger()
+        root.removeHandler(self)
+        if not _terminal_handlers(root):
+            root.addHandler(logging.StreamHandler(sys.stdout))
+
 
 log_buffer = LogBuffer()
 
 
 @contextlib.contextmanager
 def quiet_terminal() -> typing.Iterator[None]:
-    """Detach root log handlers that write to the terminal while an app is on screen (they'd scribble over it)."""
+    """Detach root log handlers that write to the terminal while an app is on screen."""
     root = logging.getLogger()
-    streams = [h for h in root.handlers if type(h) is logging.StreamHandler and h.stream in (sys.stdout, sys.stderr)]
+    streams = _terminal_handlers(root)
     for handler in streams:
         root.removeHandler(handler)
     try:
@@ -64,16 +88,6 @@ def quiet_terminal() -> typing.Iterator[None]:
     finally:
         for handler in streams:
             root.addHandler(handler)
-
-
-def install_log_handler() -> None:
-    """Route root logging to the TUI instead of the terminal. Safe to call repeatedly (init_logging wipes handlers)."""
-    root = logging.getLogger()
-    for handler in root.handlers[:]:
-        if type(handler) is logging.StreamHandler and handler.stream in (sys.stdout, sys.stderr):
-            root.removeHandler(handler)
-    if log_buffer not in root.handlers:
-        root.addHandler(log_buffer)
 
 
 class CommandSuggester(Suggester):
@@ -304,17 +318,17 @@ class ClientApp(App):
             logging.getLogger("Client").exception(e)
 
 
-_running: set[int] = set()  # ids of contexts with an active app
+RUNNING = "_aplite_tui"
+"""Marker attribute on a CommonContext whose TUI is running."""
 
 
 async def console_loop(ctx: CommonContext) -> None:
-    if id(ctx) in _running:  # fallback already started it, then the client called run_cli late
-        return
-    _running.add(id(ctx))
-    install_log_handler()
-    app = ClientApp(ctx)
     from aplite import prompts
-    prompts.active_app = app  # file prompts (missing ROMs etc.) suspend the TUI while asking
+    if getattr(ctx, RUNNING, False):  # fallback already started it, then the client called run_cli late
+        return
+    setattr(ctx, RUNNING, True)
+    log_buffer.attach(replace_terminal=True)
+    app = ClientApp(ctx)
 
     async def watch_exit() -> None:
         await ctx.exit_event.wait()
@@ -322,17 +336,13 @@ async def console_loop(ctx: CommonContext) -> None:
 
     watcher = asyncio.create_task(watch_exit())
     try:
-        await app.run_async()
+        with prompts.around(app):  # file prompts (missing ROMs etc.) suspend the TUI while asking
+            await app.run_async()
     finally:
         watcher.cancel()
-        log_buffer.sink = None
-        logging.getLogger().removeHandler(log_buffer)
-        logging.getLogger().addHandler(logging.StreamHandler(sys.stdout))  # shutdown messages
+        log_buffer.detach()
         ctx.exit_event.set()
-        _running.discard(id(ctx))
-        from aplite import prompts
-        if prompts.active_app is app:
-            prompts.active_app = None
+        setattr(ctx, RUNNING, False)
 
 
 FALLBACK_DELAY = 1.0
@@ -356,5 +366,5 @@ def install_fallback() -> None:
 
 async def _fallback(ctx: CommonContext) -> None:
     await asyncio.sleep(FALLBACK_DELAY)
-    if not ctx.input_task and id(ctx) not in _running and not ctx.exit_event.is_set():
+    if not ctx.input_task and not getattr(ctx, RUNNING, False) and not ctx.exit_event.is_set():
         ctx.input_task = asyncio.create_task(console_loop(ctx), name="Input")

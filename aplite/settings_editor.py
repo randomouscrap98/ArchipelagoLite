@@ -1,10 +1,11 @@
 """
-host.yaml editor, same master-detail layout as the Options Creator. Edits are kept here until saved, then applied with
-upstream's Group.update (which converts to the setting types) and written by Settings.save, so host.yaml keeps its
-comments. Raw values are read directly: normal attribute access on a missing required path would prompt for it.
+host.yaml editor (see master_detail.py for the layout). Edits are kept here until saved, then applied with upstream's
+Group.update (which converts to the setting types) and written by Settings.save, so host.yaml keeps its comments.
+Raw values are read directly: normal attribute access on a missing required path would prompt for it.
 """
 from __future__ import annotations
 
+import dataclasses
 import enum
 import os
 import shlex
@@ -14,10 +15,9 @@ import typing
 from inspect import cleandoc
 from shutil import which
 
-import yaml
 from rich.text import Text
 from textual import on
-from textual.app import App, ComposeResult
+from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.widgets import Checkbox, Footer, Input, Label, OptionList, Static, TextArea
@@ -26,10 +26,12 @@ from textual.widgets.option_list import Option as ListOption
 import settings
 from aplite import prefs
 from aplite.file_picker import FilePicker, PathInput
-from aplite.options_creator import EDITOR_DELAY, NARROW, describe, fit
+from aplite.master_detail import CSS as MASTER_DETAIL_CSS, MasterDetailApp, describe, fit, to_yaml
 
 if typing.TYPE_CHECKING:
     from pathlib import Path
+
+PATH_KINDS = frozenset({"file", "folder"})
 
 
 def kind(hint: typing.Any) -> tuple[str, type | None]:
@@ -63,52 +65,52 @@ def plain(value: typing.Any) -> typing.Any:
     return settings._to_builtin(value)
 
 
+@dataclasses.dataclass
+class Setting:
+    kind: str  # see kind()
+    cls: type | None  # the setting class (Path subclass, IntEnum, ...) when there is one
+    value: typing.Any  # builtin value being edited
+    default: typing.Any
+    doc: str
+    required: bool  # paths: upstream asks for it when missing
+
+    def path_exists(self) -> bool:
+        return bool(self.value) and self.cls(self.value).exists()
+
+    def missing_path(self) -> bool:
+        return self.kind in PATH_KINDS and bool(self.value) and not self.path_exists()
+
+
 class Section:
+    """A host.yaml section: a Group with editable settings, or a dict left over from a world that isn't installed."""
+
     def __init__(self, key: str, group: settings.Group | dict) -> None:
         self.key = key
         self.group = group
         self.editable = isinstance(group, settings.Group)
-        if self.editable:
-            cls = type(group)
-            hints = cls.get_type_hints()
-            self.title = key.replace("_", " ").title()
-            self.doc = cleandoc(cls.__doc__) if cls.__doc__ else ""
-            self.entries: dict[str, dict] = {}
-            for name in group:
-                raw = group.__dict__[name] if name in group.__dict__ else getattr(cls, name, None)
-                editor, setting_cls = kind(hints.get(name, type(raw)))
-                doc_cls = setting_cls or (type(raw) if type(raw).__module__ != "builtins" else None)
-                self.entries[name] = {
-                    "kind": editor, "cls": setting_cls, "value": plain(raw),
-                    "default": plain(getattr(cls, name, None)),
-                    "doc": cleandoc(doc_cls.__doc__) if doc_cls is not None and doc_cls.__doc__ else "",
-                    "required": getattr(setting_cls, "required", False),
-                }
-        else:
+        self.settings: dict[str, Setting] = {}
+        if not self.editable:
             self.title = f"{key} (not installed)"
             self.doc = "This section is in host.yaml but no installed world uses it. Shown read-only."
-            self.entries = {}
+            return
+        cls = type(group)
+        hints = cls.get_type_hints()
+        self.title = key.replace("_", " ").title()
+        self.doc = cleandoc(cls.__doc__) if cls.__doc__ else ""
+        for name in group:
+            raw = group.__dict__[name] if name in group.__dict__ else getattr(cls, name, None)
+            editor, setting_cls = kind(hints.get(name, type(raw)))
+            doc_cls = setting_cls or (type(raw) if type(raw).__module__ != "builtins" else None)
+            self.settings[name] = Setting(
+                kind=editor, cls=setting_cls, value=plain(raw), default=plain(getattr(cls, name, None)),
+                doc=cleandoc(doc_cls.__doc__) if doc_cls is not None and doc_cls.__doc__ else "",
+                required=getattr(setting_cls, "required", False))
 
 
-def path_exists(entry: dict) -> bool:
-    if not entry["value"]:
-        return False
-    return entry["cls"](entry["value"]).exists()
-
-
-class SettingsApp(App[None]):
+class SettingsApp(MasterDetailApp):
     TITLE = "Settings (host.yaml)"
-    CSS = """
-    #sections-pane { width: 30; }
-    #rows { width: 3fr; }
-    #detail { width: 2fr; }
-    #editor { height: auto; max-height: 60%; }
-    #editor OptionList { height: auto; max-height: 15; }
-    #editor TextArea { height: 12; }
-    #doc { height: 1fr; border-top: solid $panel; padding: 0 1; }
-    #error { color: $error; }
-    """
-    BINDINGS = [Binding("ctrl+g", "toggle_sections", "Sections"), Binding("ctrl+s", "save", "Save"),
+    CSS = MASTER_DETAIL_CSS
+    BINDINGS = [Binding("ctrl+g", "toggle_side", "Sections"), Binding("ctrl+s", "save", "Save"),
                 Binding("ctrl+e", "external", "Edit in $EDITOR"), Binding("ctrl+r", "reset", "Reset setting"),
                 Binding("ctrl+b", "browse", "Browse", show=False),
                 Binding("ctrl+q", "quit", "Quit")]
@@ -117,12 +119,7 @@ class SettingsApp(App[None]):
         super().__init__()
         self.sections: dict[str, Section] = {}
         self.section: Section | None = None
-        self.current: str | None = None
-        self.editor_key: str | None = None
-        self.rebuild_timer = None
-        self.changed: dict[str, set[str]] = {}  # section -> setting names edited since the last save
-        self.quit_armed = False
-        self.name_width = 10
+        self.changed: dict[str, set[str]] = {}  # section key -> setting names edited since the last save
 
     @property
     def dirty(self) -> bool:
@@ -130,9 +127,9 @@ class SettingsApp(App[None]):
 
     def compose(self) -> ComposeResult:
         with Horizontal():
-            with Vertical(id="sections-pane"):
-                yield Input(placeholder="Filter sections", id="section-filter")
-                yield OptionList(id="sections")
+            with Vertical(id="side"):
+                yield Input(placeholder="Filter sections", id="side-filter")
+                yield OptionList(id="side-list")
             yield OptionList(id="rows")
             with Vertical(id="detail"):
                 yield Vertical(id="editor")
@@ -145,7 +142,7 @@ class SettingsApp(App[None]):
         self.load()
         if self.sections:
             self.select_section(next(iter(self.sections)), focus=False)
-        self.query_one("#section-filter", Input).focus()
+        self.query_one("#side-filter", Input).focus()
 
     def load(self) -> None:
         current = settings.get_settings()
@@ -161,165 +158,117 @@ class SettingsApp(App[None]):
         self.sub_title = current.filename or ""
         self.fill_sections()
 
-    # sections
+    # sections (side list)
 
     def fill_sections(self) -> None:
-        search = self.query_one("#section-filter", Input).value.strip().casefold()
-        sections = self.query_one("#sections", OptionList)
+        search = self.query_one("#side-filter", Input).value.strip().casefold()
+        sections = self.query_one("#side-list", OptionList)
         sections.clear_options()
         sections.add_options([ListOption(Text(fit(s.title, 26), style="" if s.editable else "dim"), id=key)
                               for key, s in self.sections.items()
                               if search in s.title.casefold() or search in key])
 
-    @on(Input.Changed, "#section-filter")
+    @on(Input.Changed, "#side-filter")
     def filter_sections(self) -> None:
         self.fill_sections()
 
-    @on(Input.Submitted, "#section-filter")
+    @on(Input.Submitted, "#side-filter")
     def pick_first(self) -> None:
-        sections = self.query_one("#sections", OptionList)
+        sections = self.query_one("#side-list", OptionList)
         if sections.option_count:
             self.select_section(sections.get_option_at_index(0).id)
 
-    @on(OptionList.OptionSelected, "#sections")
+    @on(OptionList.OptionSelected, "#side-list")
     def section_selected(self, event: OptionList.OptionSelected) -> None:
         self.select_section(event.option.id)
 
-    @on(OptionList.OptionHighlighted, "#sections")
+    @on(OptionList.OptionHighlighted, "#side-list")
     def section_highlighted(self, event: OptionList.OptionHighlighted) -> None:
         self.select_section(event.option.id, focus=False)
 
     def select_section(self, key: str, focus: bool = True) -> None:
-        if self.section and self.section.key == key:
-            if focus:
-                self.query_one("#rows", OptionList).focus()
-            return
-        self.section = self.sections[key]
-        self.name_width = max((len(name) for name in self.section.entries), default=10)
-        self.current = None
-        rows = self.query_one("#rows", OptionList)
-        rows.clear_options()
-        if self.section.editable:
-            rows.add_options([ListOption(self.row(name), id=name) for name in self.section.entries])
-            if rows.option_count:
-                rows.highlighted = 0
-        else:
-            rows.add_options([ListOption(Text("(read-only, see the right pane)", style="dim"), disabled=True)])
-            self.show_readonly()
+        if not (self.section and self.section.key == key):
+            self.section = self.sections[key]
+            self.name_width = max((len(name) for name in self.section.settings), default=10)
+            if self.section.editable:
+                self.show_rows([ListOption(self.row(name), id=name) for name in self.section.settings])
+            else:
+                self.show_rows([ListOption(Text("(read-only, see the right pane)", style="dim"), disabled=True)])
+                self.show_readonly()
         if focus:
-            if self.size.width < NARROW and self.query_one("#sections-pane").display:
-                self.query_one("#sections-pane").display = False
-                self.call_after_refresh(self.refresh_rows)
-            rows.focus()
+            self.collapse_side_if_narrow()
+            self.query_one("#rows", OptionList).focus()
 
     def show_readonly(self) -> None:
-        editor = self.query_one("#editor", Vertical)
-        editor.remove_children()
-        text = yaml.safe_dump(self.section.group, sort_keys=False, allow_unicode=True) if self.section.group else "{}"
+        self.query_one("#editor").remove_children()
+        text = to_yaml(self.section.group) or "{}"
         self.query_one("#doc-text", Static).update(Text(self.section.doc + "\n\n" + text))
 
     # rows
 
+    def row_keys(self) -> typing.Iterable[str]:
+        return self.section.settings if self.section else ()
+
     def row(self, name: str) -> Text:
-        entry = self.section.entries[name]
-        width = max(30, self.query_one("#rows", OptionList).scrollable_content_region.width - 1)
-        name_width = min(self.name_width, width - 16)
-        changed = entry["value"] != entry["default"]
-        text = Text("  " + fit(name, name_width).ljust(name_width + 2))
-        value = describe(entry["value"]) if entry["value"] not in (None, "") else "(not set)"
-        text.append(fit(value, width - name_width - 6), style="bold" if changed else "dim")
-        if entry["kind"] in ("file", "folder") and entry["value"] and not path_exists(entry):
-            text.append("  missing", style="red")
-        return text
-
-    def refresh_row(self, name: str) -> None:
-        self.query_one("#rows", OptionList).replace_option_prompt(name, self.row(name))
-
-    def refresh_rows(self) -> None:
-        if self.section and self.section.editable:
-            for name in self.section.entries:
-                self.refresh_row(name)
-
-    def on_resize(self) -> None:
-        self.call_after_refresh(self.refresh_rows)
-
-    def action_toggle_sections(self) -> None:
-        pane = self.query_one("#sections-pane")
-        pane.display = not pane.display
-        (self.query_one("#section-filter", Input) if pane.display else self.query_one("#rows", OptionList)).focus()
-        self.call_after_refresh(self.refresh_rows)
+        setting = self.section.settings[name]
+        value = describe(setting.value) if setting.value not in (None, "") else "(not set)"
+        note = Text("  missing", style="red") if setting.missing_path() else None
+        return self.fitted_row(name, value, setting.value != setting.default, note)
 
     def set_value(self, name: str, value: typing.Any) -> None:
-        entry = self.section.entries[name]
-        if entry["value"] != value:
-            entry["value"] = value
+        setting = self.section.settings[name]
+        if setting.value != value:
+            setting.value = value
             self.changed.setdefault(self.section.key, set()).add(name)
         self.refresh_row(name)
 
-    @on(OptionList.OptionHighlighted, "#rows")
-    def row_highlighted(self, event: OptionList.OptionHighlighted) -> None:
-        if event.option.id and event.option.id != self.current:
-            self.current = event.option.id
-            if self.rebuild_timer:
-                self.rebuild_timer.stop()
-            self.rebuild_timer = self.set_timer(EDITOR_DELAY, self.build_editor)
+    # editor for the highlighted setting
 
-    # editor
+    def setting(self) -> Setting:
+        return self.section.settings[self.editor_key]
 
     async def build_editor(self) -> None:
-        self.rebuild_timer = None
-        editor = self.query_one("#editor", Vertical)
-        await editor.remove_children()
-        name = self.editor_key = self.current
-        if not name or not self.section or not self.section.editable:
+        if not self.section or not self.section.editable:
             return
-        entry = self.section.entries[name]
-        value = entry["value"]
-        widgets: list = [Label(Text(name, style="bold"))]
-        detail = f"{entry['cls'].__name__ if entry['cls'] else entry['kind']}  (default: {describe(entry['default'])})"
-        widgets.append(Label(Text(detail, style="dim")))
-        if entry["kind"] in ("file", "folder"):
-            widgets.append(Label(Text("required" if entry["required"] else "optional", style="dim")))
+        setting = self.setting()
+        value = setting.value
+        type_name = setting.cls.__name__ if setting.cls else setting.kind
+        widgets: list = [Label(Text(self.editor_key, style="bold")),
+                         Label(Text(f"{type_name}  (default: {describe(setting.default)})", style="dim"))]
+        if setting.kind in PATH_KINDS:
+            widgets.append(Label(Text("required" if setting.required else "optional", style="dim")))
             widgets.append(PathInput(str(value or ""), id="path",
                                      placeholder="Path. Enter sets, Tab completes, Ctrl+B browses"))
             widgets.append(Label("", id="exists"))
-        elif entry["kind"] == "bool":
+        elif setting.kind == "bool":
             widgets.append(Checkbox("Enabled", bool(value), id="bool"))
-        elif entry["kind"] == "enum":
-            members = list(entry["cls"])
-            widgets.append(OptionList(*[ListOption(f"{m.name} ({m.value})") for m in members], id="enum"))
-        elif entry["kind"] == "int":
+        elif setting.kind == "enum":
+            widgets.append(OptionList(*[ListOption(f"{m.name} ({m.value})") for m in setting.cls], id="enum"))
+        elif setting.kind == "int":
             widgets.append(Input(str(value if value is not None else ""), type="integer", id="int",
                                  placeholder="Number (Enter to set)"))
-        elif entry["kind"] == "str":
+        elif setting.kind == "str":
             widgets.append(Input(str(value if value is not None else ""), id="str", placeholder="Text (Enter to set)"))
         else:
-            text = yaml.safe_dump(value, sort_keys=False, allow_unicode=True) if value not in (None, "") else ""
-            widgets += [Label(Text("Edit as YAML.", style="dim")), TextArea(text, id="yaml")]
+            widgets += [Label(Text("Edit as YAML.", style="dim")), TextArea(to_yaml(value), id="yaml")]
         widgets.append(Label("", id="error"))
+        editor = self.query_one("#editor")
         await editor.mount_all(widgets)
-        if entry["kind"] == "enum":
-            values = [m.value for m in entry["cls"]]
+        if setting.kind == "enum":
+            values = [m.value for m in setting.cls]
             if value in values:
                 editor.query_one("#enum", OptionList).highlighted = values.index(value)
         self.update_exists()
-        doc = entry["doc"] or "No description."
-        self.query_one("#doc-text", Static).update(Text(doc))
+        self.query_one("#doc-text", Static).update(Text(setting.doc or "No description."))
         self.query_one("#doc", VerticalScroll).scroll_home(animate=False)
-
-    def entry(self) -> dict:
-        return self.section.entries[self.editor_key]
-
-    def error(self, message: str) -> None:
-        self.query_one("#error", Label).update(message)
 
     def update_exists(self) -> None:
         if not self.query("#exists"):
             return
-        entry = self.entry()
-        if not entry["value"]:
-            text = Text("not set" + (" (will be asked for when needed)" if entry["required"] else ""), style="dim")
-        elif path_exists(entry):
+        setting = self.setting()
+        if not setting.value:
+            text = Text("not set" + (" (will be asked for when needed)" if setting.required else ""), style="dim")
+        elif setting.path_exists():
             text = Text("✓ exists", style="green")
         else:
             text = Text("✗ doesn't exist (saving is still allowed)", style="red")
@@ -334,19 +283,18 @@ class SettingsApp(App[None]):
     def action_browse(self) -> None:
         if not self.query("#path"):
             return
-        entry = self.entry()
-        start = os.path.dirname(entry["cls"](entry["value"]).resolve()) if entry["value"] else os.path.expanduser("~")
-        folder = entry["kind"] == "folder"
+        setting = self.setting()
+        start = os.path.dirname(setting.cls(setting.value).resolve()) if setting.value else os.path.expanduser("~")
 
         def chosen(path: Path | None) -> None:
             if path is not None:
-                target = str(path)
-                self.query_one("#path", PathInput).value = target
-                self.set_value(self.editor_key, target)
+                self.query_one("#path", PathInput).value = str(path)
+                self.set_value(self.editor_key, str(path))
                 self.update_exists()
 
         self.push_screen(FilePicker(f"Choose {self.editor_key}", [""], "settings_browse_dir",
-                                    start if os.path.isdir(start) else os.path.expanduser("~"), folders=folder), chosen)
+                                    start if os.path.isdir(start) else os.path.expanduser("~"),
+                                    folders=setting.kind == "folder"), chosen)
 
     @on(Checkbox.Changed, "#bool")
     def bool_changed(self, event: Checkbox.Changed) -> None:
@@ -354,7 +302,7 @@ class SettingsApp(App[None]):
 
     @on(OptionList.OptionSelected, "#enum")
     def enum_selected(self, event: OptionList.OptionSelected) -> None:
-        self.set_value(self.editor_key, list(self.entry()["cls"])[event.option_index].value)
+        self.set_value(self.editor_key, list(self.setting().cls)[event.option_index].value)
 
     @on(Input.Submitted, "#int")
     def int_submitted(self, event: Input.Submitted) -> None:
@@ -370,18 +318,14 @@ class SettingsApp(App[None]):
 
     @on(TextArea.Changed, "#yaml")
     def yaml_changed(self, event: TextArea.Changed) -> None:
-        try:
-            value = yaml.safe_load(event.text_area.text)
-        except yaml.YAMLError as e:
-            self.error(f"Invalid YAML: {str(e).splitlines()[0]}")
-            return
-        self.error("")
-        self.set_value(self.editor_key, value)
+        ok, value = self.parse_yaml(event.text_area.text)
+        if ok:
+            self.set_value(self.editor_key, value)
 
     async def action_reset(self) -> None:
         if self.editor_key and self.section and self.section.editable:
-            self.set_value(self.editor_key, self.entry()["default"])
-            await self.build_editor()
+            self.set_value(self.editor_key, self.setting().default)
+            await self._build_editor_now()
 
     # save / external editor / quit
 
@@ -393,10 +337,8 @@ class SettingsApp(App[None]):
         missing = []
         for key, names in self.changed.items():
             section = self.sections[key]
-            section.group.update({name: section.entries[name]["value"] for name in names})
-            missing += [f"{key}.{name}" for name in names
-                        if section.entries[name]["kind"] in ("file", "folder") and section.entries[name]["value"]
-                        and not path_exists(section.entries[name])]
+            section.group.update({name: section.settings[name].value for name in names})
+            missing += [f"{key}.{name}" for name in names if section.settings[name].missing_path()]
         try:
             current.save()
         except Exception as e:
@@ -429,14 +371,8 @@ class SettingsApp(App[None]):
             self.select_section(selected, focus=False)
         self.notify("Reloaded host.yaml")
 
-    async def action_quit(self) -> None:
-        if self.dirty and not self.quit_armed:
-            self.quit_armed = True
-            self.notify("Unsaved changes. Press Ctrl+Q again to quit without saving, or Ctrl+S to save.",
-                        severity="warning", timeout=6)
-            self.set_timer(6, lambda: setattr(self, "quit_armed", False))
-            return
-        self.exit()
+    def action_quit(self) -> None:
+        self.quit_unless_unsaved(self.dirty)
 
 
 def run(*args: str) -> None:
