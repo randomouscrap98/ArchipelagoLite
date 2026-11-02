@@ -59,7 +59,9 @@ def kind(hint: typing.Any) -> tuple[str, type | None]:
 def plain(value: typing.Any) -> typing.Any:
     """Setting value -> builtin value for editing (IntEnum -> int, Path -> str, Group -> dict)."""
     if isinstance(value, settings.Group):
-        return value.as_dict()
+        # raw values: getattr would resolve (and validate) paths, and "" resolves to the AP dir
+        return {k: plain(value.__dict__[k] if k in value.__dict__ else getattr(type(value), k, None))
+                for k in value}
     if isinstance(value, (list, dict, tuple, set)) or value is None:
         return list(value) if isinstance(value, (tuple, set)) else value
     return settings._to_builtin(value)
