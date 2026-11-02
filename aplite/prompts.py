@@ -1,13 +1,18 @@
 """
 Terminal replacements for Utils' file dialogs (open_filename / open_directory), which otherwise need kdialog, zenity or
 tkinter. Used for missing ROMs and game folders (settings.py), Install APWorld, Host without a file, etc.
-While a client's TUI is on screen, it is suspended for the prompt and restored after.
+Shows the full-screen file picker (a child process, see pick_file.py), falling back to a plain prompt. While a
+client's TUI is on screen, it is suspended meanwhile and restored after.
 """
 from __future__ import annotations
 
 import contextlib
 import logging
 import os
+import signal
+import subprocess
+import sys
+import tempfile
 import threading
 import typing
 
@@ -59,12 +64,12 @@ def ask(title: str, folder: bool, suffixes: tuple[str, ...], suggest: str) -> st
 def _ask(title: str, folder: bool, suffixes: tuple[str, ...], suggest: str) -> str | None:
     app = active_app
     if app is None:
-        return _prompt(title, folder, suffixes, suggest)
+        return _pick_or_prompt(title, folder, suffixes, suggest)
 
     def suspended() -> str | None:
         try:
             with app.suspend():
-                return _prompt(title, folder, suffixes, suggest)
+                return _pick_or_prompt(title, folder, suffixes, suggest)
         except Exception as e:  # e.g. a driver that can't suspend
             logging.error(f"Couldn't ask for {title} in the terminal: {e}")
             return None
@@ -74,6 +79,28 @@ def _ask(title: str, folder: bool, suffixes: tuple[str, ...], suggest: str) -> s
     return app.call_from_thread(suspended)
 
 
+def _pick_or_prompt(title: str, folder: bool, suffixes: tuple[str, ...], suggest: str) -> str | None:
+    """The full-screen file picker (aplite/pick_file.py) in a child process; a plain terminal prompt if it fails."""
+    import aplite
+    fd, out = tempfile.mkstemp(prefix="aplite-pick-", suffix=".txt")
+    os.close(fd)
+    try:
+        status = subprocess.call([sys.executable, "-m", "aplite.pick_file", out, title,
+                                  "folder" if folder else "file", suggest or "", *suffixes],
+                                 env={**aplite.child_env(), "SKIP_REQUIREMENTS_UPDATE": "1"})
+        with open(out, encoding="utf-8") as f:
+            answer = f.read().strip()
+        if status == 0:
+            return answer or None
+        logging.warning(f"File picker failed (exit {status}); asking in the terminal instead.")
+    except OSError as e:
+        logging.warning(f"File picker failed ({e}); asking in the terminal instead.")
+    finally:
+        with contextlib.suppress(OSError):
+            os.remove(out)
+    return _prompt(title, folder, suffixes, suggest)
+
+
 def _prompt(title: str, folder: bool, suffixes: tuple[str, ...], suggest: str) -> str | None:
     kind = "folder" if folder else "file"
     print(f"\n{title}")
@@ -81,12 +108,15 @@ def _prompt(title: str, folder: bool, suffixes: tuple[str, ...], suggest: str) -
         print(f"  expected: {', '.join(suffixes)}")
     if suggest:
         print(f"  suggested: {suggest}")
-    print(f"  Type a path to the {kind} (Tab completes), or leave empty to cancel.")
-    with _path_completion(folder):
+    print(f"  Type a path to the {kind} (Tab completes), or leave empty (or Ctrl+C) to cancel.")
+    with _path_completion(folder), _ctrl_c_cancels():
         while True:
             try:
                 answer = input("> ").strip()
             except EOFError:
+                return None
+            except KeyboardInterrupt:
+                print("\nCancelled.")
                 return None
             if not answer:
                 print("Cancelled.")
@@ -97,6 +127,20 @@ def _prompt(title: str, folder: bool, suffixes: tuple[str, ...], suggest: str) -
                     print(f"  Note: expected {', '.join(suffixes)}; using it anyway.")
                 return path
             print(f"  Not a {kind}: {path}")
+
+
+@contextlib.contextmanager
+def _ctrl_c_cancels() -> typing.Iterator[None]:
+    """Ctrl+C raises KeyboardInterrupt in input() for the prompt to catch. Otherwise asyncio.run's handler (clients)
+    would cancel the whole client while the prompt carries on, and crash it once the prompt returns."""
+    if threading.current_thread() is not threading.main_thread():
+        yield  # only the main thread can change signal handlers (and receives the signal)
+        return
+    previous = signal.signal(signal.SIGINT, signal.default_int_handler)
+    try:
+        yield
+    finally:
+        signal.signal(signal.SIGINT, previous)
 
 
 class _path_completion:

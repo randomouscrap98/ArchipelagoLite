@@ -122,8 +122,9 @@ class FilePicker(Screen[Path | None]):
                 Binding("ctrl+l", "use_folder", "Use this folder")]
 
     def __init__(self, title: str, suffixes: typing.Sequence[str], pref_key: str, default_dir: str,
-                 folders: bool = False, show_all: bool = False) -> None:
-        """Starts in the folder saved under `pref_key`, else `default_dir`; only shows `suffixes` until Ctrl+T (or
+                 folders: bool = False, show_all: bool = False, start: str | None = None) -> None:
+        """Starts in `start` if given, else the folder saved under `pref_key`, else `default_dir`; only shows `suffixes`
+        until Ctrl+T (or
         everything with `show_all`). With `folders`, it picks a folder: Ctrl+L uses the shown one, Enter on a
         folder path picks it."""
         super().__init__()
@@ -133,7 +134,8 @@ class FilePicker(Screen[Path | None]):
         self.suffixes = suffixes
         self.pref_key = pref_key
         last = prefs.get(pref_key)
-        self.start = Path(last if last and os.path.isdir(last) else default_dir)
+        self.start = Path(start if start and os.path.isdir(start) else
+                          last if last and os.path.isdir(last) else default_dir)
 
     def compose(self) -> ComposeResult:
         yield Static(id="folder")
