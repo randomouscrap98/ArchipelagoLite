@@ -117,8 +117,11 @@ def main() -> None:
 
 def run(component: "LauncherComponents.Component", *args: str) -> None:
     """Run a component in this process, so it gets the terminal and aplite's patches."""
-    from worlds.LauncherComponents import export_datapackage, generate_yamls
-    if launcher.is_options_creator(component):
+    from worlds.LauncherComponents import export_datapackage, generate_yamls, open_host_yaml
+    if component.func is open_host_yaml:  # upstream's starts a desktop editor in the background
+        from aplite import settings_editor
+        settings_editor.run()
+    elif launcher.is_options_creator(component):
         from aplite import options_creator
         options_creator.run()
     elif component.func is export_datapackage:

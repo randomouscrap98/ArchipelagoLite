@@ -45,9 +45,10 @@ class FilteredTree(DirectoryTree):
 class PathInput(Input):
     """Tab completes the path like a shell (shift+tab leaves)."""
     BINDINGS = [Binding("tab", "complete", "Complete path", show=False)]
+    shows: typing.Callable[[Path], bool] = staticmethod(lambda path: not path.name.startswith("."))
+    """Which entries completion offers; the file picker sets this to its tree's filter."""
 
     def action_complete(self) -> None:
-        tree = self.screen.query_one(FilteredTree)
         typed = os.path.expanduser(self.value)
         folder, prefix = os.path.split(typed)
         folder = folder or "."
@@ -55,7 +56,7 @@ class PathInput(Input):
             names = [entry.name for entry in os.scandir(folder) if entry.name.startswith(prefix)]
         except OSError:
             return
-        matches = sorted(name for name in names if tree.shows(Path(folder, name)))
+        matches = sorted(name for name in names if self.shows(Path(folder, name)))
         if not matches:
             self.screen.notify("No matches", timeout=2)
             return
@@ -76,11 +77,15 @@ class FilePicker(Screen[Path | None]):
     #folder { height: 1; padding: 0 1; background: $panel; }
     FilteredTree { height: 1fr; }
     """
-    BINDINGS = [Binding("escape", "back", "Back"), Binding("ctrl+t", "toggle_all", "Show all files")]
+    BINDINGS = [Binding("escape", "back", "Back"), Binding("ctrl+t", "toggle_all", "Show all files"),
+                Binding("ctrl+l", "use_folder", "Use this folder")]
 
-    def __init__(self, title: str, suffixes: typing.Sequence[str], pref_key: str, default_dir: str) -> None:
-        """Starts in the folder saved under `pref_key`, else `default_dir`; only shows `suffixes` until toggled."""
+    def __init__(self, title: str, suffixes: typing.Sequence[str], pref_key: str, default_dir: str,
+                 folders: bool = False) -> None:
+        """Starts in the folder saved under `pref_key`, else `default_dir`; only shows `suffixes` until toggled.
+        With `folders`, it picks a folder: Ctrl+L uses the shown one, Enter on a folder path picks it."""
         super().__init__()
+        self.folders = folders
         self.title_text = title
         self.suffixes = suffixes
         self.pref_key = pref_key
@@ -94,8 +99,19 @@ class FilePicker(Screen[Path | None]):
         yield Footer()
 
     def on_mount(self) -> None:
+        self.query_one(PathInput).shows = self.query_one(FilteredTree).shows
         self.update_folder()
         self.query_one(FilteredTree).focus()
+
+    def check_action(self, action: str, parameters: tuple) -> bool | None:
+        return self.folders if action == "use_folder" else True
+
+    def action_use_folder(self) -> None:
+        self.choose_folder(Path(self.query_one(FilteredTree).path).resolve())
+
+    def choose_folder(self, path: Path) -> None:
+        prefs.set(self.pref_key, str(path))
+        self.dismiss(path)
 
     def update_folder(self) -> None:
         tree = self.query_one(FilteredTree)
@@ -122,7 +138,9 @@ class FilePicker(Screen[Path | None]):
         event.stop()  # the app below may handle Input.Submitted too
         path = Path(os.path.expanduser(event.value.strip())).resolve()
         tree = self.query_one(FilteredTree)
-        if path.is_dir():
+        if path.is_dir() and self.folders:
+            self.choose_folder(path)
+        elif path.is_dir():
             tree.path = path
             self.update_folder()
             tree.focus()
