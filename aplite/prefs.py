@@ -9,6 +9,9 @@ import yaml
 
 import Utils
 
+if typing.TYPE_CHECKING:
+    from textual.app import App
+
 DEFAULTS: dict[str, typing.Any] = {
     "theme": "textual-dark",
 }
@@ -47,3 +50,11 @@ def set(key: str, value: typing.Any) -> None:
             yaml.safe_dump(prefs, f, sort_keys=True)
     except OSError as e:
         logging.warning(f"Could not save {path()}: {e}")
+
+
+def bind_theme(app: "App") -> None:
+    """Apply the saved theme to a Textual app and save it whenever the user changes it."""
+    theme = get("theme")
+    if theme in app.available_themes:
+        app.theme = theme
+    app.theme_changed_signal.subscribe(app, lambda theme: set("theme", theme.name))

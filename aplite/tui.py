@@ -157,10 +157,7 @@ class ClientApp(App):
 
     def on_mount(self) -> None:
         self.title = type(self.ctx).__name__
-        theme = prefs.get("theme")
-        if theme in self.available_themes:
-            self.theme = theme
-        self.theme_changed_signal.subscribe(self, lambda theme: prefs.set("theme", theme.name))
+        prefs.bind_theme(self)
 
         self.query_one("#hints", DataTable).add_columns("Receiving", "Item", "Finding", "Location", "Entrance",
                                                         "Status")

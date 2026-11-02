@@ -43,6 +43,7 @@ import worlds.LauncherComponents as LauncherComponents
 LauncherComponents.run_in_process = True  # core hook: clients need this terminal's stdin
 
 import Launcher
+from aplite import launcher
 
 
 def main() -> None:
@@ -51,7 +52,7 @@ def main() -> None:
     if argv[:1] in (["-h"], ["--help"]):
         print(__doc__.strip().splitlines()[0])
         print("usage: python -m aplite [Patch|Game|Component|url] [component args]")
-        print("With no arguments, lists components.")
+        print("With no arguments, opens the launcher.")
         return
     component_args = argv[1:]
     if component_args[:1] == ["--"]:
@@ -60,19 +61,25 @@ def main() -> None:
             "update_settings": False}
 
     target = args["Patch|Game|Component|url"]
-    if target is None:
-        print("Components:")
-        for component in LauncherComponents.components:
-            print(f"  {component.display_name}")
-        return
-
     Utils.init_logging("aplite")
     logging.getLogger().addHandler(tui.log_buffer)  # so the TUI can replay startup messages
 
+    if target is None:
+        component = launcher.pick(LauncherComponents.components)
+        if component:
+            run(component)
+        return
+
     if target.startswith("archipelago://"):
-        # Launcher would show a kivy popup to pick a client; until the TUI launcher exists, use the first match
         clients, text_client = Launcher.handle_uri(target)
-        run((clients or [text_client])[0], target, *component_args)
+        if not clients:
+            component = text_client
+        elif len(clients) == 1:
+            component = clients[0]
+        else:
+            component = launcher.pick([*clients, text_client], target)
+        if component:
+            run(component, target, *component_args)
         return
 
     file, component = LauncherComponents.identify(target)
@@ -83,12 +90,11 @@ def main() -> None:
 
 def run(component: "LauncherComponents.Component", *args: str) -> None:
     """Run a component in this process, so it gets the terminal and aplite's patches."""
-    from worlds.LauncherComponents import Type
     if component.func:
         # some clients parse sys.argv themselves and/or take no func args (e.g. civ6, kh1)
         sys.argv = [sys.argv[0], *args]
         Launcher.run_component(component, *(args if _accepts_args(component.func) else ()))
-    elif component.script_name and (component.type == Type.CLIENT or component.cli):
+    elif launcher.runnable(component):
         # script components (SNIClient, Generate, ...) would otherwise be a new process without the patches
         import runpy
         script = Utils.local_path(f"{component.script_name}.py")
