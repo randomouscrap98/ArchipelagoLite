@@ -49,4 +49,5 @@ fi
 
 # dependencies are handled above, so skip ModuleUpdate's slower check
 export SKIP_REQUIREMENTS_UPDATE=1
-exec "$PY" -m aplite "$@"
+# PYTHONPATH rather than cd, so relative paths in args (patch files) still work from any folder
+PYTHONPATH="$REPO${PYTHONPATH:+:$PYTHONPATH}" exec "$PY" -m aplite "$@"

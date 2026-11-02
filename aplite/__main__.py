@@ -70,9 +70,19 @@ def main() -> None:
     logging.getLogger().addHandler(tui.log_buffer)  # so the TUI can replay startup messages
 
     if target is None:
-        component = launcher.pick(load)
-        if component:
-            run(component)
+        choice = launcher.pick(load)
+        if not choice:
+            return
+        component, args, come_back = choice
+        try:
+            run(component, *args)
+        except SystemExit:
+            if not come_back:
+                raise
+        if come_back:
+            # a fresh process rather than looping, so nothing the client left behind leaks into the launcher
+            sys.stdout.flush()
+            os.execv(sys.executable, [sys.executable, "-m", "aplite"])
         return
 
     load()
@@ -83,7 +93,8 @@ def main() -> None:
         elif len(clients) == 1:
             component = clients[0]
         else:
-            component = launcher.pick([*clients, text_client], target)
+            choice = launcher.pick([*clients, text_client], target)
+            component = choice[0] if choice else None
         if component:
             run(component, target, *component_args)
         return

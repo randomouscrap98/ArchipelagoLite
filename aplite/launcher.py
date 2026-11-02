@@ -30,7 +30,11 @@ def load_favorites() -> list[str]:
     return list(Utils.persistent_load().get("launcher", {}).get("favorites", []))
 
 
-class LauncherApp(App["Component"]):
+Choice = tuple["Component", tuple[str, ...], bool]
+"""What the launcher returns: the component to run, its args, and whether to come back to the launcher after."""
+
+
+class LauncherApp(App[Choice]):
     TITLE = "Archipelago"
     CSS = """
     OptionList { height: 1fr; }
@@ -156,8 +160,24 @@ class LauncherApp(App["Component"]):
             self.set_status("Loading worlds… (will launch the top match)")
             return
         component = self.selected()
-        if component:
-            self.exit(component)
+        if not component:
+            return
+        from worlds.LauncherComponents import open_patch
+        if component.func is open_patch:  # upstream's opens a native dialog, then a new kivy launcher process
+            from aplite.patch_picker import PatchPicker
+            self.push_screen(PatchPicker(), self.patch_chosen)
+        else:
+            self.exit((component, (), False))
+
+    def patch_chosen(self, path) -> None:
+        if path is None:
+            return  # back to the launcher
+        from worlds.LauncherComponents import identify
+        file, component = identify(str(path))
+        if component and runnable(component):
+            self.exit((component, (file,), True))
+        else:
+            self.notify(f"No client can open {path.name}", severity="error")
 
     def action_toggle_favorite(self) -> None:
         component = self.selected()
@@ -171,8 +191,8 @@ class LauncherApp(App["Component"]):
         self.rebuild()
 
 
-def pick(components: Components | typing.Callable[[], Components], subtitle: str = "") -> Component | None:
-    """Show the launcher; returns the chosen component, or None if the user quit.
+def pick(components: Components | typing.Callable[[], Components], subtitle: str = "") -> Choice | None:
+    """Show the launcher; returns the chosen component and its args, or None if the user quit.
     `components` may be a function that loads them; the launcher shows while it runs in a thread."""
     # log lines written to the real terminal would scribble over the app
     root = logging.getLogger()
