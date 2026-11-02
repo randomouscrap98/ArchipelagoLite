@@ -2,9 +2,12 @@
 from __future__ import annotations
 
 import os
+import shlex
 import typing
+import urllib.parse
 from pathlib import Path
 
+from textual import events
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.screen import Screen
@@ -42,6 +45,25 @@ class FilteredTree(DirectoryTree):
         self.screen.update_folder()
 
 
+def dropped_path(text: str) -> Path | None:
+    """The existing file or folder a paste names, if any. Terminals paste a file dropped on them as its path: plain,
+    quoted, shell-escaped, or a file:// URI depending on the terminal. Absolute paths only, so pasting a word isn't
+    taken for a file in the current folder."""
+    text = text.strip().splitlines()[0].strip() if text.strip() else ""
+    candidates = [text, text.strip("'\"")]
+    if text.startswith("file://"):
+        candidates.append(urllib.parse.unquote(urllib.parse.urlparse(text).path))
+    try:
+        candidates += shlex.split(text, posix=os.name != "nt")[:1]  # first of several dropped files
+    except ValueError:
+        pass
+    for candidate in candidates:
+        path = Path(os.path.expanduser(candidate))
+        if candidate and path.is_absolute() and path.exists():
+            return path
+    return None
+
+
 def _not_hidden(path: Path) -> bool:
     return not path.name.startswith(".")
 
@@ -54,6 +76,18 @@ class PathInput(Input):
         """`shows` decides which entries completion offers."""
         super().__init__(*args, **kwargs)
         self.shows = shows
+
+    def _on_paste(self, event: events.Paste) -> None:
+        """A dropped file replaces the value (cleaned up); in a FilePicker it opens right away."""
+        path = dropped_path(event.text)
+        if path is None:
+            super()._on_paste(event)
+            return
+        event.stop()
+        self.value = str(path)
+        self.cursor_position = len(self.value)
+        if isinstance(self.screen, FilePicker):
+            self.screen.open(path)
 
     def action_complete(self) -> None:
         typed = os.path.expanduser(self.value)
@@ -146,7 +180,17 @@ class FilePicker(Screen[Path | None]):
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         event.stop()  # the app below may handle Input.Submitted too
-        path = Path(os.path.expanduser(event.value.strip())).resolve()
+        self.open(Path(os.path.expanduser(event.value.strip())))
+
+    def on_paste(self, event: events.Paste) -> None:
+        """A file dropped on the terminal while the list has focus (the path input handles its own)."""
+        if path := dropped_path(event.text):
+            event.stop()
+            self.open(path)
+
+    def open(self, path: Path) -> None:
+        """A typed or dropped path: a file is chosen, a folder is shown (or chosen, when picking folders)."""
+        path = path.resolve()
         tree = self.query_one(FilteredTree)
         if path.is_dir() and self.folders:
             self.choose_folder(path)
