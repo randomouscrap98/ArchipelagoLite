@@ -50,6 +50,7 @@ EnemizerCLI/
 /appimagetool*
 /VC_redist.x64.exe
 /host.yaml
+/aplite.yaml
 /options.yaml
 /config.yaml
 /logs/

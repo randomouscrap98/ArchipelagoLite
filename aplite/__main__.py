@@ -72,17 +72,30 @@ def main() -> None:
     if target.startswith("archipelago://"):
         # Launcher would show a kivy popup to pick a client; until the TUI launcher exists, use the first match
         clients, text_client = Launcher.handle_uri(target)
-        Launcher.run_component((clients or [text_client])[0], target, *args["args"])
+        run((clients or [text_client])[0], target, *component_args)
         return
 
-    _, component = LauncherComponents.identify(target)
+    file, component = LauncherComponents.identify(target)
     if not component:
         sys.exit(f"Unknown component, patch or game: {target}")  # Launcher.main would open the kivy GUI
-    # some clients parse sys.argv themselves and/or take no func args (e.g. civ6, kh1)
-    sys.argv = [sys.argv[0], *component_args]
-    if component.func and not _accepts_args(component.func):
-        args["args"] = ()
-    Launcher.main(args)
+    run(component, *((file,) if file else ()), *component_args)
+
+
+def run(component: "LauncherComponents.Component", *args: str) -> None:
+    """Run a component in this process, so it gets the terminal and aplite's patches."""
+    from worlds.LauncherComponents import Type
+    if component.func:
+        # some clients parse sys.argv themselves and/or take no func args (e.g. civ6, kh1)
+        sys.argv = [sys.argv[0], *args]
+        Launcher.run_component(component, *(args if _accepts_args(component.func) else ()))
+    elif component.script_name and (component.type == Type.CLIENT or component.cli):
+        # script components (SNIClient, Generate, ...) would otherwise be a new process without the patches
+        import runpy
+        script = Utils.local_path(f"{component.script_name}.py")
+        sys.argv = [script, *args]
+        runpy.run_path(script, run_name="__main__")
+    else:
+        sys.exit(f"{component.display_name} needs the full Archipelago GUI and isn't supported by aplite.")
 
 
 def _accepts_args(func) -> bool:
