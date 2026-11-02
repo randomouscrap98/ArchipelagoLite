@@ -114,8 +114,7 @@ class SettingsApp(MasterDetailApp):
     CSS = MASTER_DETAIL_CSS
     BINDINGS = [Binding("ctrl+g", "toggle_side", "Sections"), Binding("ctrl+s", "save", "Save"),
                 Binding("ctrl+e", "external", "Edit in $EDITOR"), Binding("ctrl+r", "reset", "Reset setting"),
-                Binding("ctrl+b", "browse", "Browse", show=False),
-                Binding("ctrl+q", "quit", "Quit")]
+                Binding("ctrl+b", "browse", "Browse", show=False)]
 
     def __init__(self) -> None:
         super().__init__()
@@ -372,10 +371,6 @@ class SettingsApp(MasterDetailApp):
         if selected in self.sections:
             self.select_section(selected, focus=False)
         self.notify("Reloaded host.yaml")
-
-    def action_quit(self) -> None:
-        self.quit_unless_unsaved(self.dirty)
-
 
 def run() -> None:
     from aplite.tui import quiet_terminal

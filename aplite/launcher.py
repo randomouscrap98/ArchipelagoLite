@@ -8,12 +8,13 @@ import os
 import typing
 
 from rich.text import Text
-from textual.app import App, ComposeResult
+from textual.app import ComposeResult
 from textual.widgets import Footer, Input, OptionList
 from textual.widgets.option_list import Option
 
 import Utils
 from aplite import prefs
+from aplite.nav import AppliteApp
 from aplite.components import override_for, returns_to_launcher, runnable
 
 if typing.TYPE_CHECKING:
@@ -72,12 +73,12 @@ Choice = tuple["Component", tuple[str, ...], bool]
 """What the launcher returns: the component to run, its args, and whether to come back to the launcher after."""
 
 
-class LauncherApp(App[Choice]):
+class LauncherApp(AppliteApp):
     TITLE = "Archipelago"
     CSS = """
     OptionList { height: 1fr; }
     """
-    BINDINGS = [("ctrl+q", "quit", "Quit"), ("ctrl+f", "toggle_favorite", "Favorite")]
+    BINDINGS = [("ctrl+f", "toggle_favorite", "Favorite")]
 
     def __init__(self, components: Components | typing.Callable[[], Components], subtitle: str = "") -> None:
         """`components` may be a function, which is run in a thread while the launcher already shows."""
@@ -95,6 +96,9 @@ class LauncherApp(App[Choice]):
         yield Input(placeholder="Search. Enter launches, ↑/↓ select.")
         yield OptionList()
         yield Footer()
+
+    def check_action(self, action: str, parameters: tuple) -> bool | None:
+        return parameters != ("launcher",)  # already here
 
     def on_mount(self) -> None:
         prefs.bind_theme(self)

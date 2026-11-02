@@ -210,7 +210,7 @@ class OptionsApp(MasterDetailApp):
     """
     BINDINGS = [Binding("ctrl+g", "toggle_side", "Games"), Binding("ctrl+o", "load", "Load"),
                 Binding("ctrl+s", "save", "Save"),
-                Binding("ctrl+r", "reset", "Reset option"), Binding("ctrl+q", "quit", "Quit")]
+                Binding("ctrl+r", "reset", "Reset option")]
 
     def __init__(self, load_worlds: typing.Callable[[], typing.Any] | None = None) -> None:
         """`load_worlds` runs in a thread while the app shows; None if the worlds are already loaded."""
@@ -528,9 +528,6 @@ class OptionsApp(MasterDetailApp):
         if self.editor_key:
             self.set_value(self.editor_key, default_value(self.options[self.editor_key]))
             await self._build_editor_now()
-
-    def action_quit(self) -> None:
-        self.quit_unless_unsaved(self.dirty)
 
     # load / save
 

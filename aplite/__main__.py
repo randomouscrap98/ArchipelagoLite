@@ -31,7 +31,7 @@ import Utils
 
 Utils.gui_enabled = False  # before CommonClient does `from Utils import gui_enabled`
 
-from aplite import bytecode_cache, components, launcher, prompts, tui
+from aplite import bytecode_cache, components, launcher, nav, prompts, tui
 
 bytecode_cache.install()  # before any .apworld is imported
 prompts.install()  # terminal file prompts; before worlds load (LauncherComponents imports open_filename by name)
@@ -87,14 +87,14 @@ def main() -> None:
             choice = launcher.pick([*clients, text_client], target)
             component = choice[0] if choice else None
         if component:
-            components.run(component, target, *component_args)
+            run(component, (target, *component_args), come_back=False)
         return
 
     from worlds.LauncherComponents import identify
     file, component = identify(target)
     if not component:
         sys.exit(f"Unknown component, patch or game: {target}")  # Launcher.main would open the kivy GUI
-    components.run(component, *((file,) if file else ()), *component_args)
+    run(component, (*((file,) if file else ()), *component_args), come_back=False)
 
 
 def launch_from_launcher() -> None:
@@ -102,14 +102,22 @@ def launch_from_launcher() -> None:
     if not choice:
         return
     component, args, come_back = choice
+    run(component, args, come_back)
+
+
+def run(component, args: tuple[str, ...], come_back: bool) -> None:
+    """Run a component; then the launcher if the user asked for it (ctrl+l) or `come_back` and they didn't quit."""
+    def wants_launcher() -> bool:
+        return nav.next_step == "launcher" or (come_back and nav.next_step != "quit")
+
     try:
         components.run(component, *args)
     except SystemExit:
-        if not come_back:
+        if not wants_launcher():
             raise
-    if not come_back:
+    if not wants_launcher():
         return
-    if components.pauses_after(component):
+    if nav.next_step is None and components.pauses_after(component):
         try:
             input("\nPress Enter to return to the launcher…")
         except EOFError:

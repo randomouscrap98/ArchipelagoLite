@@ -15,12 +15,13 @@ import types
 import typing
 
 from rich.text import Text
-from textual.app import App, ComposeResult
+from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.widgets import Footer, RichLog, Static
 
 import Utils
 from aplite import prefs
+from aplite.nav import AppliteApp
 
 if typing.TYPE_CHECKING:
     from flask import Flask
@@ -131,13 +132,13 @@ def open_browser(url: str) -> None:
         webbrowser.open(url)
 
 
-class WebOptionsApp(App[None]):
+class WebOptionsApp(AppliteApp):
     TITLE = "Web Options"
     CSS = """
     #link { padding: 1 2; height: auto; }
     RichLog { height: 1fr; border-top: solid $panel; }
     """
-    BINDINGS = [Binding("ctrl+o", "open_browser", "Open browser"), Binding("ctrl+q", "quit", "Stop server")]
+    BINDINGS = [Binding("ctrl+o", "open_browser", "Open browser")]
 
     def __init__(self) -> None:
         super().__init__()
@@ -160,7 +161,8 @@ class WebOptionsApp(App[None]):
         threading.Thread(target=self.server.serve_forever, name="web options", daemon=True).start()
         self.query_one("#link", Static).update(Text.assemble(
             "Options pages are running at  ", (self.url, "bold underline"), "\n",
-            ("Opened in your browser; if it didn't open, copy the link. Ctrl+Q stops the server.", "dim")))
+            ("Opened in your browser; if it didn't open, copy the link. Leaving (Ctrl+Q / Ctrl+L) stops the server.",
+             "dim")))
         open_browser(self.url)
 
     def log_line(self, line: str) -> None:

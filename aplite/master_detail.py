@@ -13,7 +13,7 @@ import typing
 import yaml
 from rich.text import Text
 from textual import on
-from textual.app import App
+from aplite.nav import AppliteApp
 from textual.widgets import Input, Label, OptionList
 
 NARROW = 140
@@ -63,7 +63,7 @@ def to_yaml(value: typing.Any) -> str:
     return yaml.safe_dump(value, sort_keys=False, allow_unicode=True).replace("...\n", "")
 
 
-class MasterDetailApp(App):
+class MasterDetailApp(AppliteApp):
     def __init__(self) -> None:
         super().__init__()
         self.current: str | None = None  # highlighted row
@@ -170,7 +170,9 @@ class MasterDetailApp(App):
         self.set_timer(CONFIRM_SECONDS, lambda: self._armed.discard(action))
         return False
 
-    def quit_unless_unsaved(self, dirty: bool) -> None:
-        if not dirty or self.confirm_twice(
-                "quit", "Unsaved changes. Press Ctrl+Q again to quit without saving, or Ctrl+S to save."):
-            self.exit()
+    dirty: bool  # unsaved changes
+
+    def can_leave(self, step: str) -> bool:
+        key, verb = ("Ctrl+Q", "quit") if step == "quit" else ("Ctrl+L", "go to the launcher")
+        return not self.dirty or self.confirm_twice(
+            step, f"Unsaved changes. Press {key} again to {verb} without saving, or Ctrl+S to save.")

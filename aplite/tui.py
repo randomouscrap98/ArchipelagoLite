@@ -11,7 +11,7 @@ import typing
 
 from rich.text import Text
 from textual import on
-from textual.app import App, ComposeResult
+from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal
 from textual.suggester import Suggester
@@ -20,6 +20,7 @@ from textual.widgets.tabbed_content import ContentTab
 from textual.widgets import Button, DataTable, Footer, Input, RichLog, Static, TabbedContent, TabPane
 
 from aplite import prefs, prompts
+from aplite.nav import AppliteApp
 
 if typing.TYPE_CHECKING:
     from CommonClient import CommonContext
@@ -175,7 +176,7 @@ class CommandInput(Input):
         event.stop()
 
 
-class ClientApp(App):
+class ClientApp(AppliteApp):
     TITLE = "Archipelago"
     CSS = """
     #connect-bar { height: 1; background: $panel; }
@@ -187,8 +188,8 @@ class ClientApp(App):
     RichLog, DataTable { height: 1fr; }
     """
     # alt+digit is unreliable (textual reads ESC 3 as the pound key), so ctrl letters the Input doesn't use
-    BINDINGS = [("ctrl+q", "quit", "Quit"), ("ctrl+n", "switch_tab(1)", "Next tab"),
-                ("ctrl+b", "switch_tab(-1)", "Prev tab"), ("ctrl+l", "focus_address", "Address")]
+    BINDINGS = [("ctrl+n", "switch_tab(1)", "Next tab"), ("ctrl+b", "switch_tab(-1)", "Prev tab"),
+                ("ctrl+t", "focus_address", "Address")]
 
     def __init__(self, ctx: CommonContext) -> None:
         super().__init__()
