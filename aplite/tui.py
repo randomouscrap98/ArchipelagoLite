@@ -118,7 +118,13 @@ class ClientApp(App):
         event.stop()
 
 
+_running: set[int] = set()  # ids of contexts with an active app
+
+
 async def console_loop(ctx: CommonContext) -> None:
+    if id(ctx) in _running:  # fallback already started it, then the client called run_cli late
+        return
+    _running.add(id(ctx))
     install_log_handler()
     app = ClientApp(ctx)
 
@@ -135,3 +141,29 @@ async def console_loop(ctx: CommonContext) -> None:
         logging.getLogger().removeHandler(log_buffer)
         logging.getLogger().addHandler(logging.StreamHandler(sys.stdout))  # shutdown messages
         ctx.exit_event.set()
+        _running.discard(id(ctx))
+
+
+FALLBACK_DELAY = 1.0
+"""Seconds a new context gets to start its own input loop before the fallback starts the app."""
+
+
+def install_fallback() -> None:
+    """Start the app for clients that never call run_cli/console_loop (e.g. civ6), so they still get input and quit."""
+    from CommonClient import CommonContext
+    original_init = CommonContext.__init__
+
+    def __init__(self, *args, **kwargs) -> None:
+        original_init(self, *args, **kwargs)
+        try:
+            asyncio.get_running_loop().create_task(_fallback(self), name="aplite fallback")
+        except RuntimeError:
+            pass  # context created outside an event loop; nothing to attach to
+
+    CommonContext.__init__ = __init__
+
+
+async def _fallback(ctx: CommonContext) -> None:
+    await asyncio.sleep(FALLBACK_DELAY)
+    if not ctx.input_task and id(ctx) not in _running and not ctx.exit_event.is_set():
+        ctx.input_task = asyncio.create_task(console_loop(ctx), name="Input")

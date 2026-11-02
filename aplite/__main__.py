@@ -36,6 +36,7 @@ import CommonClient  # loads all worlds
 from aplite import tui
 
 CommonClient.console_loop = tui.console_loop  # before clients do `from CommonClient import console_loop`
+tui.install_fallback()
 
 import worlds.LauncherComponents as LauncherComponents
 

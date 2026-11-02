@@ -2,11 +2,12 @@
 # ArchipelagoLite launcher: runs `python -m aplite` in a uv-managed, kivy-free Python 3.13 venv.
 # Usage: ./aplite.sh [Patch|Game|Component|url] [component args]
 #        ./aplite.sh --sync    force a dependency reinstall
+# APLITE_VENV overrides the venv location (e.g. one per machine when the repo is shared)
 set -eu
 
 SELF=$(readlink -f "$0" 2>/dev/null || echo "$0")
 REPO=$(cd "$(dirname "$SELF")" && pwd)
-VENV="$REPO/.venv-aplite"
+VENV="${APLITE_VENV:-$REPO/.venv-aplite}"
 PY="$VENV/bin/python"
 STAMP="$VENV/.aplite-stamp"
 
