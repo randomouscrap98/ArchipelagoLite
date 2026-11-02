@@ -218,6 +218,7 @@ class OptionsApp(App[None]):
         self.name_width = 10
         self.dirty = False  # unsaved changes
         self.quit_armed = False
+        self.load_armed = False
         self.loaded: dict = {}  # the YAML we loaded, kept so saving preserves everything we don't edit
         self.loaded_path: Path | None = None
 
@@ -551,6 +552,13 @@ class OptionsApp(App[None]):
     # load / save
 
     def action_load(self) -> None:
+        if self.dirty and not self.load_armed:
+            self.load_armed = True
+            self.notify("Unsaved changes. Loading a file replaces this game's edits: press Ctrl+O again to load "
+                        "anyway, or Ctrl+S to save first.", severity="warning", timeout=6)
+            self.set_timer(6, lambda: setattr(self, "load_armed", False))
+            return
+        self.load_armed = False
         self.push_screen(FilePicker("Load options", [".yaml", ".yml"], "options_dir", DEFAULT_DIR), self.load_file)
 
     def load_file(self, path: Path | None) -> None:

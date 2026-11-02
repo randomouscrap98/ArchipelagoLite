@@ -33,9 +33,10 @@ import Utils
 
 Utils.gui_enabled = False  # before CommonClient does `from Utils import gui_enabled`
 
-from aplite import bytecode_cache, launcher, tui
+from aplite import bytecode_cache, launcher, prompts, tui
 
 bytecode_cache.install()  # before any .apworld is imported
+prompts.install()  # terminal file prompts; before worlds load (LauncherComponents imports open_filename by name)
 
 
 def load() -> list:

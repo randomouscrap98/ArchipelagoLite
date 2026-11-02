@@ -313,6 +313,8 @@ async def console_loop(ctx: CommonContext) -> None:
     _running.add(id(ctx))
     install_log_handler()
     app = ClientApp(ctx)
+    from aplite import prompts
+    prompts.active_app = app  # file prompts (missing ROMs etc.) suspend the TUI while asking
 
     async def watch_exit() -> None:
         await ctx.exit_event.wait()
@@ -328,6 +330,9 @@ async def console_loop(ctx: CommonContext) -> None:
         logging.getLogger().addHandler(logging.StreamHandler(sys.stdout))  # shutdown messages
         ctx.exit_event.set()
         _running.discard(id(ctx))
+        from aplite import prompts
+        if prompts.active_app is app:
+            prompts.active_app = None
 
 
 FALLBACK_DELAY = 1.0
