@@ -116,6 +116,11 @@ def launch_from_launcher() -> None:
             pass
     # a fresh process rather than looping, so nothing the component left behind leaks into the launcher
     sys.stdout.flush()
+    if sys.platform == "win32":  # no real exec there: the new process would race the shell for the console
+        if os.environ.get("APLITE_RELAUNCH"):  # aplite.cmd (Windows dist) starts us again on this exit code
+            sys.exit(int(os.environ["APLITE_RELAUNCH"]))
+        import subprocess
+        sys.exit(subprocess.call([sys.executable, "-m", "aplite"], env=aplite.child_env()))
     os.execve(sys.executable, [sys.executable, "-m", "aplite"], aplite.child_env())
 
 
