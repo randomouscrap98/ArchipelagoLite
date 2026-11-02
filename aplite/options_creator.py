@@ -16,7 +16,7 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
-from textual.widgets import Checkbox, Footer, Input, Label, OptionList, SelectionList, Static, TextArea
+from textual.widgets import Checkbox, Footer, Input, Label, OptionList, Select, SelectionList, Static, TextArea
 from textual.widgets.option_list import Option as ListOption
 
 import Utils
@@ -89,6 +89,31 @@ def can_randomize(option: type[Option]) -> bool:
 
 def is_random(value: typing.Any) -> bool:
     return isinstance(value, str) and value.startswith("random")
+
+
+RANDOM_BIASES = {"": "Even", "low": "Low", "middle": "Middle", "high": "High"}
+
+
+def parse_random(value: str) -> tuple[str, int | None, int | None]:
+    """'random[-range][-bias][-min-max]' (see Options._RANDOM_OPTS) -> (bias, min, max); "" bias is even."""
+    parts = value.split("-")[1:]
+    low = high = None
+    if parts[:1] == ["range"] and len(parts) >= 3:
+        try:
+            low, high = sorted((int(parts[-2]), int(parts[-1])))
+        except ValueError:
+            pass
+        parts = parts[1:-2]
+    bias = parts[0] if parts and parts[0] in RANDOM_BIASES else ""
+    return bias, low, high
+
+
+def random_text(bias: str, low: int | None = None, high: int | None = None) -> str:
+    """Inverse of parse_random."""
+    parts = ["random"] + (["range"] if low is not None else []) + ([bias] if bias else [])
+    if low is not None:
+        parts += [str(low), str(high)]
+    return "-".join(parts)
 
 
 def is_weighted(option: type[Option], value: typing.Any) -> bool:
@@ -178,6 +203,9 @@ class OptionsApp(MasterDetailApp):
     #top { height: 3; }
     #name { width: 30; }
     #game-label { padding: 1 2; }
+    #random-opts { height: 1; }
+    #random-bias { width: 12; }
+    #random-opts Input { width: 8; }
     """
     BINDINGS = [Binding("ctrl+g", "toggle_side", "Games"), Binding("ctrl+o", "load", "Load"),
                 Binding("ctrl+s", "save", "Save"),
@@ -308,6 +336,18 @@ class OptionsApp(MasterDetailApp):
                          Label(Text(f"{option.__name__}  (default: {describe(default_value(option))})", style="dim"))]
         if can_randomize(option):
             widgets.append(Checkbox("Random", is_random(value), id="random"))
+            if option_kind in RANGE_KINDS:
+                bias, low, high = parse_random(value) if is_random(value) else ("", None, None)
+                widgets.append(Horizontal(
+                    Select([(label, name) for name, label in RANDOM_BIASES.items()], value=bias, allow_blank=False,
+                           compact=True, id="random-bias"),
+                    Label(" from "),
+                    Input("" if low is None else str(low), type="integer", compact=True, id="random-low",
+                          placeholder=str(option.range_start)),
+                    Label(" to "),
+                    Input("" if high is None else str(high), type="integer", compact=True, id="random-high",
+                          placeholder=str(option.range_end)),
+                    id="random-opts"))
 
         if is_weighted(option, value) or not isinstance(value, (str, int, bool, list, dict)):
             widgets += self.yaml_editor(value, "Weighted values; edit as YAML.")
@@ -358,10 +398,12 @@ class OptionsApp(MasterDetailApp):
         return [(key, key, key in chosen) for key in sorted(option.valid_keys) if search in key.casefold()]
 
     def sync_disabled(self) -> None:
-        """Random disables the other editor widgets."""
+        """Random disables the other editor widgets and shows the random variants (range options)."""
         random = bool(self.query("#random")) and self.query_one("#random", Checkbox).value
         for widget in self.query_one("#editor").children:
-            if widget.id not in ("random", "error", None):
+            if widget.id == "random-opts":
+                widget.display = random
+            elif widget.id not in ("random", "error", None):
                 widget.disabled = random
 
     @on(Checkbox.Changed, "#random")
@@ -369,10 +411,37 @@ class OptionsApp(MasterDetailApp):
         key = self.editor_key
         if event.value and not is_random(self.values[key]):
             self.set_value(key, "random")
+            if self.query("#random-opts"):
+                self.random_variant_changed()  # keep the variant still shown in the editor
         elif not event.value and is_random(self.values[key]):
             default = default_value(self.options[key])
             self.set_value(key, default if not is_random(default) else self.fallback(key))
         self.sync_disabled()
+
+    @on(Select.Changed, "#random-bias")
+    @on(Input.Submitted, "#random-low, #random-high")
+    def random_variant_changed(self) -> None:
+        option = self.options[self.editor_key]
+        if not is_random(self.values[self.editor_key]):
+            return
+        bias = self.query_one("#random-bias", Select).value
+        texts = [self.query_one(f"#random-{end}", Input).value.strip() for end in ("low", "high")]
+        low = high = None
+        if any(texts):
+            try:
+                low, high = sorted(int(text) if text else default
+                                   for text, default in zip(texts, (option.range_start, option.range_end)))
+            except ValueError:
+                self.error("Not a number.")
+                return
+            if low < option.range_start or high > option.range_end:
+                self.error(f"Must be between {option.range_start} and {option.range_end}.")
+                return
+            if low < 0:
+                self.error("Archipelago can't read negative bounds in a random range.")
+                return
+        self.error("")
+        self.set_value(self.editor_key, random_text(bias, low, high))
 
     def fallback(self, key: str) -> typing.Any:
         """A concrete value for options whose default is random."""

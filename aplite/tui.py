@@ -10,11 +10,14 @@ import threading
 import typing
 
 from rich.text import Text
+from textual import on
 from textual.app import App, ComposeResult
 from textual.binding import Binding
+from textual.containers import Horizontal
 from textual.suggester import Suggester
+from textual.widgets.input import Selection
 from textual.widgets.tabbed_content import ContentTab
-from textual.widgets import DataTable, Footer, Input, RichLog, Static, TabbedContent, TabPane
+from textual.widgets import Button, DataTable, Footer, Input, RichLog, Static, TabbedContent, TabPane
 
 from aplite import prefs, prompts
 
@@ -175,14 +178,17 @@ class CommandInput(Input):
 class ClientApp(App):
     TITLE = "Archipelago"
     CSS = """
-    #status { height: 1; padding: 0 1; background: $panel; }
+    #connect-bar { height: 1; background: $panel; }
+    #address { width: 1fr; max-width: 50; }
+    #connect { min-width: 14; }
+    #status { width: 1fr; padding: 0 1; }
     TabbedContent { height: 1fr; }
     TabPane { padding: 0; }
     RichLog, DataTable { height: 1fr; }
     """
     # alt+digit is unreliable (textual reads ESC 3 as the pound key), so ctrl letters the Input doesn't use
     BINDINGS = [("ctrl+q", "quit", "Quit"), ("ctrl+n", "switch_tab(1)", "Next tab"),
-                ("ctrl+b", "switch_tab(-1)", "Prev tab")]
+                ("ctrl+b", "switch_tab(-1)", "Prev tab"), ("ctrl+l", "focus_address", "Address")]
 
     def __init__(self, ctx: CommonContext) -> None:
         super().__init__()
@@ -192,7 +198,11 @@ class ClientApp(App):
         self._hints_snapshot: list | None = None
 
     def compose(self) -> ComposeResult:
-        yield Static(id="status")
+        with Horizontal(id="connect-bar"):
+            yield Input(self.ctx.suggested_address or "archipelago.gg:", id="address", compact=True,
+                        placeholder="address:port")
+            yield Button("Connect", id="connect", compact=True)
+            yield Static(id="status")
         with TabbedContent(id="tabs"):
             with TabPane("Archipelago", id="tab-archipelago"):
                 yield RichLog(id="log-archipelago", wrap=True)
@@ -257,10 +267,12 @@ class ClientApp(App):
     def refresh_state(self) -> None:
         ctx = self.ctx
         status = Text()
-        if ctx.server and ctx.server.socket and not ctx.server.socket.closed:
-            status.append("● ", style="green").append(f"Connected to {ctx.server_address}")
+        connected = bool(ctx.server and ctx.server.socket and not ctx.server.socket.closed)
+        if connected:
+            status.append("● ", style="green").append("Connected")
         else:
-            status.append("○ ", style="red").append("Not connected (/connect address:port)")
+            status.append("○ ", style="red").append("Not connected")
+        self.refresh_connect_bar(connected)
         if ctx.slot:
             status.append(f"  │  {ctx.player_names.get(ctx.slot, ctx.auth)}")
         if ctx.game:
@@ -309,9 +321,43 @@ class ClientApp(App):
             table.move_cursor(row=min(cursor, table.row_count - 1), animate=False)
             table.scroll_y = scroll
 
+    # connect bar (kvui's server bar: Enter or the button connects, the button disconnects)
+
+    def refresh_connect_bar(self, connected: bool) -> None:
+        address = self.query_one("#address", Input)
+        self.query_one("#connect", Button).label = "Disconnect" if connected else "Connect"
+        if connected and self.ctx.server_address:
+            address.value = self.ctx.server_address.replace("ws://", "").replace("wss://", "")
+        address.disabled = connected
+
+    def action_focus_address(self) -> None:
+        address = self.query_one("#address", Input)
+        if address.disabled:
+            return
+        address.focus()
+        s = address.value  # select the port if there is one, else the host (as kvui does)
+        host_start = s.find("@") + 1
+        ipv6_end = s.find("]", host_start) + 1
+        port_start = s.find(":", ipv6_end if ipv6_end > 0 else host_start) + 1
+        address.selection = Selection(port_start if port_start > 0 else host_start, len(s))
+
+    @on(Input.Submitted, "#address")
+    @on(Button.Pressed, "#connect")
+    def connect_pressed(self, event: Input.Submitted | Button.Pressed) -> None:
+        from CommonClient import async_start
+        ctx = self.ctx
+        ctx.username = None
+        ctx.password = None
+        if ctx.server:
+            async_start(ctx.disconnect(), name="disconnecting")
+        elif address := self.query_one("#address", Input).value.strip().removeprefix("/connect "):
+            async_start(ctx.connect(address), name="connecting")
+        self.query_one(CommandInput).focus()
+
     # input
 
-    def on_input_submitted(self, event: Input.Submitted) -> None:
+    @on(Input.Submitted, "CommandInput")
+    def command_submitted(self, event: Input.Submitted) -> None:
         text = event.value.strip()
         event.input.value = ""
         if not text:
