@@ -203,9 +203,10 @@ class OptionsApp(MasterDetailApp):
     #top { height: 3; }
     #name { width: 30; }
     #game-label { padding: 1 2; }
-    #random-opts { height: 1; }
-    #random-bias { width: 12; }
-    #random-opts Input { width: 8; }
+    #random-opts { height: 3; }
+    #random-opts Label { padding: 1 1; }
+    #random-bias { width: 14; }
+    #random-opts Input { width: 11; padding: 0 1; }
     """
     BINDINGS = [Binding("ctrl+g", "toggle_side", "Games"), Binding("ctrl+o", "load", "Load"),
                 Binding("ctrl+s", "save", "Save"),
@@ -340,12 +341,12 @@ class OptionsApp(MasterDetailApp):
                 bias, low, high = parse_random(value) if is_random(value) else ("", None, None)
                 widgets.append(Horizontal(
                     Select([(label, name) for name, label in RANDOM_BIASES.items()], value=bias, allow_blank=False,
-                           compact=True, id="random-bias"),
-                    Label(" from "),
-                    Input("" if low is None else str(low), type="integer", compact=True, id="random-low",
+                           id="random-bias"),
+                    Label("from"),
+                    Input("" if low is None else str(low), type="integer", id="random-low",
                           placeholder=str(option.range_start)),
-                    Label(" to "),
-                    Input("" if high is None else str(high), type="integer", compact=True, id="random-high",
+                    Label("to"),
+                    Input("" if high is None else str(high), type="integer", id="random-high",
                           placeholder=str(option.range_end)),
                     id="random-opts"))
 
