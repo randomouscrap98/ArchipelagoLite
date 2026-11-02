@@ -2,6 +2,7 @@
 Run an Archipelago component in the terminal.
 
 Import order matters: patches must land before CommonClient/clients import the patched names.
+Worlds are loaded by load(), which the launcher runs in the background so it can show immediately.
 """
 import logging
 import os
@@ -32,18 +33,24 @@ import Utils
 
 Utils.gui_enabled = False  # before CommonClient does `from Utils import gui_enabled`
 
-import CommonClient  # loads all worlds
-from aplite import tui
+from aplite import bytecode_cache, launcher, tui
 
-CommonClient.console_loop = tui.console_loop  # before clients do `from CommonClient import console_loop`
-tui.install_fallback()
+bytecode_cache.install()  # before any .apworld is imported
 
-import worlds.LauncherComponents as LauncherComponents
 
-LauncherComponents.run_in_process = True  # core hook: clients need this terminal's stdin
+def load() -> list:
+    """Load all worlds and apply the patches that need them. Returns the launcher components."""
+    global LauncherComponents, Launcher
+    import CommonClient  # loads all worlds
 
-import Launcher
-from aplite import launcher
+    CommonClient.console_loop = tui.console_loop  # before clients do `from CommonClient import console_loop`
+    tui.install_fallback()
+
+    import worlds.LauncherComponents as LauncherComponents
+    LauncherComponents.run_in_process = True  # core hook: clients need this terminal's stdin
+
+    import Launcher
+    return LauncherComponents.components
 
 
 def main() -> None:
@@ -54,22 +61,21 @@ def main() -> None:
         print("usage: python -m aplite [Patch|Game|Component|url] [component args]")
         print("With no arguments, opens the launcher.")
         return
+    target = argv[0] if argv else None
     component_args = argv[1:]
     if component_args[:1] == ["--"]:
         component_args = component_args[1:]
-    args = {"Patch|Game|Component|url": argv[0] if argv else None, "args": tuple(component_args),
-            "update_settings": False}
 
-    target = args["Patch|Game|Component|url"]
     Utils.init_logging("aplite")
     logging.getLogger().addHandler(tui.log_buffer)  # so the TUI can replay startup messages
 
     if target is None:
-        component = launcher.pick(LauncherComponents.components)
+        component = launcher.pick(load)
         if component:
             run(component)
         return
 
+    load()
     if target.startswith("archipelago://"):
         clients, text_client = Launcher.handle_uri(target)
         if not clients:

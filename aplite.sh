@@ -31,7 +31,8 @@ if [ "${1:-}" = "--sync" ] || [ "$(cat "$STAMP" 2>/dev/null)" != "$stamp" ]; the
     echo "aplite: installing dependencies..." >&2
     grep -viE '^[[:space:]]*kivy' "$REPO/requirements.txt" > "$VENV/requirements-lite.txt"
     # requests: used by several worlds but not declared in any requirements file
-    uv pip install --quiet --python "$PY" -r "$VENV/requirements-lite.txt" textual "setuptools>=75,<81" requests
+    # docutils: imported by the fftii apworld, which can't declare dependencies
+    uv pip install --quiet --python "$PY" -r "$VENV/requirements-lite.txt" textual "setuptools>=75,<81" requests docutils
     # built-in world requirements (custom apworlds may rely on these); if a file fails as a whole,
     # install its packages one by one so one unbuildable package doesn't take the rest down
     for r in "$REPO"/worlds/*/requirements.txt; do

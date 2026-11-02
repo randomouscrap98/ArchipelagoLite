@@ -12,13 +12,16 @@ from textual.widgets.option_list import Option
 
 import Utils
 from aplite import prefs
-from worlds.LauncherComponents import Component, Type
 
-GROUPS = [(Type.CLIENT, "Clients"), (Type.TOOL, "Tools"), (Type.ADJUSTER, "Adjusters"), (Type.MISC, "Misc")]
+if typing.TYPE_CHECKING:
+    from worlds.LauncherComponents import Component  # importing worlds loads all of them, so only lazily
+
+Components = typing.Sequence["Component"]
 
 
 def runnable(component: Component) -> bool:
     """Whether aplite can run this component in the terminal (see __main__.run)."""
+    from worlds.LauncherComponents import Type
     return bool(component.func or component.script_name and (component.type == Type.CLIENT or component.cli))
 
 
@@ -27,19 +30,24 @@ def load_favorites() -> list[str]:
     return list(Utils.persistent_load().get("launcher", {}).get("favorites", []))
 
 
-class LauncherApp(App[Component]):
+class LauncherApp(App["Component"]):
     TITLE = "Archipelago"
     CSS = """
     OptionList { height: 1fr; }
     """
     BINDINGS = [("ctrl+q", "quit", "Quit"), ("ctrl+f", "toggle_favorite", "Favorite")]
 
-    def __init__(self, components: typing.Sequence[Component], subtitle: str = "") -> None:
+    def __init__(self, components: Components | typing.Callable[[], Components], subtitle: str = "") -> None:
+        """`components` may be a function, which is run in a thread while the launcher already shows."""
         super().__init__()
-        self.components = [c for c in components if c.type != Type.HIDDEN]
+        self.source = components
+        self.components: list[Component] = []
+        self.loading = callable(components)
+        self.status: str | None = "Loading worlds…"
         self.sub_title = subtitle
         self.favorites = load_favorites()
-        self.name_width = max((len(c.display_name) for c in self.components), default=0)
+        self.name_width = 0
+        self.launch_when_loaded = False  # Enter pressed while still loading
 
     def compose(self) -> ComposeResult:
         yield Input(placeholder="Search. Enter launches, ↑/↓ select.")
@@ -48,18 +56,55 @@ class LauncherApp(App[Component]):
 
     def on_mount(self) -> None:
         prefs.bind_theme(self)
+        if callable(self.source):
+            self.run_worker(self.load_components, thread=True)
+        else:
+            self.set_components(self.source)
         self.rebuild()
         self.query_one(Input).focus()
 
+    def load_components(self) -> None:
+        try:
+            components = self.source()
+        except BaseException as e:  # SystemExit too: a world calling sys.exit while loading
+            logging.exception("Loading worlds failed")
+            self.call_from_thread(self.load_failed, e)
+        else:
+            self.call_from_thread(self.set_components, components)
+
+    def load_failed(self, error: BaseException) -> None:
+        self.loading = False
+        self.set_status(f"Loading worlds failed: {error!r} (see log)")
+
+    def set_components(self, components: Components) -> None:
+        from worlds.LauncherComponents import Type
+        self.components = [c for c in components if c.type != Type.HIDDEN]
+        self.name_width = max((len(c.display_name) for c in self.components), default=0)
+        self.loading = False
+        self.set_status(None)
+        if self.launch_when_loaded:
+            self.launch()
+
+    def set_status(self, status: str | None) -> None:
+        self.status = status
+        self.rebuild()
+
     def rebuild(self) -> None:
+        options = self.query_one(OptionList)
+        if self.status:
+            options.clear_options()
+            options.add_option(Option(Text(self.status, style="italic"), disabled=True))
+            return
+        from worlds.LauncherComponents import Type
+        groups_by_type = [(Type.CLIENT, "Clients"), (Type.TOOL, "Tools"), (Type.ADJUSTER, "Adjusters"),
+                          (Type.MISC, "Misc")]
         search = self.query_one(Input).value.strip().casefold()
         matches = [c for c in self.components
                    if search in c.display_name.casefold() or search in (c.description or "").casefold()]
         groups = [("★ Favorites", [c for c in matches if c.display_name in self.favorites])]
         groups += [(label, [c for c in matches if c.type == type_ and c.display_name not in self.favorites])
-                   for type_, label in GROUPS]
+                   for type_, label in groups_by_type]
 
-        options = self.query_one(OptionList)
         highlighted = options.highlighted_option.id if options.highlighted_option else None
         options.clear_options()
         for label, members in groups:
@@ -106,6 +151,10 @@ class LauncherApp(App[Component]):
         self.launch()
 
     def launch(self) -> None:
+        if self.loading:
+            self.launch_when_loaded = True
+            self.set_status("Loading worlds… (will launch the top match)")
+            return
         component = self.selected()
         if component:
             self.exit(component)
@@ -122,8 +171,9 @@ class LauncherApp(App[Component]):
         self.rebuild()
 
 
-def pick(components: typing.Sequence[Component], subtitle: str = "") -> Component | None:
-    """Show the launcher; returns the chosen component, or None if the user quit."""
+def pick(components: Components | typing.Callable[[], Components], subtitle: str = "") -> Component | None:
+    """Show the launcher; returns the chosen component, or None if the user quit.
+    `components` may be a function that loads them; the launcher shows while it runs in a thread."""
     # log lines written to the real terminal would scribble over the app
     root = logging.getLogger()
     streams = [h for h in root.handlers if type(h) is logging.StreamHandler and h.stream in (sys.stdout, sys.stderr)]
