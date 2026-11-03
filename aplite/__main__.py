@@ -147,18 +147,14 @@ def run(component, args: tuple[str, ...], come_back: bool) -> None:
     try:
         components.run(component, *args)
     except SystemExit as e:
-        if e.code == nav.QUIT_STATUS:  # ctrl+q in a file prompt before the component had a TUI
-            nav.next_step = "quit"
+        if nav.quit_requested(e.code):  # ctrl+q in a file prompt before the component had a TUI
             sys.exit(0)
         if not wants_launcher():
             raise
     if not wants_launcher():
         return
     if nav.next_step is None and components.pauses_after(component):
-        try:
-            input("\nPress Enter to return to the launcher…")
-        except EOFError:
-            pass
+        aplite.wait_for_enter()
     # a fresh process rather than looping, so nothing the component left behind leaks into the launcher
     sys.stdout.flush()
     if sys.platform == "win32":  # no real exec there: the new process would race the shell for the console

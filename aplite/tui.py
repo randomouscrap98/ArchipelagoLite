@@ -2,11 +2,9 @@
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import functools
 import logging
 import sys
-import threading
 import typing
 
 from rich.text import Text
@@ -19,8 +17,8 @@ from textual.widgets.input import Selection
 from textual.widgets.tabbed_content import ContentTab
 from textual.widgets import Button, DataTable, Footer, Input, RichLog, Static, TabbedContent, TabPane
 
-from aplite import prefs, prompts
-from aplite.nav import AppliteApp
+from aplite import prompts
+from aplite.nav import AppliteApp, on_app_thread, terminal_handlers
 
 if typing.TYPE_CHECKING:
     from CommonClient import CommonContext
@@ -51,11 +49,6 @@ NO_TAB_LOGGERS = ARCHIPELAGO_LOGGERS | {"root", "FileLog", "websockets", "asynci
 """Top-level logger names that never get their own tab; anything else that logs gets one (e.g. FactorioServer)."""
 
 
-def _terminal_handlers(root: logging.Logger) -> list[logging.Handler]:
-    """Root handlers that print to the terminal (Utils.init_logging adds one); they'd scribble over an app."""
-    return [h for h in root.handlers if type(h) is logging.StreamHandler and h.stream in (sys.stdout, sys.stderr)]
-
-
 class LogBuffer(logging.Handler):
     """Root log handler owned by this module: keeps history so records logged before the client TUI mounts can be
     replayed, and forwards new ones to the TUI (sink) while it runs."""
@@ -83,7 +76,7 @@ class LogBuffer(logging.Handler):
         records stop going to the terminal too (the TUI shows them instead)."""
         root = logging.getLogger()
         if replace_terminal:
-            for handler in _terminal_handlers(root):
+            for handler in terminal_handlers(root):
                 root.removeHandler(handler)
         if self not in root.handlers:
             root.addHandler(self)
@@ -93,25 +86,11 @@ class LogBuffer(logging.Handler):
         self.sink = None
         root = logging.getLogger()
         root.removeHandler(self)
-        if not _terminal_handlers(root):
+        if not terminal_handlers(root):
             root.addHandler(logging.StreamHandler(sys.stdout))
 
 
 log_buffer = LogBuffer()
-
-
-@contextlib.contextmanager
-def quiet_terminal() -> typing.Iterator[None]:
-    """Detach root log handlers that write to the terminal while an app is on screen."""
-    root = logging.getLogger()
-    streams = _terminal_handlers(root)
-    for handler in streams:
-        root.removeHandler(handler)
-    try:
-        yield
-    finally:
-        for handler in streams:
-            root.addHandler(handler)
 
 
 class CommandSuggester(Suggester):
@@ -217,8 +196,6 @@ class ClientApp(AppliteApp):
 
     def on_mount(self) -> None:
         self.title = type(self.ctx).__name__
-        prefs.bind_theme(self)
-
         self.query_one("#hints", DataTable).add_columns("Receiving", "Item", "Finding", "Location", "Entrance",
                                                         "Status")
         for name, msg in log_buffer.records:
@@ -231,11 +208,7 @@ class ClientApp(AppliteApp):
     # logging
 
     def write_log(self, name: str, msg: str) -> None:
-        # log records can come from other threads
-        if self._thread_id == threading.get_ident():
-            self.route_log(name, msg)
-        else:
-            self.call_from_thread(self.route_log, name, msg)
+        on_app_thread(self, self.route_log, name, msg)  # log records can come from other threads
 
     def route_log(self, name: str, msg: str) -> None:
         text = Text.from_ansi(msg)
@@ -291,7 +264,6 @@ class ClientApp(AppliteApp):
         self._hints_snapshot = [dict(hint) for hint in hints]
         from NetUtils import HintStatus
         names, colors, order = hint_status_display()
-
 
         def render(node: dict) -> Text:
             return Text.from_ansi(ctx.jsontotextparser.handle_node(node))

@@ -13,8 +13,9 @@ import typing
 import yaml
 from rich.text import Text
 from textual import on
-from aplite.nav import AppliteApp
 from textual.widgets import Input, Label, OptionList
+
+from aplite.nav import AppliteApp
 
 NARROW = 140
 """Below this many columns, opening a game/section hides the side list (Ctrl+G brings it back)."""

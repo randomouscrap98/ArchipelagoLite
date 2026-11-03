@@ -16,6 +16,8 @@ import typing
 
 import Utils
 
+import aplite
+
 if typing.TYPE_CHECKING:
     from textual.screen import Screen
     from worlds.LauncherComponents import Component
@@ -195,43 +197,34 @@ def _run_func(component: Component, *args: str) -> None:
     Launcher.run_component(component, *(args if _accepts_args(component.func) else ()))
 
 
+def _script(component: Component) -> str:
+    return Utils.local_path(f"{component.script_name}.py")
+
+
 def _run_cli_script(component: Component, *args: str) -> None:
     """Command-line scripts (Generate, Host) need a process without worlds loaded (Generate.py refuses otherwise):
-    a child process in the same terminal, via aplite.script."""
-    script = Utils.local_path(f"{component.script_name}.py")
-    import aplite
-    sys.exit(_child_status(subprocess.call([sys.executable, "-m", "aplite.script", script, *args],
-                                           env=aplite.child_env())))
-
-
-def _child_status(status: int) -> int:
-    """A child aplite process's exit status; its user quitting (ctrl+q in a file picker) quits this one too."""
+    a child process in the same terminal, via aplite.script. Its user quitting (ctrl+q in a file picker) quits
+    aplite too."""
     from aplite import nav
-    if status == nav.QUIT_STATUS:
-        nav.next_step = "quit"
-        return 0
-    return status
+    status = subprocess.call([sys.executable, "-m", "aplite.script", _script(component), *args],
+                             env=aplite.child_env())
+    sys.exit(0 if nav.quit_requested(status) else status)
 
 
 def _run_gui_script(component: Component, *args: str) -> None:
     """Desktop tool scripts (LttP/OoT Adjuster: tkinter): a child process like upstream's, without aplite's terminal
     prompts so their own file dialogs show. Waits for the window to close."""
-    script = Utils.local_path(f"{component.script_name}.py")
-    import aplite
-    env = {**aplite.child_env(), "SKIP_REQUIREMENTS_UPDATE": "1"}  # ModuleUpdate's check would include kivy
-    status = subprocess.call([sys.executable, script, *args], env=env)
+    status = subprocess.call([sys.executable, _script(component), *args], env=aplite.child_env())
     if status:  # e.g. no display: keep the error on screen
-        try:
-            input(f"\n{component.display_name} failed (exit {status}). Press Enter to return to the launcher…")
-        except EOFError:
-            pass
+        aplite.wait_for_enter(f"{component.display_name} failed (exit {status}). Press Enter to return to the "
+                              f"launcher…")
     sys.exit(status)
 
 
 def _run_client_script(component: Component, *args: str) -> None:
     """Client scripts (SNIClient, ...): upstream starts them as a new process, which wouldn't have aplite's patches."""
     import runpy
-    script = Utils.local_path(f"{component.script_name}.py")
+    script = _script(component)
     sys.argv = [script, *args]
     runpy.run_path(script, run_name="__main__")
 

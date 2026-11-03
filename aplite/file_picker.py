@@ -177,9 +177,7 @@ class FilePicker(Screen[Path | None]):
     def on_directory_tree_directory_selected(self, event: DirectoryTree.DirectorySelected) -> None:
         if event.path.name == "..":
             event.stop()
-            tree = self.query_one(FilteredTree)
-            tree.path = Path(tree.path).resolve().parent
-            self.update_folder()
+            self.query_one(FilteredTree).action_parent()
 
     def on_directory_tree_file_selected(self, event: DirectoryTree.FileSelected) -> None:
         event.stop()

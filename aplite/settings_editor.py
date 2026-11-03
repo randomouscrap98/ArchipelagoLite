@@ -24,7 +24,6 @@ from textual.widgets import Checkbox, Footer, Input, Label, OptionList, Static, 
 from textual.widgets.option_list import Option as ListOption
 
 import settings
-from aplite import prefs
 from aplite.file_picker import FilePicker, PathInput
 from aplite.master_detail import CSS as MASTER_DETAIL_CSS, SIDE_TEXT_WIDTH, MasterDetailApp, describe, fit, to_yaml
 
@@ -139,7 +138,6 @@ class SettingsApp(MasterDetailApp):
         yield Footer()
 
     def on_mount(self) -> None:
-        prefs.bind_theme(self)
         self.load()
         if self.sections:
             self.select_section(next(iter(self.sections)), focus=False)
@@ -372,7 +370,6 @@ class SettingsApp(MasterDetailApp):
             self.select_section(selected, focus=False)
         self.notify("Reloaded host.yaml")
 
+
 def run() -> None:
-    from aplite.tui import quiet_terminal
-    with quiet_terminal():
-        SettingsApp().run()
+    SettingsApp().run()

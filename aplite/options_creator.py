@@ -116,6 +116,13 @@ def random_text(bias: str, low: int | None = None, high: int | None = None) -> s
     return "-".join(parts)
 
 
+def range_error(option: type[Option], number: int) -> str | None:
+    """Why `number` isn't a valid value for a range option, or None."""
+    if not option.range_start <= number <= option.range_end:
+        return f"Must be between {option.range_start} and {option.range_end}."
+    return None
+
+
 def is_weighted(option: type[Option], value: typing.Any) -> bool:
     """A {value: weight} dict from a loaded YAML, for an option whose plain value isn't a dict."""
     return isinstance(value, dict) and kind(option) not in MAPPING_KINDS
@@ -243,7 +250,6 @@ class OptionsApp(MasterDetailApp):
         yield Footer()
 
     def on_mount(self) -> None:
-        prefs.bind_theme(self)
         if self.load_worlds:
             self.run_worker(self.load_in_thread, thread=True)
         else:
@@ -436,8 +442,8 @@ class OptionsApp(MasterDetailApp):
             except ValueError:
                 self.error("Not a number.")
                 return
-            if low < option.range_start or high > option.range_end:
-                self.error(f"Must be between {option.range_start} and {option.range_end}.")
+            if error := range_error(option, low) or range_error(option, high):
+                self.error(error)
                 return
             if low < 0:
                 self.error("Archipelago can't read negative bounds in a random range.")
@@ -479,8 +485,8 @@ class OptionsApp(MasterDetailApp):
         except ValueError:
             self.error("Not a number.")
             return
-        if not option.range_start <= number <= option.range_end:
-            self.error(f"Must be between {option.range_start} and {option.range_end}.")
+        if error := range_error(option, number):
+            self.error(error)
             return
         self.error("")
         self.set_value(self.editor_key, number)

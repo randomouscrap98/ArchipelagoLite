@@ -20,7 +20,6 @@ from textual.binding import Binding
 from textual.widgets import Footer, RichLog, Static
 
 import Utils
-from aplite import prefs
 from aplite.nav import AppliteApp
 
 if typing.TYPE_CHECKING:
@@ -151,7 +150,6 @@ class WebOptionsApp(AppliteApp):
         yield Footer()
 
     def on_mount(self) -> None:
-        prefs.bind_theme(self)
         from werkzeug.serving import make_server
         self.server = make_server("127.0.0.1", 0, create_app(), threaded=True)
         self.url = f"http://127.0.0.1:{self.server.server_port}/games"
@@ -189,9 +187,7 @@ class _LogToApp(logging.Handler):
 
 
 def run(*args: str) -> None:  # a component func: the launcher may pass args, which it doesn't use
-    from aplite.tui import quiet_terminal
-    with quiet_terminal():
-        WebOptionsApp().run()
+    WebOptionsApp().run()
 
 
 def component():

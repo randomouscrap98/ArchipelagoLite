@@ -16,7 +16,6 @@ from textual.widgets import Footer, Input, OptionList, Static
 from textual.widgets.option_list import Option
 
 import Utils
-from aplite import prefs
 from aplite.version import version
 from aplite.nav import AppliteApp
 from aplite.components import override_for, returns_to_launcher, runnable
@@ -87,6 +86,7 @@ class LauncherApp(AppliteApp):
     OptionList { height: 1fr; overflow-y: scroll; }
     """
     BINDINGS = [("ctrl+f", "toggle_favorite", "Favorite")]
+    LAUNCHER_KEY = False  # already in the launcher
 
     def __init__(self, components: Components | typing.Callable[[], Components], subtitle: str = "") -> None:
         """`components` may be a function, which is run in a thread while the launcher already shows."""
@@ -108,11 +108,7 @@ class LauncherApp(AppliteApp):
         yield OptionList()
         yield Footer()
 
-    def check_action(self, action: str, parameters: tuple) -> bool | None:
-        return parameters != ("launcher",) and super().check_action(action, parameters)  # already in the launcher
-
     def on_mount(self) -> None:
-        prefs.bind_theme(self)
         if callable(self.source):
             self.run_worker(self.load_components, thread=True)
         else:
@@ -236,12 +232,11 @@ class LauncherApp(AppliteApp):
         self.launch()
 
     def launch(self) -> None:
+        component = self.selected()
         if self.loading:
-            component = self.selected()
             self.launch_when_loaded = component.display_name if component else True
             self.set_status(f"Loading worlds… (will launch {component.display_name if component else 'the top match'})")
             return
-        component = self.selected()
         if not component:
             return
         override = override_for(component)
@@ -275,6 +270,4 @@ class LauncherApp(AppliteApp):
 def pick(components: Components | typing.Callable[[], Components], subtitle: str = "") -> Choice | None:
     """Show the launcher; returns the chosen component and its args, or None if the user quit.
     `components` may be a function that loads them; the launcher shows while it runs in a thread."""
-    from aplite.tui import quiet_terminal
-    with quiet_terminal():
-        return LauncherApp(components, subtitle).run()
+    return LauncherApp(components, subtitle).run()

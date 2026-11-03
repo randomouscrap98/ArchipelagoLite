@@ -10,7 +10,16 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 def child_env() -> dict[str, str]:
-    """Environment for Python processes aplite starts (relaunches, command-line scripts): the repo importable even
-    when aplite was started from another folder."""
+    """Environment for Python processes aplite starts (relaunches, scripts, the file picker): the repo importable even
+    when aplite was started from another folder, and no ModuleUpdate check (aplite handled requirements already, and
+    upstream's would include kivy)."""
     pythonpath = os.pathsep.join(filter(None, [REPO, os.environ.get("PYTHONPATH")]))
-    return {**os.environ, "PYTHONPATH": pythonpath}
+    return {**os.environ, "PYTHONPATH": pythonpath, "SKIP_REQUIREMENTS_UPDATE": "1"}
+
+
+def wait_for_enter(message: str = "Press Enter to return to the launcher…") -> None:
+    """Keep terminal output on screen until the user is done reading it."""
+    try:
+        input(f"\n{message}")
+    except EOFError:
+        pass
