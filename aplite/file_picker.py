@@ -69,13 +69,15 @@ def _not_hidden(path: Path) -> bool:
 
 
 class PathInput(Input):
-    """Tab completes the path like a shell (shift+tab leaves)."""
+    """Tab completes the path like a shell: as far as the matches agree, then further Tabs cycle through them in place
+    (shift+tab leaves)."""
     BINDINGS = [Binding("tab", "complete", "Complete path", show=False)]
 
     def __init__(self, *args, shows: typing.Callable[[Path], bool] = _not_hidden, **kwargs) -> None:
         """`shows` decides which entries completion offers."""
         super().__init__(*args, **kwargs)
         self.shows = shows
+        self.cycle: list[str] = []  # completions Tab is cycling through; reset once the value is edited otherwise
 
     def _on_paste(self, event: events.Paste) -> None:
         """A dropped file replaces the value (cleaned up); in a FilePicker it opens right away."""
@@ -90,6 +92,10 @@ class PathInput(Input):
             self.screen.open(path)
 
     def action_complete(self) -> None:
+        if self.value in self.cycle:  # cycling: next match
+            self.set_completion(self.cycle[(self.cycle.index(self.value) + 1) % len(self.cycle)])
+            return
+        self.cycle = []
         typed = os.path.expanduser(self.value)
         folder, prefix = os.path.split(typed)
         folder = folder or "."
@@ -99,18 +105,22 @@ class PathInput(Input):
             return
         matches = sorted(name for name in names if self.shows(Path(folder, name)))
         if not matches:
-            self.screen.notify("No matches", timeout=2)
+            self.app.bell()
             return
-        common = os.path.commonprefix(matches)
-        completed = os.path.join(folder if folder != "." or typed.startswith(".") else "", common)
-        if len(matches) == 1 and os.path.isdir(completed):
-            completed += os.sep
-        if completed != typed:
-            self.value = completed
-            self.cursor_position = len(completed)
-        elif len(matches) > 1:
-            shown = ", ".join(matches[:20]) + (f", … ({len(matches)} total)" if len(matches) > 20 else "")
-            self.screen.notify(shown, timeout=6)
+        shown_folder = folder if folder != "." or typed.startswith(".") else ""
+        common = os.path.join(shown_folder, os.path.commonprefix(matches))
+        if len(matches) == 1 and os.path.isdir(common):
+            common += os.sep
+        if common != typed:
+            self.set_completion(common)
+        elif len(matches) > 1:  # nothing more in common: start cycling through the matches
+            self.cycle = [os.path.join(shown_folder, name) + (os.sep if os.path.isdir(os.path.join(folder, name))
+                                                              else "") for name in matches]
+            self.set_completion(self.cycle[0])
+
+    def set_completion(self, value: str) -> None:
+        self.value = value
+        self.cursor_position = len(value)
 
 
 class FilePicker(Screen[Path | None]):

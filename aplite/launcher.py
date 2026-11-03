@@ -9,7 +9,7 @@ import typing
 
 from rich.text import Text
 from textual.app import ComposeResult
-from textual.widgets import Footer, Input, OptionList
+from textual.widgets import Footer, Input, OptionList, Static
 from textual.widgets.option_list import Option
 
 import Utils
@@ -77,6 +77,7 @@ Choice = tuple["Component", tuple[str, ...], bool]
 class LauncherApp(AppliteApp):
     TITLE = "Archipelago"
     CSS = """
+    #status { height: 1; padding: 0 2; }
     OptionList { height: 1fr; }
     """
     BINDINGS = [("ctrl+f", "toggle_favorite", "Favorite")]
@@ -87,7 +88,7 @@ class LauncherApp(AppliteApp):
         self.source = components
         self.loading = callable(components)
         self.components: list[Component | Cached] = load_cache() if self.loading else []  # Cached while loading
-        self.status: str | None = "Loading worlds…"  # a line above the list (the only line if there's no list)
+        self.status: str | None = "Loading worlds…"  # the line above the list; None: it shows the entry count
         self.sub_title = subtitle
         self.favorites = load_favorites()
         self.name_width = max((len(c.display_name) for c in self.components), default=0)
@@ -95,6 +96,7 @@ class LauncherApp(AppliteApp):
 
     def compose(self) -> ComposeResult:
         yield Input(placeholder="Search. Enter launches, ↑/↓ select.")
+        yield Static(id="status")  # its own line, so the list doesn't shift when loading finishes
         yield OptionList()
         yield Footer()
 
@@ -162,10 +164,15 @@ class LauncherApp(AppliteApp):
         groups += [(label, [c for c in matches if type_name(c) == type_ and c.display_name not in self.favorites])
                    for type_, label in groups_by_type]
 
+        if self.status:
+            status = Text(self.status, style="italic")
+        else:
+            count = f"{len(matches)} of {len(self.components)}" if search else str(len(self.components))
+            status = Text(f"{count} components", style="dim")
+        self.query_one("#status", Static).update(status)
+
         highlighted = options.highlighted_option.id if options.highlighted_option else None
         options.clear_options()
-        if self.status:
-            options.add_option(Option(Text(self.status, style="italic"), disabled=True))
         for label, members in groups:
             if not members:
                 continue
@@ -192,7 +199,7 @@ class LauncherApp(AppliteApp):
         return None
 
     def on_option_list_option_highlighted(self, event: OptionList.OptionHighlighted) -> None:
-        """On the first entry, scroll to the very top so its group header (and the loading line) show too."""
+        """On the first entry, scroll to the very top so its group header shows too."""
         options = event.option_list
         first = next((i for i, option in enumerate(options.options) if not option.disabled), None)
         if event.option_index == first:
