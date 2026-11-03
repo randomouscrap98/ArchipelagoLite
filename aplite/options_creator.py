@@ -413,7 +413,8 @@ class OptionsApp(MasterDetailApp):
         value = self.values[key]
         option_kind = kind(option)
         widgets: list = [Label(Text(getattr(option, "display_name", key), style="bold")),
-                         Label(Text(f"{option.__name__}  (default: {describe(default_value(option))})", style="dim"))]
+                         Label(Text(f"{option.__name__}  (default: {describe(default_value(option))})", style="dim"),
+                               classes="heading-end")]
         if is_weighted(option, value) or not isinstance(value, (str, int, bool, list, dict)):
             widgets += self.yaml_editor(value, "Weighted values; edit as YAML.")
         elif option_kind in CHOICE_KINDS:

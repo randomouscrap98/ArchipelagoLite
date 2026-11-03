@@ -265,9 +265,11 @@ class SettingsApp(MasterDetailApp):
         value = setting.value
         type_name = setting.cls.__name__ if setting.cls else setting.kind
         widgets: list = [Label(Text(self.editor_key, style="bold")),
-                         Label(Text(f"{type_name}  (default: {describe(setting.default)})", style="dim"))]
+                         Label(Text(f"{type_name}  (default: {describe(setting.default)})", style="dim"),
+                               classes="" if setting.kind in PATH_KINDS else "heading-end")]
         if setting.kind in PATH_KINDS:
-            widgets.append(Label(Text("required" if setting.required else "optional", style="dim")))
+            widgets.append(Label(Text("required" if setting.required else "optional", style="dim"),
+                                 classes="heading-end"))
             widgets.append(PathInput(str(value or ""), id="path",
                                      placeholder="Path. Enter sets, Tab completes, Ctrl+B browses"))
             widgets.append(Label("", id="exists"))
