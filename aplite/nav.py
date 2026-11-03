@@ -2,6 +2,7 @@
 palette, labelled Options. The app just ends; __main__ reads `next_step` to decide what runs after it."""
 from __future__ import annotations
 
+import functools
 import typing
 
 from textual.app import App
@@ -18,12 +19,10 @@ class AppliteApp(App):
     BINDINGS = [Binding("ctrl+q", "leave('quit')", "Quit"), Binding("ctrl+l", "leave('launcher')", "Launcher"),
                 Binding("ctrl+p", "command_palette", "Options", show=False)]  # the footer shows it at the right
 
-    SHARED_ACTIONS = frozenset({"leave", "quit", "command_palette"})
-
     def check_action(self, action: str, parameters: tuple) -> bool | None:
         """While another screen is on top (file picker, save dialog), the app's own keys would act on the hidden
-        screen below: hide them, keeping only the shared ones."""
-        return len(self.screen_stack) == 1 or action in self.SHARED_ACTIONS
+        screen below: hide them. Shared keys and Textual's own (Tab focus etc.) stay."""
+        return len(self.screen_stack) == 1 or action not in _own_actions(type(self))
 
     def can_leave(self, step: str) -> bool:
         """Override to guard unsaved work; called on every ctrl+q / ctrl+l."""
@@ -37,3 +36,16 @@ class AppliteApp(App):
 
     async def action_quit(self) -> None:  # the command palette's "Quit"
         self.action_leave("quit")
+
+
+@functools.cache
+def _own_actions(cls: type) -> frozenset[str]:
+    """Actions bound by an AppliteApp subclass's own BINDINGS (not AppliteApp's shared ones, not Textual's)."""
+    actions = set()
+    for klass in cls.__mro__:
+        if klass is AppliteApp:
+            break
+        for binding in klass.__dict__.get("BINDINGS", ()):
+            action = binding.action if isinstance(binding, Binding) else binding[1]
+            actions.add(action.split("(")[0])
+    return frozenset(actions)
