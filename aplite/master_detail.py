@@ -44,7 +44,7 @@ CSS = f"""
 #rows {{ width: 3fr; }}
 #detail {{ width: 2fr; }}
 #editor {{ height: auto; max-height: {round(EDITOR_SHARE * 100)}%; }}
-#editor OptionList, #editor SelectionList {{ height: auto; max-height: {MAX_LIST_HEIGHT}; }}
+#editor OptionList, #editor SelectionList {{ height: auto; max-height: {MAX_LIST_HEIGHT}; visibility: hidden; }}
 #editor TextArea {{ height: 12; }}
 #doc {{ height: 1fr; border-top: solid $panel; padding: 0 1; }}
 #error {{ color: $error; }}
@@ -238,6 +238,7 @@ class MasterDetailApp(AppliteApp):
         room -= sum(child.outer_size.height for child in editor.children if child not in lists)
         for widget in lists:
             widget.styles.max_height = max(3, min(MAX_LIST_HEIGHT, room // len(lists)))
+            widget.styles.visibility = "visible"  # hidden until fitted: unfitted, it showed cut off for a frame
 
     def error(self, message: str) -> None:
         self.query_one("#error", Label).update(message)

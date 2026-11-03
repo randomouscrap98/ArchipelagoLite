@@ -98,7 +98,9 @@ def valid_keys(option: type[Option]) -> list[str]:
 
 
 def is_random(value: typing.Any) -> bool:
-    return isinstance(value, str) and value.startswith("random")
+    """"random" or a range's "random-..." variant (see parse_random); not a choice that merely starts with "random"
+    (Animal Crossing's "random_tool")."""
+    return isinstance(value, str) and (value == "random" or value.startswith("random-"))
 
 
 RANDOM_BIASES = {"": "Even", "low": "Low", "middle": "Middle", "high": "High"}
