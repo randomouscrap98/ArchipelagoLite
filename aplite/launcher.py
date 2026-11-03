@@ -52,11 +52,12 @@ def load_cache() -> list[Cached]:
 def save_cache(components: Components) -> None:
     entries = [dataclasses.asdict(Cached(c.display_name, c.description or "", c.type.name, runnable(c)))
                for c in components]
+    tmp = f"{cache_file()}.{os.getpid()}.tmp"  # per process: several aplites may start at once
     try:
         os.makedirs(os.path.dirname(cache_file()), exist_ok=True)
-        with open(cache_file() + ".tmp", "w", encoding="utf-8") as f:
+        with open(tmp, "w", encoding="utf-8") as f:
             json.dump(entries, f)
-        os.replace(cache_file() + ".tmp", cache_file())
+        os.replace(tmp, cache_file())
     except OSError as e:
         logging.debug(f"Could not write launcher cache: {e}")
 
