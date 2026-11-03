@@ -24,6 +24,7 @@ from textual.widgets import Checkbox, Footer, Input, Label, OptionList, Static, 
 from textual.widgets.option_list import Option as ListOption
 
 import settings
+from aplite import glyphs
 from aplite.combo import FilterInput, highlight_first
 from aplite.file_picker import FilePicker, PathInput
 from aplite.master_detail import CSS as MASTER_DETAIL_CSS, SIDE_TEXT_WIDTH, MasterDetailApp, Rows, describe, \
@@ -302,7 +303,7 @@ class SettingsApp(MasterDetailApp):
         if not setting.value:
             text = Text("not set" + (" (will be asked for when needed)" if setting.required else ""), style="dim")
         elif setting.path_exists():
-            text = Text("√ exists", style="green")
+            text = Text(f"{glyphs.symbol('exists')} exists", style="green")
         else:
             text = Text("x doesn't exist (saving is still allowed)", style="red")
         self.query_one("#exists", Label).update(text)

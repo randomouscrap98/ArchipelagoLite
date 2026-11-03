@@ -17,7 +17,7 @@ from textual.widgets.input import Selection
 from textual.widgets.tabbed_content import ContentTab
 from textual.widgets import Button, DataTable, Footer, Input, RichLog, Static, TabbedContent, TabPane
 
-from aplite import prompts
+from aplite import glyphs, prompts
 from aplite.nav import AppliteApp, on_app_thread, terminal_handlers
 
 if typing.TYPE_CHECKING:
@@ -243,9 +243,9 @@ class ClientApp(AppliteApp):
         status = Text()
         connected = bool(ctx.server and ctx.server.socket and not ctx.server.socket.closed)
         if connected:
-            status.append("● ", style="green").append("Connected")
+            status.append(f"{glyphs.symbol('connected')} ", style="green").append("Connected")
         else:
-            status.append("○ ", style="red").append("Not connected")
+            status.append(f"{glyphs.symbol('disconnected')} ", style="red").append("Not connected")
         self.refresh_connect_bar(connected)
         if ctx.slot:
             status.append(f"  │  {ctx.player_names.get(ctx.slot, ctx.auth)}")

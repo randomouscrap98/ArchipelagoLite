@@ -4,8 +4,9 @@ fonts lack, and some widgets use emoji. Two modes, both with thin outlines:
   fancy   focused boxes: thin lines on the box's background; others: half blocks with quadrant corners in the box's
           colour (the box shrinks a little). Half-block scrollbar ends. Needs block elements: Windows Terminal, most
           terminal emulators.
-  simple  thin lines on the parent's background: border colour while focused, else the box's colour. Plain scrollbars.
-          Only box-drawing lines: works in conhost and the Linux tty too.
+  simple  thin lines on the parent's background: border colour while focused, else the box's colour. Plain scrollbars,
+          ASCII symbols. Only box-drawing lines: works in conhost and the Linux tty too.
+Checkboxes are [X] / [ ] in both.
 Mode: APLITE_GLYPHS env, else the "glyphs" pref (Options menu), else simple on conhost and the Linux tty. Applied on
 import of aplite.nav, before any app draws; set_mode() switches while running."""
 from __future__ import annotations
@@ -19,8 +20,10 @@ from rich.segment import Segment
 from textual import _border, _styles_cache, keys
 from textual.renderables.bar import Bar
 from textual.scrollbar import ScrollBarRender
+from textual.content import Content
 from textual.style import Style
 from textual.widgets import DirectoryTree
+from textual.widgets._toggle_button import ToggleButton
 
 from aplite import prefs
 
@@ -42,6 +45,9 @@ BLURRED = {"fancy": (("▗", "▄", "▖"), ("▐", " ", "▌"), ("▝", "▀", 
 """Other boxes: glyphs drawn in the box's colour on the parent's background."""
 SCROLLBAR_ENDS = {"fancy": (["▄", " "], ["▌", " "]), "simple": ([" "], [" "])}
 """ScrollBarRender's vertical and horizontal bars: half a cell of smoothness, or none."""
+SYMBOLS = {"favorite": ("♥", "*"), "connected": ("●", "+"), "disconnected": ("○", "-"), "exists": ("√", "ok"),
+           "folder": ("►", ">"), "open folder": ("▼", "v")}
+"""name: (fancy, simple). Fancy ones are in conhost's fonts but missing from some Linux tty fonts."""
 
 UNSAFE = {name for name in _border.BORDER_CHARS if name not in SAFE_BORDERS}
 mode: Mode = "fancy"
@@ -63,6 +69,10 @@ def chosen_mode() -> Mode:
     return default_mode()
 
 
+def symbol(name: str) -> str:
+    return SYMBOLS[name][mode == "simple"]
+
+
 def apply(new_mode: Mode) -> None:
     global mode
     mode = new_mode
@@ -73,6 +83,7 @@ def apply(new_mode: Mode) -> None:
     _border.get_box.cache_clear()
     _blurred_box.cache_clear()
     ScrollBarRender.VERTICAL_BARS, ScrollBarRender.HORIZONTAL_BARS = SCROLLBAR_ENDS[mode]
+    DirectoryTree.ICON_NODE, DirectoryTree.ICON_NODE_EXPANDED = f"{symbol('folder')} ", f"{symbol('open folder')} "
 
 
 def set_mode(app: App, new_mode: Mode) -> None:
@@ -92,6 +103,12 @@ def _blurred_box(inner_style: Style, outer_style: Style):
     return tuple(tuple(Segment(c, inside if c == " " else glyph) for c in row) for row in BLURRED[mode])
 
 
+def _checkbox(self: ToggleButton) -> Content:
+    """[X] / [ ]: Textual's ▐X▌ draws its sides in the button's background colour."""
+    button_style = self.get_visual_style("toggle--button")
+    return Content.assemble("[", ("X" if self.value else " ", Style(foreground=button_style.foreground)), "]")
+
+
 def _install() -> None:
     get_box, render_widget = _styles_cache.get_box, _styles_cache.StylesCache.render_widget
 
@@ -109,8 +126,8 @@ def _install() -> None:
     _styles_cache.StylesCache.render_widget = render_widget_noting_focus
     # tab underline (TabbedContent)
     Bar.BAR = Bar.HALF_BAR_LEFT = Bar.HALF_BAR_RIGHT = "─"
-    # emoji
-    DirectoryTree.ICON_NODE, DirectoryTree.ICON_NODE_EXPANDED, DirectoryTree.ICON_FILE = "► ", "▼ ", "  "
+    ToggleButton._button = property(_checkbox)
+    DirectoryTree.ICON_FILE = "  "  # emoji, like its folder icons (set by apply)
     # footer key names
     keys.KEY_DISPLAY_ALIASES.update(backspace="bksp", enter="enter")
 
