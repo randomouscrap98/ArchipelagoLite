@@ -72,6 +72,7 @@ class AppliteApp(App):
 
     def on_mount(self) -> None:  # Textual calls each class's on_mount, so subclasses get this too
         prefs.bind_theme(self)
+        self.animation_level = "none"  # Textual's own animations (tab underline, smooth scrolls) lagged behind
 
     def check_action(self, action: str, parameters: tuple) -> bool | None:
         """While another screen is on top (file picker, save dialog), the app's own keys would act on the hidden
