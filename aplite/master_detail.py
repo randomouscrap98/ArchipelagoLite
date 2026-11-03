@@ -41,6 +41,7 @@ MAX_LIST_HEIGHT = 20
 
 CSS = f"""
 #side {{ width: {SIDE_WIDTH}; }}
+#side-list {{ height: 1fr; }}  /* OptionList defaults to max-height 100%, which ignores #side-filter above it */
 #rows {{ width: 3fr; }}
 #detail {{ width: 2fr; }}
 #editor {{ height: auto; max-height: {round(EDITOR_SHARE * 100)}%; }}

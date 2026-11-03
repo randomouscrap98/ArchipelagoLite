@@ -6,6 +6,8 @@ from __future__ import annotations
 import contextlib
 import functools
 import logging
+import os
+import signal
 import sys
 import threading
 import typing
@@ -17,6 +19,9 @@ from aplite import glyphs, prefs  # glyphs patches Textual on import
 
 next_step: typing.Literal["quit", "launcher"] | None = None
 """What the user asked for when the last app ended (None: it ended on its own)."""
+
+TTY_CHECK = 1.0
+"""Seconds between checks that the terminal is still there (see AppliteApp.check_terminal)."""
 
 QUIT_STATUS = 86
 """Exit status of a child process (file picker, command-line script) whose user pressed ctrl+q: quit aplite."""
@@ -73,6 +78,15 @@ class AppliteApp(App):
     def on_mount(self) -> None:  # Textual calls each class's on_mount, so subclasses get this too
         prefs.bind_theme(self)
         self.animation_level = "none"  # Textual's own animations (tab underline, smooth scrolls) lagged behind
+        if hasattr(signal, "SIGHUP") and os.isatty(sys.__stdin__.fileno()):
+            self.set_interval(TTY_CHECK, self.check_terminal)
+
+    def check_terminal(self) -> None:
+        """A closed terminal that didn't kill us (SIGHUP ignored or never delivered) makes stdin read EOF forever,
+        and Textual's input thread spins on it at 100% CPU: die the way the hangup should have made us."""
+        if not os.isatty(sys.__stdin__.fileno()):
+            signal.signal(signal.SIGHUP, signal.SIG_DFL)
+            os.kill(os.getpid(), signal.SIGHUP)
 
     def get_system_commands(self, screen):
         yield from super().get_system_commands(screen)

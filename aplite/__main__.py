@@ -5,8 +5,12 @@ Import order matters: patches must land before CommonClient/clients import the p
 Worlds are loaded by load(), which the launcher runs in the background so it can show immediately.
 """
 import os
+import signal
 import sys
 import tempfile
+
+if hasattr(signal, "SIGHUP"):  # an inherited "ignore" (some launchers) would keep us alive after the terminal closes
+    signal.signal(signal.SIGHUP, signal.SIG_DFL)
 
 import ModuleUpdate
 
