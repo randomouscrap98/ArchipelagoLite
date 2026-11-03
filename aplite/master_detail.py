@@ -44,10 +44,10 @@ CSS = f"""
 #rows {{ width: 3fr; }}
 #detail {{ width: 2fr; }}
 #editor {{ height: auto; max-height: {round(EDITOR_SHARE * 100)}%; }}
-#editor OptionList, #editor SelectionList {{ height: auto; max-height: {MAX_LIST_HEIGHT}; visibility: hidden; }}
+#editor > OptionList, #editor > SelectionList {{ height: auto; max-height: {MAX_LIST_HEIGHT}; visibility: hidden; }}
 #editor TextArea {{ height: 12; }}
 #editor > Label {{ padding: 0 1; }}
-#editor > .heading-end {{ padding: 0 1 1 1; }}
+#editor > .heading-end {{ padding: 0 1; }}
 #doc {{ height: 1fr; border-top: solid $panel; padding: 0 1; }}
 #error {{ color: $error; }}
 """

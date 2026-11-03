@@ -23,6 +23,7 @@ from textual.scrollbar import ScrollBarRender
 from textual.content import Content
 from textual.style import Style
 from textual.widgets import DirectoryTree
+from textual.widgets._select import SelectCurrent
 from textual.widgets._toggle_button import ToggleButton
 
 from aplite import prefs
@@ -119,7 +120,8 @@ def _install() -> None:
 
     def render_widget_noting_focus(self, widget, crop):
         global _focused
-        _focused = widget.has_focus
+        # a Select keeps focus itself but draws its box on its SelectCurrent child
+        _focused = widget.has_focus or isinstance(widget, SelectCurrent) and widget.parent.has_focus
         return render_widget(self, widget, crop)
 
     _styles_cache.get_box = get_box_by_focus
