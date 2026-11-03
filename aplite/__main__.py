@@ -60,8 +60,14 @@ def main() -> None:
     argv = sys.argv[1:]
     if argv[:1] in (["-h"], ["--help"]):
         print(__doc__.strip().splitlines()[0])
-        print("usage: python -m aplite [Patch|Game|Component|url] [component args]")
-        print("With no arguments, opens the launcher. --version prints the version.")
+        print("usage: python -m aplite [patch file|component|archipelago:// url] [component args]")
+        print("With no arguments, opens the launcher.")
+        print("  --list      list the components and the patch files they open")
+        print("  --version   print the version")
+        print("  <component> --help   the component's own options (clients: --connect, --name, ...)")
+        return
+    if argv[:1] == ["--list"]:
+        list_components()
         return
     if argv[:1] == ["--version"]:
         from aplite.version import version
@@ -99,6 +105,30 @@ def main() -> None:
     if not component:
         sys.exit(f"Unknown component, patch or game: {target}")  # Launcher.main would open the kivy GUI
     run(component, (*((file,) if file else ()), *component_args), come_back=False)
+
+
+def list_components() -> None:
+    """--list: runnable components by type, with the names `python -m aplite <name>` accepts."""
+    import shutil
+    import textwrap
+    from worlds.LauncherComponents import SuffixIdentifier, Type
+    rows = []
+    for c in load():
+        if c.type == Type.HIDDEN or not components.runnable(c):
+            continue
+        names = c.display_name + (f" ({c.script_name})" if c.script_name and c.script_name != c.display_name else "")
+        suffixes = c.file_identifier.suffixes if isinstance(c.file_identifier, SuffixIdentifier) else ()
+        rows.append((c.type.name.lower(), names, " ".join(suffixes)))
+    width = max(len(r[1]) for r in rows)
+    columns = max(shutil.get_terminal_size().columns, width + 30)
+    for kind in dict.fromkeys(sorted(r[0] for r in rows)):
+        print(f"{kind}:")
+        for _, names, suffixes in sorted(r for r in rows if r[0] == kind):
+            lines = textwrap.wrap(suffixes, columns - width - 4) or [""]
+            print(f"  {names:<{width}}  {lines[0]}".rstrip())
+            for line in lines[1:]:
+                print(" " * (width + 4) + line)
+    print('\nRun one with: python -m aplite "<name or patch file>" [args]; add --help for its options.')
 
 
 def launch_from_launcher() -> None:
