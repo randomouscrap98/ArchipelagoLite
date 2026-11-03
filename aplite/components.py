@@ -200,7 +200,17 @@ def _run_cli_script(component: Component, *args: str) -> None:
     a child process in the same terminal, via aplite.script."""
     script = Utils.local_path(f"{component.script_name}.py")
     import aplite
-    sys.exit(subprocess.call([sys.executable, "-m", "aplite.script", script, *args], env=aplite.child_env()))
+    sys.exit(_child_status(subprocess.call([sys.executable, "-m", "aplite.script", script, *args],
+                                           env=aplite.child_env())))
+
+
+def _child_status(status: int) -> int:
+    """A child aplite process's exit status; its user quitting (ctrl+q in a file picker) quits this one too."""
+    from aplite import nav
+    if status == nav.QUIT_STATUS:
+        nav.next_step = "quit"
+        return 0
+    return status
 
 
 def _run_gui_script(component: Component, *args: str) -> None:

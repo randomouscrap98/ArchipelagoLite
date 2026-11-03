@@ -98,7 +98,7 @@ class LauncherApp(AppliteApp):
         yield Footer()
 
     def check_action(self, action: str, parameters: tuple) -> bool | None:
-        return parameters != ("launcher",)  # already here
+        return parameters != ("launcher",) and super().check_action(action, parameters)  # already in the launcher
 
     def on_mount(self) -> None:
         prefs.bind_theme(self)

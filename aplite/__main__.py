@@ -112,7 +112,10 @@ def run(component, args: tuple[str, ...], come_back: bool) -> None:
 
     try:
         components.run(component, *args)
-    except SystemExit:
+    except SystemExit as e:
+        if e.code == nav.QUIT_STATUS:  # ctrl+q in a file prompt before the component had a TUI
+            nav.next_step = "quit"
+            sys.exit(0)
         if not wants_launcher():
             raise
     if not wants_launcher():

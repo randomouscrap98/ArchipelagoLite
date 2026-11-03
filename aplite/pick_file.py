@@ -10,13 +10,15 @@ import sys
 from textual.app import App
 from textual.binding import Binding
 
-from aplite import prefs
+from aplite import nav, prefs
 from aplite.file_picker import FilePicker
 import Utils
 
 
 class PickerApp(App[str]):
-    BINDINGS = [Binding("ctrl+p", "command_palette", "Options", show=False)]  # labelled like aplite's other apps
+    BINDINGS = [Binding("ctrl+q", "quit_aplite", "Quit"),
+                Binding("ctrl+p", "command_palette", "Options", show=False)]  # labelled like aplite's other apps
+    quit_aplite = False
 
     def __init__(self, title: str, folder: bool, suggest: str, suffixes: list[str]) -> None:
         super().__init__()
@@ -33,12 +35,19 @@ class PickerApp(App[str]):
                             start=start)
         self.push_screen(picker, lambda path: self.exit(str(path) if path else ""))
 
+    def action_quit_aplite(self) -> None:
+        self.quit_aplite = True
+        self.exit("")
+
 
 def main() -> None:
     out, title, kind, suggest, *suffixes = sys.argv[1:]
-    path = PickerApp(title, kind == "folder", suggest, suffixes).run() or ""
+    app = PickerApp(title, kind == "folder", suggest, suffixes)
+    path = app.run() or ""
     with open(out, "w", encoding="utf-8") as f:
         f.write(path)
+    if app.quit_aplite:
+        sys.exit(nav.QUIT_STATUS)
 
 
 if __name__ == "__main__":

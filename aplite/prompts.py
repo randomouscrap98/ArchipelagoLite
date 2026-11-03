@@ -51,10 +51,17 @@ def open_directory(title: str, suggest: str = "") -> str | None:
     return ask(title, folder=True, suffixes=(), suggest=suggest)
 
 
+QUIT = "\0quit"
+"""_ask's answer when the user pressed ctrl+q in the picker."""
+
+
 def ask(title: str, folder: bool, suffixes: tuple[str, ...], suggest: str) -> str | None:
     if (title, folder) in _cancelled:
         return None
     answer = _ask(title, folder, suffixes, suggest)
+    if answer == QUIT:
+        _quit_aplite()
+        return None
     if answer is None:
         _cancelled.add((title, folder))
         logging.info(f"{title}: cancelled; won't ask again until aplite restarts.")
@@ -79,9 +86,23 @@ def _ask(title: str, folder: bool, suffixes: tuple[str, ...], suggest: str) -> s
     return app.call_from_thread(suspended)
 
 
+def _quit_aplite() -> None:
+    """Ctrl+Q in the picker: end the app on screen (the client then shuts down) or, before/without one, this process.
+    nav.QUIT_STATUS tells a parent aplite process (this one being a command-line script) to quit too."""
+    from aplite import nav
+    nav.next_step = "quit"
+    app = active_app
+    if app is None:
+        raise SystemExit(nav.QUIT_STATUS)
+    if threading.get_ident() == app._thread_id:
+        app.exit()
+    else:
+        app.call_from_thread(app.exit)
+
+
 def _pick_or_prompt(title: str, folder: bool, suffixes: tuple[str, ...], suggest: str) -> str | None:
     """The full-screen file picker (aplite/pick_file.py) in a child process; a plain terminal prompt if it fails."""
-    import aplite
+    import aplite.nav
     fd, out = tempfile.mkstemp(prefix="aplite-pick-", suffix=".txt")
     os.close(fd)
     try:
@@ -90,6 +111,8 @@ def _pick_or_prompt(title: str, folder: bool, suffixes: tuple[str, ...], suggest
                                  env={**aplite.child_env(), "SKIP_REQUIREMENTS_UPDATE": "1"})
         with open(out, encoding="utf-8") as f:
             answer = f.read().strip()
+        if status == aplite.nav.QUIT_STATUS:
+            return QUIT
         if status == 0:
             return answer or None
         logging.warning(f"File picker failed (exit {status}); asking in the terminal instead.")
