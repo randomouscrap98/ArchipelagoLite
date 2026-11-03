@@ -15,7 +15,7 @@ import typing
 import yaml
 from rich.text import Text
 from textual import on
-from textual.widgets import Input, Label, OptionList
+from textual.widgets import Input, Label, OptionList, SelectionList
 
 from aplite.nav import AppliteApp
 
@@ -32,13 +32,17 @@ MIN_ROW_WIDTH = 30
 """Rows are fitted to at least this many columns, even if #rows hasn't been laid out yet."""
 MIN_VALUE_WIDTH = 16
 """Columns kept for a row's value when names are long (names get cut first)."""
+EDITOR_SHARE = 0.6
+"""Part of the detail column the editor may take (the rest shows the docs)."""
+MAX_LIST_HEIGHT = 20
+"""Most rows an editor list shows before scrolling."""
 
 CSS = f"""
 #side {{ width: {SIDE_WIDTH}; }}
 #rows {{ width: 3fr; }}
 #detail {{ width: 2fr; }}
-#editor {{ height: auto; max-height: 60%; }}
-#editor OptionList, #editor SelectionList {{ height: auto; max-height: 20; }}
+#editor {{ height: auto; max-height: {round(EDITOR_SHARE * 100)}%; }}
+#editor OptionList, #editor SelectionList {{ height: auto; max-height: {MAX_LIST_HEIGHT}; }}
 #editor TextArea {{ height: 12; }}
 #doc {{ height: 1fr; border-top: solid $panel; padding: 0 1; }}
 #error {{ color: $error; }}
@@ -118,6 +122,7 @@ class MasterDetailApp(AppliteApp):
 
     def on_resize(self) -> None:
         self.call_after_refresh(self.refresh_rows)
+        self.call_after_refresh(self.fit_editor)
 
     @on(OptionList.OptionHighlighted, "#rows")
     def _row_highlighted(self, event: OptionList.OptionHighlighted) -> None:
@@ -136,6 +141,7 @@ class MasterDetailApp(AppliteApp):
             self.editor_key = self.current
             if self.editor_key is not None:
                 await self.build_editor()
+                self.call_after_refresh(self.fit_editor)
 
     def show_rows(self, rows: list) -> None:
         """Replace the rows (and highlight the first selectable one); the editor follows the highlight."""
@@ -162,6 +168,20 @@ class MasterDetailApp(AppliteApp):
         self.call_after_refresh(self.refresh_rows)
 
     # detail pane helpers
+
+    def fit_editor(self) -> None:
+        """Shrink the editor's lists to the room the other editor widgets leave: a list taller than that got cut off
+        by #editor's max-height without scrolling."""
+        if not self.query("#editor"):
+            return
+        editor = self.query_one("#editor")
+        lists = [child for child in editor.children if isinstance(child, (OptionList, SelectionList))]
+        if not lists:
+            return
+        room = int(self.query_one("#detail").size.height * EDITOR_SHARE)
+        room -= sum(child.outer_size.height for child in editor.children if child not in lists)
+        for widget in lists:
+            widget.styles.max_height = max(3, min(MAX_LIST_HEIGHT, room // len(lists)))
 
     def error(self, message: str) -> None:
         self.query_one("#error", Label).update(message)

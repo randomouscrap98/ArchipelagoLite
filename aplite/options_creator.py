@@ -267,18 +267,20 @@ class OptionsApp(MasterDetailApp):
         self.loaded_path: Path | None = None
 
     def compose(self) -> ComposeResult:
-        with Horizontal(id="top"):
-            yield Input(placeholder="Player name", id="name", max_length=MAX_NAME)
-            yield Label("Game: (pick one)", id="game-label")
         with Horizontal():
             with Vertical(id="side"):
                 yield Input(placeholder="Filter games", id="side-filter")
                 yield OptionList(ListOption("Loading worlds…", disabled=True), id="side-list")
-            yield OptionList(id="rows")
-            with Vertical(id="detail"):
-                yield Vertical(id="editor")
-                with VerticalScroll(id="doc"):
-                    yield Static(id="doc-text")
+            with Vertical():  # name + game stay above the options whether the side list is shown or not
+                with Horizontal(id="top"):
+                    yield Input(placeholder="Player name", id="name", max_length=MAX_NAME)
+                    yield Label("Game: (pick one)", id="game-label")
+                with Horizontal():
+                    yield OptionList(id="rows")
+                    with Vertical(id="detail"):
+                        yield Vertical(id="editor")
+                        with VerticalScroll(id="doc"):
+                            yield Static(id="doc-text")
         yield Footer()
 
     def on_mount(self) -> None:
@@ -286,7 +288,7 @@ class OptionsApp(MasterDetailApp):
             self.run_worker(self.load_in_thread, thread=True)
         else:
             self.worlds_loaded()
-        self.query_one("#name", Input).focus()
+        self.query_one("#side-filter", Input).focus()
 
     def load_in_thread(self) -> None:
         self.load_worlds()
@@ -442,6 +444,7 @@ class OptionsApp(MasterDetailApp):
                 widget.display = random
             elif widget.id not in ("random", "error", None):
                 widget.disabled = random
+        self.call_after_refresh(self.fit_editor)  # the random variants row came or went
 
     @on(Checkbox.Changed, "#random")
     @editor_event
