@@ -300,9 +300,9 @@ class SettingsApp(MasterDetailApp):
         if not setting.value:
             text = Text("not set" + (" (will be asked for when needed)" if setting.required else ""), style="dim")
         elif setting.path_exists():
-            text = Text("✓ exists", style="green")
+            text = Text("√ exists", style="green")
         else:
-            text = Text("✗ doesn't exist (saving is still allowed)", style="red")
+            text = Text("x doesn't exist (saving is still allowed)", style="red")
         self.query_one("#exists", Label).update(text)
 
     @on(Input.Submitted, "#path")

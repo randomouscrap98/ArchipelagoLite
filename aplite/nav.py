@@ -13,7 +13,7 @@ import typing
 from textual.app import App
 from textual.binding import Binding
 
-from aplite import prefs
+from aplite import glyphs, prefs  # noqa: F401 (glyphs: patches Textual on import)
 
 next_step: typing.Literal["quit", "launcher"] | None = None
 """What the user asked for when the last app ended (None: it ended on its own)."""

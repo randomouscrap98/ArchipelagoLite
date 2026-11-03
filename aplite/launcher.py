@@ -165,7 +165,7 @@ class LauncherApp(AppliteApp):
         search = self.query_one(Input).value.strip().casefold()
         matches = [c for c in self.components
                    if search in c.display_name.casefold() or search in (c.description or "").casefold()]
-        groups = [("★ Favorites", [c for c in matches if c.display_name in self.favorites])]
+        groups = [("♥ Favorites", [c for c in matches if c.display_name in self.favorites])]
         groups += [(label, [c for c in matches if type_name(c) == type_ and c.display_name not in self.favorites])
                    for type_, label in groups_by_type]
 
