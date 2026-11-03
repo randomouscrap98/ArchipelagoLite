@@ -7,6 +7,8 @@ import logging
 import os
 import typing
 
+from rich.padding import Padding
+from rich.table import Table
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.containers import Horizontal
@@ -82,7 +84,7 @@ class LauncherApp(AppliteApp):
     #status-row { height: 1; padding: 0 2; }
     #status { width: 1fr; }
     #version { width: auto; color: $text-muted; }
-    OptionList { height: 1fr; }
+    OptionList { height: 1fr; overflow-y: scroll; }
     """
     BINDINGS = [("ctrl+f", "toggle_favorite", "Favorite")]
 
@@ -190,13 +192,17 @@ class LauncherApp(AppliteApp):
         if ids:
             options.highlighted = options.get_option_index(highlighted if highlighted in ids else ids[0])
 
-    def render_component(self, component: Component | Cached) -> Text:
-        text = Text("  ").append(component.display_name.ljust(self.name_width + 2))
+    def render_component(self, component: Component | Cached) -> Padding:
         if can_run(component):
-            text.append(" ".join((component.description or "").split()), style="dim")  # some span lines
+            description = Text(" ".join((component.description or "").split()), style="dim")  # some span lines
         else:
-            text.append("(needs full GUI)", style="dim italic")
-        return text
+            description = Text("(needs full GUI)", style="dim italic")
+        # two columns, so a long description wraps under itself rather than under the names
+        row = Table.grid(padding=(0, 2))
+        row.add_column(width=self.name_width)
+        row.add_column(ratio=1)
+        row.add_row(Text(component.display_name), description)
+        return Padding(row, (0, 0, 0, 2))
 
     def selected(self) -> Component | Cached | None:
         option = self.query_one(OptionList).highlighted_option
