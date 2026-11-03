@@ -98,8 +98,8 @@ def set_mode(app: App, new_mode: Mode) -> None:
 
 
 @functools.lru_cache(maxsize=1024)
-def _blurred_box(inner_style: Style, outer_style: Style):
-    glyph = Style(background=outer_style.background, foreground=inner_style.background).rich_style
+def _blurred_box(colour, inner_style: Style, outer_style: Style):
+    glyph = Style(background=outer_style.background, foreground=colour).rich_style
     inside = inner_style.rich_style
     return tuple(tuple(Segment(c, inside if c == " " else glyph) for c in row) for row in BLURRED[mode])
 
@@ -115,7 +115,9 @@ def _install() -> None:
 
     def get_box_by_focus(name, inner_style, outer_style, style):
         if name in UNSAFE and not _focused:
-            return _blurred_box(inner_style, outer_style)
+            # outer is a coloured stripe (toast severity, Markdown quotes): keep its colour
+            colour = style.foreground if name == "outer" and style.foreground else inner_style.background
+            return _blurred_box(colour, inner_style, outer_style)
         return get_box(name, inner_style, outer_style, style)
 
     def render_widget_noting_focus(self, widget, crop):
