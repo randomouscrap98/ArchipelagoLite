@@ -61,7 +61,11 @@ def main() -> None:
     if argv[:1] in (["-h"], ["--help"]):
         print(__doc__.strip().splitlines()[0])
         print("usage: python -m aplite [Patch|Game|Component|url] [component args]")
-        print("With no arguments, opens the launcher.")
+        print("With no arguments, opens the launcher. --version prints the version.")
+        return
+    if argv[:1] == ["--version"]:
+        from aplite.version import version
+        print(f"Archipelago Lite {version()}")
         return
     target = argv[0] if argv else None
     component_args = argv[1:]

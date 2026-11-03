@@ -24,9 +24,10 @@ done
 appimage=1
 command -v "$MKSQUASHFS" >/dev/null 2>&1 || { echo "build_dist: no mksquashfs, skipping the AppImage" >&2; appimage=0; }
 
-version=$(sed -n 's/^__version__ = "\(.*\)"/\1/p' "$REPO/Utils.py")
-name="ArchipelagoLite_${version}-$(git -C "$REPO" rev-parse --short HEAD)"
 host_python() { uv run --quiet --no-project --python "$PYVER" python "$@"; }
+version=$(sed -n 's/^__version__ = "\(.*\)"/\1/p' "$REPO/Utils.py")
+aplite_version=$(PYTHONPATH="$REPO" host_python -c 'from aplite.version import version; print(version())')
+name="ArchipelagoLite_${aplite_version}"
 
 rm -rf "$BUILD"
 mkdir -p "$BUILD/app" "$DIST"
@@ -37,6 +38,7 @@ git -C "$REPO" ls-files | grep -Ev "$EXCLUDE" | while read -r f; do
 done > "$BUILD/files.txt"
 tar -C "$REPO" -cf - -T "$BUILD/files.txt" | tar -C "$BUILD/app" -xf -
 # untracked, but Utils.user_path copies it to the home folder (templates: "Generate Template Options" in the launcher)
+echo "$aplite_version" > "$BUILD/app/aplite/_version.txt"  # no git in the package (aplite/version.py)
 mkdir -p "$BUILD/app/Players/Templates"
 cp "$REPO/meta.yaml" "$BUILD/app/Players/Templates/"
 # Utils.user_path copies Players/sprites/lua to the home folder when this differs from the copy there

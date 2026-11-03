@@ -9,11 +9,13 @@ import typing
 
 from rich.text import Text
 from textual.app import ComposeResult
+from textual.containers import Horizontal
 from textual.widgets import Footer, Input, OptionList, Static
 from textual.widgets.option_list import Option
 
 import Utils
 from aplite import prefs
+from aplite.version import version
 from aplite.nav import AppliteApp
 from aplite.components import override_for, returns_to_launcher, runnable
 
@@ -77,7 +79,9 @@ Choice = tuple["Component", tuple[str, ...], bool]
 class LauncherApp(AppliteApp):
     TITLE = "Archipelago"
     CSS = """
-    #status { height: 1; padding: 0 2; }
+    #status-row { height: 1; padding: 0 2; }
+    #status { width: 1fr; }
+    #version { width: auto; color: $text-muted; }
     OptionList { height: 1fr; }
     """
     BINDINGS = [("ctrl+f", "toggle_favorite", "Favorite")]
@@ -96,7 +100,9 @@ class LauncherApp(AppliteApp):
 
     def compose(self) -> ComposeResult:
         yield Input(placeholder="Search. Enter launches, ↑/↓ select.")
-        yield Static(id="status")  # its own line, so the list doesn't shift when loading finishes
+        with Horizontal(id="status-row"):  # its own line, so the list doesn't shift when loading finishes
+            yield Static(id="status")
+            yield Static(f"Archipelago Lite {version()}", id="version")
         yield OptionList()
         yield Footer()
 
