@@ -100,6 +100,7 @@ class MasterDetailApp(AppliteApp):
         self._editor_timer = None
         self._editor_lock = asyncio.Lock()  # one build at a time: a timer firing mid-build mounted duplicate ids
         self._armed: set[str] = set()
+        self._list_heights: dict[tuple, int] = {}  # editor_shape() -> fitted list max-height, until a resize
 
     # rows
 
@@ -120,6 +121,10 @@ class MasterDetailApp(AppliteApp):
         """The value Left/Right (delta -1/1, Shift: -10/10) gives the row, or None if it can't be stepped."""
         return None
 
+    def update_editor(self, key: str) -> bool:
+        """Show a stepped value in the editor already built for `key`, without rebuilding it; False: rebuild."""
+        return False
+
     def fitted_row(self, name: str, value: str, changed: bool, note: Text | None = None) -> Text:
         """One line fitted to #rows by hand (OptionList wraps long prompts): name column, then the value."""
         width = max(MIN_ROW_WIDTH, self.query_one("#rows", OptionList).scrollable_content_region.width - 1)
@@ -139,6 +144,7 @@ class MasterDetailApp(AppliteApp):
             self.refresh_row(key)
 
     def on_resize(self) -> None:
+        self._list_heights.clear()
         self.call_after_refresh(self.refresh_rows)
         self.call_after_refresh(self.fit_editor)
 
@@ -170,7 +176,11 @@ class MasterDetailApp(AppliteApp):
         value = self.stepped(self.current, delta)
         if value is not None:
             self.set_value(self.current, value)
-            self._schedule_editor()  # the editor shows the new value once the key is let go
+            if self.editor_key == self.current and self.query("#error"):
+                self.error("")  # a stepped value is valid; an old message (e.g. "Not a number.") no longer applies
+            # a rebuild scrolls a long list back to the top for a frame: update in place when the editor is built
+            if self._editor_timer or self.editor_key != self.current or not self.update_editor(self.current):
+                self._schedule_editor()
 
     @on(OptionList.OptionSelected, "#rows")
     async def action_edit(self) -> None:
@@ -225,6 +235,22 @@ class MasterDetailApp(AppliteApp):
 
     # detail pane helpers
 
+    @staticmethod
+    def editor_shape(widgets: typing.Iterable) -> tuple:
+        """Editors with the same shape fit their lists to the same height."""
+        return tuple((type(widget).__name__, widget.id, widget.display) for widget in widgets)
+
+    async def mount_editor(self, widgets: list) -> None:
+        """Mount the editor widgets, lists already at the height fitted for this shape last time, so they are laid
+        out once (fitting after the first layout made the widgets below a list jump)."""
+        height = self._list_heights.get(self.editor_shape(widgets))
+        if height is not None:
+            for widget in widgets:
+                if isinstance(widget, (OptionList, SelectionList)):
+                    widget.styles.max_height = height
+                    widget.styles.visibility = "visible"
+        await self.query_one("#editor").mount_all(widgets)
+
     def fit_editor(self) -> None:
         """Shrink the editor's lists to the room the other editor widgets leave: a list taller than that got cut off
         by #editor's max-height without scrolling."""
@@ -236,9 +262,11 @@ class MasterDetailApp(AppliteApp):
             return
         room = int(self.query_one("#detail").size.height * EDITOR_SHARE)
         room -= sum(child.outer_size.height for child in editor.children if child not in lists)
+        height = max(3, min(MAX_LIST_HEIGHT, room // len(lists)))
+        self._list_heights[self.editor_shape(editor.children)] = height
         for widget in lists:
-            widget.styles.max_height = max(3, min(MAX_LIST_HEIGHT, room // len(lists)))
-            widget.styles.visibility = "visible"  # hidden until fitted: unfitted, it showed cut off for a frame
+            widget.styles.max_height = height
+            widget.styles.visibility = "visible"  # hidden until fitted the first time: unfitted, it showed cut off
 
     def error(self, message: str) -> None:
         self.query_one("#error", Label).update(message)

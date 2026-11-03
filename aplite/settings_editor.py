@@ -234,6 +234,18 @@ class SettingsApp(MasterDetailApp):
             return (setting.value if isinstance(setting.value, int) else 0) + delta
         return None
 
+    def update_editor(self, name: str) -> bool:
+        setting = self.section.settings[name]
+        if self.query("#bool"):
+            self.query_one("#bool", Checkbox).value = bool(setting.value)
+        elif self.query("#enum") and setting.value in (values := [m.value for m in setting.cls]):
+            self.query_one("#enum", OptionList).highlighted = values.index(setting.value)
+        elif self.query("#int"):
+            self.query_one("#int", Input).value = str(setting.value)
+        else:
+            return False
+        return True
+
     def set_value(self, name: str, value: typing.Any) -> None:
         setting = self.section.settings[name]
         if setting.value != value:
@@ -271,8 +283,8 @@ class SettingsApp(MasterDetailApp):
         else:
             widgets += [Label(Text("Edit as YAML.", style="dim")), TextArea(to_yaml(value), id="yaml")]
         widgets.append(Label("", id="error"))
+        await self.mount_editor(widgets)
         editor = self.query_one("#editor")
-        await editor.mount_all(widgets)
         if setting.kind == "enum":
             values = [m.value for m in setting.cls]
             if value in values:

@@ -387,6 +387,18 @@ class OptionsApp(MasterDetailApp):
             return max(option.range_start, min(option.range_end, number + delta))
         return None
 
+    def update_editor(self, key: str) -> bool:
+        value = self.values[key]
+        if self.query("#choice") and value in (names := list(self.options[key].name_lookup.values())):
+            self.query_one("#choice", OptionList).highlighted = names.index(value)
+            if self.query("#custom"):
+                self.query_one("#custom", Input).value = ""
+            return True
+        if self.query("#number") and isinstance(value, int):
+            self.query_one("#number", Input).value = str(value)
+            return True
+        return False
+
     def set_value(self, key: str, value: typing.Any) -> None:
         if self.values.get(key) != value:
             self.dirty = True
@@ -445,9 +457,10 @@ class OptionsApp(MasterDetailApp):
                     Input("" if high is None else str(high), type="integer", id="random-high",
                           placeholder=str(option.range_end)),
                     id="random-opts"))
+                widgets[-1].display = is_random(value)  # before mounting, so the editor is laid out once
         widgets.append(Label("", id="error"))
+        await self.mount_editor(widgets)
         editor = self.query_one("#editor")
-        await editor.mount_all(widgets)
         self.sync_disabled()
         if option_kind in CHOICE_KINDS:
             names = list(option.name_lookup.values())
