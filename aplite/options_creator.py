@@ -239,6 +239,7 @@ class GamePicker(ModalScreen[str | None]):
 class OptionsApp(MasterDetailApp):
     TITLE = "Options Creator"
     CSS = MASTER_DETAIL_CSS + """
+    #main { display: none; }  /* until a game is picked */
     #top { height: 3; }
     #name { width: 30; }
     #game-label { padding: 1 2; }
@@ -271,10 +272,10 @@ class OptionsApp(MasterDetailApp):
             with Vertical(id="side"):
                 yield Input(placeholder="Filter games", id="side-filter")
                 yield OptionList(ListOption("Loading worlds…", disabled=True), id="side-list")
-            with Vertical():  # name + game stay above the options whether the side list is shown or not
+            with Vertical(id="main"):  # name + game stay above the options whether the side list is shown or not
                 with Horizontal(id="top"):
                     yield Input(placeholder="Player name", id="name", max_length=MAX_NAME)
-                    yield Label("Game: (pick one)", id="game-label")
+                    yield Label(id="game-label")
                 with Horizontal():
                     yield OptionList(id="rows")
                     with Vertical(id="detail"):
@@ -336,6 +337,7 @@ class OptionsApp(MasterDetailApp):
             self.values_by_game[game] = loaded_values(self.options, values)
         self.values = self.values_by_game[game]
         self.query_one("#game-label", Label).update(f"Game: {game}")
+        self.query_one("#main").display = True
         self.collapse_side_if_narrow()
         self.name_width = max((len(getattr(option, "display_name", key)) for key, option in self.options.items()),
                               default=10)
@@ -625,14 +627,18 @@ class OptionsApp(MasterDetailApp):
         self.dirty = False
         self.notify(f"Loaded {path.name}")
 
+    def action_toggle_side(self) -> None:
+        if self.game:  # without one there is nothing to show instead
+            super().action_toggle_side()
+
     def action_save(self) -> None:
+        if not self.game:
+            self.notify("Pick a game first", severity="error")
+            return
         name = self.query_one("#name", Input).value.strip()
         if not name:
             self.notify("Enter a player name first", severity="error")
             self.query_one("#name", Input).focus()
-            return
-        if not self.game:
-            self.notify("Pick a game first", severity="error")
             return
         folder = prefs.get("options_dir") or DEFAULT_DIR
         default = str(self.loaded_path) if self.loaded_path else \
