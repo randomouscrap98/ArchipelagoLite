@@ -10,10 +10,10 @@ import sys
 import threading
 import typing
 
-from textual.app import App
+from textual.app import App, SystemCommand
 from textual.binding import Binding
 
-from aplite import glyphs, prefs  # noqa: F401 (glyphs: patches Textual on import)
+from aplite import glyphs, prefs  # glyphs patches Textual on import
 
 next_step: typing.Literal["quit", "launcher"] | None = None
 """What the user asked for when the last app ended (None: it ended on its own)."""
@@ -73,6 +73,13 @@ class AppliteApp(App):
     def on_mount(self) -> None:  # Textual calls each class's on_mount, so subclasses get this too
         prefs.bind_theme(self)
         self.animation_level = "none"  # Textual's own animations (tab underline, smooth scrolls) lagged behind
+
+    def get_system_commands(self, screen):
+        yield from super().get_system_commands(screen)
+        other = "simple" if glyphs.mode == "fancy" else "fancy"
+        yield SystemCommand(f"Glyphs: switch to {other}",
+                            "Fancy: block-character borders and scrollbars. Simple: plain lines, for consoles "
+                            "without block characters (conhost, Linux tty)", lambda: glyphs.set_mode(self, other))
 
     def check_action(self, action: str, parameters: tuple) -> bool | None:
         """While another screen is on top (file picker, save dialog), the app's own keys would act on the hidden
