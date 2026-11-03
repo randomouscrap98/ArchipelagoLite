@@ -15,6 +15,8 @@ import typing
 import yaml
 from rich.text import Text
 from textual import on
+from textual.actions import SkipAction
+from textual.binding import Binding
 from textual.widgets import Input, Label, OptionList, SelectionList
 
 from aplite.nav import AppliteApp
@@ -80,7 +82,16 @@ def editor_event(handler: typing.Callable) -> typing.Callable:
     return wrapper
 
 
+class Rows(OptionList):
+    """The rows, grid-like (research/keyboard.md): Left/Right step the value in place, Enter/Space edit it."""
+    BINDINGS = [Binding("left", "app.step(-1)", show=False), Binding("right", "app.step(1)", show=False),
+                Binding("shift+left", "app.step(-10)", show=False), Binding("shift+right", "app.step(10)", show=False),
+                Binding("space", "app.edit", show=False)]
+
+
 class MasterDetailApp(AppliteApp):
+    BINDINGS = [Binding("escape", "back_to_rows", show=False)]
+
     def __init__(self) -> None:
         super().__init__()
         self.current: str | None = None  # highlighted row
@@ -101,6 +112,13 @@ class MasterDetailApp(AppliteApp):
 
     async def build_editor(self) -> None:
         raise NotImplementedError
+
+    def set_value(self, key: str, value: typing.Any) -> None:
+        raise NotImplementedError
+
+    def stepped(self, key: str, delta: int) -> typing.Any:
+        """The value Left/Right (delta -1/1, Shift: -10/10) gives the row, or None if it can't be stepped."""
+        return None
 
     def fitted_row(self, name: str, value: str, changed: bool, note: Text | None = None) -> Text:
         """One line fitted to #rows by hand (OptionList wraps long prompts): name column, then the value."""
@@ -128,9 +146,12 @@ class MasterDetailApp(AppliteApp):
     def _row_highlighted(self, event: OptionList.OptionHighlighted) -> None:
         if event.option.id and event.option.id != self.current:
             self.current = event.option.id
-            if self._editor_timer:
-                self._editor_timer.stop()
-            self._editor_timer = self.set_timer(EDITOR_DELAY, self._build_editor_now)
+            self._schedule_editor()
+
+    def _schedule_editor(self) -> None:
+        if self._editor_timer:
+            self._editor_timer.stop()
+        self._editor_timer = self.set_timer(EDITOR_DELAY, self._build_editor_now)
 
     async def _build_editor_now(self) -> None:
         self._editor_timer = None
@@ -142,6 +163,41 @@ class MasterDetailApp(AppliteApp):
             if self.editor_key is not None:
                 await self.build_editor()
                 self.call_after_refresh(self.fit_editor)
+
+    def action_step(self, delta: int) -> None:
+        if self.current is None:
+            return
+        value = self.stepped(self.current, delta)
+        if value is not None:
+            self.set_value(self.current, value)
+            self._schedule_editor()  # the editor shows the new value once the key is let go
+
+    @on(OptionList.OptionSelected, "#rows")
+    async def action_edit(self) -> None:
+        """Enter/Space on a row: focus the editor's value widget (the first focusable one; Random only if it's the
+        only one left enabled)."""
+        if self.current is None:
+            return
+        if self.editor_key != self.current or self._editor_timer:
+            if self._editor_timer:
+                self._editor_timer.stop()
+            await self._build_editor_now()
+        focusable = [widget for widget in self.query_one("#editor").query("*") if widget.focusable]
+        preferred = [widget for widget in focusable if widget.id != "random"
+                     and not any(ancestor.id == "random-opts" for ancestor in widget.ancestors)]
+        if preferred or focusable:
+            (preferred or focusable)[0].focus()
+
+    def action_back_to_rows(self) -> None:
+        """Esc in the editor."""
+        focused = self.focused
+        if focused is None or not any(ancestor.id == "editor" for ancestor in focused.ancestors):
+            raise SkipAction()
+        self.back_to_rows()
+
+    def back_to_rows(self) -> None:
+        """After a single value is set (choice, number, text...) or Esc: back to the row, like a closed dropdown."""
+        self.query_one("#rows", OptionList).focus()
 
     def show_rows(self, rows: list) -> None:
         """Replace the rows (and highlight the first selectable one); the editor follows the highlight."""

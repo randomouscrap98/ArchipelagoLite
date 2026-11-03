@@ -24,9 +24,10 @@ from textual.widgets import Checkbox, Footer, Input, Label, OptionList, Static, 
 from textual.widgets.option_list import Option as ListOption
 
 import settings
+from aplite.combo import FilterInput, highlight_first
 from aplite.file_picker import FilePicker, PathInput
-from aplite.master_detail import CSS as MASTER_DETAIL_CSS, SIDE_TEXT_WIDTH, MasterDetailApp, describe, editor_event, \
-    fit, to_yaml
+from aplite.master_detail import CSS as MASTER_DETAIL_CSS, SIDE_TEXT_WIDTH, MasterDetailApp, Rows, describe, \
+    editor_event, fit, to_yaml
 
 if typing.TYPE_CHECKING:
     from pathlib import Path
@@ -132,9 +133,9 @@ class SettingsApp(MasterDetailApp):
     def compose(self) -> ComposeResult:
         with Horizontal():
             with Vertical(id="side"):
-                yield Input(placeholder="Filter sections", id="side-filter")
+                yield FilterInput(placeholder="Filter sections", id="side-filter", target="#side-list")
                 yield OptionList(id="side-list")
-            yield OptionList(id="rows")
+            yield Rows(id="rows")
             with Vertical(id="detail"):
                 yield Vertical(id="editor")
                 with VerticalScroll(id="doc"):
@@ -170,16 +171,17 @@ class SettingsApp(MasterDetailApp):
         sections.add_options([ListOption(Text(fit(s.title, SIDE_TEXT_WIDTH), style="" if s.editable else "dim"), id=key)
                               for key, s in self.sections.items()
                               if search in s.title.casefold() or search in key])
+        highlight_first(sections)
 
     @on(Input.Changed, "#side-filter")
     def filter_sections(self) -> None:
         self.fill_sections()
 
     @on(Input.Submitted, "#side-filter")
-    def pick_first(self) -> None:
-        sections = self.query_one("#side-list", OptionList)
-        if sections.option_count:
-            self.select_section(sections.get_option_at_index(0).id)
+    def pick_highlighted(self) -> None:
+        option = self.query_one("#side-list", OptionList).highlighted_option
+        if option:
+            self.select_section(option.id)
 
     @on(OptionList.OptionSelected, "#side-list")
     def section_selected(self, event: OptionList.OptionSelected) -> None:
@@ -217,6 +219,20 @@ class SettingsApp(MasterDetailApp):
         value = describe(setting.value) if setting.value not in (None, "") else "(not set)"
         note = Text("  missing", style="red") if setting.missing_path() else None
         return self.fitted_row(name, value, setting.value != setting.default, note)
+
+    def stepped(self, name: str, delta: int) -> typing.Any:
+        if not self.section or not self.section.editable:
+            return None
+        setting = self.section.settings[name]
+        if setting.kind == "bool":
+            return not setting.value
+        if setting.kind == "enum":
+            values = [m.value for m in setting.cls]
+            index = values.index(setting.value) if setting.value in values else (-1 if delta > 0 else 0)
+            return values[(index + (1 if delta > 0 else -1)) % len(values)]
+        if setting.kind == "int":
+            return (setting.value if isinstance(setting.value, int) else 0) + delta
+        return None
 
     def set_value(self, name: str, value: typing.Any) -> None:
         setting = self.section.settings[name]
@@ -283,6 +299,7 @@ class SettingsApp(MasterDetailApp):
         event.stop()
         self.set_value(self.editor_key, os.path.expanduser(event.value.strip()))
         self.update_exists()
+        self.back_to_rows()
 
     def action_browse(self) -> None:
         if not self.query("#path"):
@@ -309,6 +326,7 @@ class SettingsApp(MasterDetailApp):
     @editor_event
     def enum_selected(self, event: OptionList.OptionSelected) -> None:
         self.set_value(self.editor_key, list(self.setting().cls)[event.option_index].value)
+        self.back_to_rows()
 
     @on(Input.Submitted, "#int")
     @editor_event
@@ -316,6 +334,7 @@ class SettingsApp(MasterDetailApp):
         try:
             self.set_value(self.editor_key, int(event.value))
             self.error("")
+            self.back_to_rows()
         except ValueError:
             self.error("Not a number.")
 
@@ -323,6 +342,7 @@ class SettingsApp(MasterDetailApp):
     @editor_event
     def str_submitted(self, event: Input.Submitted) -> None:
         self.set_value(self.editor_key, event.value)
+        self.back_to_rows()
 
     @on(TextArea.Changed, "#yaml")
     @editor_event

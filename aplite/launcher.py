@@ -16,6 +16,7 @@ from textual.widgets import Footer, Input, OptionList, Static
 from textual.widgets.option_list import Option
 
 import Utils
+from aplite.combo import FilterInput
 from aplite.version import version
 from aplite.nav import AppliteApp
 from aplite.components import override_for, returns_to_launcher, runnable
@@ -101,7 +102,7 @@ class LauncherApp(AppliteApp):
         self.launch_when_loaded: str | bool = False  # Enter pressed while loading: the highlighted name, or True
 
     def compose(self) -> ComposeResult:
-        yield Input(placeholder="Search. Enter launches, ↑/↓ select.")
+        yield FilterInput(placeholder="Search. Enter launches, ↑/↓ select.", target="OptionList")
         with Horizontal(id="status-row"):  # its own line, so the list doesn't shift when loading finishes
             yield Static(id="status")
             yield Static(f"Archipelago Lite {version()}", id="version")
@@ -215,15 +216,6 @@ class LauncherApp(AppliteApp):
 
     def on_input_changed(self) -> None:
         self.rebuild()
-
-    def on_key(self, event) -> None:
-        if event.key in ("up", "down") and isinstance(self.focused, Input):
-            options = self.query_one(OptionList)
-            if event.key == "up":
-                options.action_cursor_up()
-            else:
-                options.action_cursor_down()
-            event.stop()
 
     def on_input_submitted(self) -> None:
         self.launch()

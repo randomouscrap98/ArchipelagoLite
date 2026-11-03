@@ -22,8 +22,9 @@ from textual.widgets.option_list import Option as ListOption
 
 import Utils
 from aplite import prefs
+from aplite.combo import FilterInput, highlight_first
 from aplite.file_picker import FilePicker
-from aplite.master_detail import CSS as MASTER_DETAIL_CSS, MasterDetailApp, describe, editor_event, to_yaml
+from aplite.master_detail import CSS as MASTER_DETAIL_CSS, MasterDetailApp, Rows, describe, editor_event, to_yaml
 
 if typing.TYPE_CHECKING:
     from Options import Option
@@ -236,6 +237,13 @@ class GamePicker(ModalScreen[str | None]):
         self.dismiss(None)
 
 
+class SetFilter(FilterInput):
+    """A set option's filter: Enter toggles the highlighted entry, Shift+Up/Down carry its state along as the
+    highlight moves, Ctrl+A marks all shown entries (or none if all are)."""
+    BINDINGS = [Binding("shift+up", "app.paint(-1)", show=False), Binding("shift+down", "app.paint(1)", show=False),
+                Binding("ctrl+a", "app.mark_all", show=False)]
+
+
 class OptionsApp(MasterDetailApp):
     TITLE = "Options Creator"
     CSS = MASTER_DETAIL_CSS + """
@@ -270,14 +278,14 @@ class OptionsApp(MasterDetailApp):
     def compose(self) -> ComposeResult:
         with Horizontal():
             with Vertical(id="side"):
-                yield Input(placeholder="Filter games", id="side-filter")
+                yield FilterInput(placeholder="Filter games", id="side-filter", target="#side-list")
                 yield OptionList(ListOption("Loading worlds…", disabled=True), id="side-list")
             with Vertical(id="main"):  # name + game stay above the options whether the side list is shown or not
                 with Horizontal(id="top"):
                     yield Input(placeholder="Player name", id="name", max_length=MAX_NAME)
                     yield Label(id="game-label")
                 with Horizontal():
-                    yield OptionList(id="rows")
+                    yield Rows(id="rows")
                     with Vertical(id="detail"):
                         yield Vertical(id="editor")
                         with VerticalScroll(id="doc"):
@@ -309,16 +317,17 @@ class OptionsApp(MasterDetailApp):
         games.clear_options()
         games.add_options([ListOption(f"{game} (website)" if isinstance(world.web.options_page, str) else game, id=game)
                            for game, world in self.worlds.items() if search in game.casefold()])
+        highlight_first(games)
 
     @on(Input.Changed, "#side-filter")
     def filter_games(self) -> None:
         self.fill_games()
 
     @on(Input.Submitted, "#side-filter")
-    def pick_first_game(self) -> None:
-        games = self.query_one("#side-list", OptionList)
-        if games.option_count:
-            self.select_game(games.get_option_at_index(0).id)
+    def pick_highlighted_game(self) -> None:
+        option = self.query_one("#side-list", OptionList).highlighted_option
+        if option:
+            self.select_game(option.id)
 
     @on(OptionList.OptionSelected, "#side-list")
     def game_selected(self, event: OptionList.OptionSelected) -> None:
@@ -360,6 +369,22 @@ class OptionsApp(MasterDetailApp):
         return self.fitted_row(getattr(option, "display_name", key), describe(value),
                                value != default_value(option), note)
 
+    def stepped(self, key: str, delta: int) -> typing.Any:
+        option = self.options[key]
+        value = self.values[key]
+        option_kind = kind(option)
+        if is_weighted(option, value) or is_random(value):
+            self.notify("Random or weighted: edit it in the right pane (Enter)", timeout=3)
+            return None
+        if option_kind in CHOICE_KINDS:
+            names = list(option.name_lookup.values())
+            index = names.index(value) if value in names else (-1 if delta > 0 else 0)
+            return names[(index + (1 if delta > 0 else -1)) % len(names)]
+        if option_kind in RANGE_KINDS:
+            number = value if isinstance(value, int) else option.range_start
+            return max(option.range_start, min(option.range_end, number + delta))
+        return None
+
     def set_value(self, key: str, value: typing.Any) -> None:
         if self.values.get(key) != value:
             self.dirty = True
@@ -375,21 +400,6 @@ class OptionsApp(MasterDetailApp):
         option_kind = kind(option)
         widgets: list = [Label(Text(getattr(option, "display_name", key), style="bold")),
                          Label(Text(f"{option.__name__}  (default: {describe(default_value(option))})", style="dim"))]
-        if can_randomize(option):
-            widgets.append(Checkbox("Random", is_random(value), id="random"))
-            if option_kind in RANGE_KINDS:
-                bias, low, high = parse_random(value) if is_random(value) else ("", None, None)
-                widgets.append(Horizontal(
-                    Select([(label, name) for name, label in RANDOM_BIASES.items()], value=bias, allow_blank=False,
-                           id="random-bias"),
-                    Label("from"),
-                    Input("" if low is None else str(low), type="integer", id="random-low",
-                          placeholder=str(option.range_start)),
-                    Label("to"),
-                    Input("" if high is None else str(high), type="integer", id="random-high",
-                          placeholder=str(option.range_end)),
-                    id="random-opts"))
-
         if is_weighted(option, value) or not isinstance(value, (str, int, bool, list, dict)):
             widgets += self.yaml_editor(value, "Weighted values; edit as YAML.")
         elif option_kind in CHOICE_KINDS:
@@ -408,7 +418,9 @@ class OptionsApp(MasterDetailApp):
         elif option_kind == "text":
             widgets.append(Input(str(value), placeholder="Text (Enter to set)", id="text"))
         elif option_kind == "set":
-            widgets.append(Input(placeholder=f"Filter {len(option.valid_keys)} entries", id="filter"))
+            widgets.append(SetFilter(placeholder=f"Filter {len(option.valid_keys)} entries. Enter marks, "
+                                                 f"Shift+↑/↓ carries the mark, Ctrl+A all", id="filter",
+                                     target="#selection"))
             widgets.append(SelectionList[str](*self.selections(option, value, ""), id="selection"))
         elif option_kind == "list":
             widgets += self.yaml_editor(value, "A YAML list, one '- entry' per line.")
@@ -417,6 +429,20 @@ class OptionsApp(MasterDetailApp):
             widgets += self.yaml_editor(value, f"A YAML mapping, one 'name: count{limits}' per line.")
         else:
             widgets += self.yaml_editor(value, "Edit as YAML.")
+        if can_randomize(option):
+            widgets.append(Checkbox("Random", is_random(value), id="random"))
+            if option_kind in RANGE_KINDS:
+                bias, low, high = parse_random(value) if is_random(value) else ("", None, None)
+                widgets.append(Horizontal(
+                    Select([(label, name) for name, label in RANDOM_BIASES.items()], value=bias, allow_blank=False,
+                           id="random-bias"),
+                    Label("from"),
+                    Input("" if low is None else str(low), type="integer", id="random-low",
+                          placeholder=str(option.range_start)),
+                    Label("to"),
+                    Input("" if high is None else str(high), type="integer", id="random-high",
+                          placeholder=str(option.range_end)),
+                    id="random-opts"))
         widgets.append(Label("", id="error"))
         editor = self.query_one("#editor")
         await editor.mount_all(widgets)
@@ -425,6 +451,8 @@ class OptionsApp(MasterDetailApp):
             names = list(option.name_lookup.values())
             if value in names:
                 editor.query_one("#choice", OptionList).highlighted = names.index(value)
+        if editor.query("#selection"):
+            highlight_first(editor.query_one("#selection", SelectionList))
 
         self.query_one("#doc-text", Static).update(Text(cleandoc(option.__doc__ or "No description.")))
         self.query_one("#doc", VerticalScroll).scroll_home(animate=False)
@@ -499,23 +527,27 @@ class OptionsApp(MasterDetailApp):
     def choice_selected(self, event: OptionList.OptionSelected) -> None:
         self.set_value(self.editor_key, list(self.options[self.editor_key].name_lookup.values())[event.option_index])
         self.error("")
+        self.back_to_rows()
 
     @on(OptionList.OptionSelected, "#special")
     @editor_event
     def special_selected(self, event: OptionList.OptionSelected) -> None:
         self.set_value(self.editor_key, list(self.options[self.editor_key].special_range_names)[event.option_index])
         self.error("")
+        self.back_to_rows()
 
     @on(Input.Submitted, "#custom")
     @editor_event
     def custom_submitted(self, event: Input.Submitted) -> None:
         if event.value.strip():
             self.set_value(self.editor_key, event.value.strip())
+            self.back_to_rows()
 
     @on(Input.Submitted, "#text")
     @editor_event
     def text_submitted(self, event: Input.Submitted) -> None:
         self.set_value(self.editor_key, event.value)
+        self.back_to_rows()
 
     @on(Input.Submitted, "#number")
     @editor_event
@@ -531,6 +563,7 @@ class OptionsApp(MasterDetailApp):
             return
         self.error("")
         self.set_value(self.editor_key, number)
+        self.back_to_rows()
 
     @on(Input.Changed, "#filter")
     @editor_event
@@ -539,6 +572,44 @@ class OptionsApp(MasterDetailApp):
         selection = self.query_one("#selection", SelectionList)
         selection.clear_options()
         selection.add_options(self.selections(option, self.values[self.editor_key], event.value.strip().casefold()))
+        highlight_first(selection)
+
+    @on(Input.Submitted, "#filter")
+    @editor_event
+    def filter_submitted(self, event: Input.Submitted) -> None:
+        selection = self.query_one("#selection", SelectionList)
+        option = selection.highlighted_option
+        if option is not None:
+            self.mark([option.value], option.value not in selection.selected)
+
+    def mark(self, items: list[str], state: bool) -> None:
+        """Mark (or unmark) set entries, in the value and the list."""
+        selection = self.query_one("#selection", SelectionList)
+        chosen = set(self.values[self.editor_key]) if isinstance(self.values[self.editor_key], list) else set()
+        for item in items:
+            (chosen.add if state else chosen.discard)(item)
+            (selection.select if state else selection.deselect)(item)
+        self.set_value(self.editor_key, sorted(chosen))
+
+    def action_paint(self, delta: int) -> None:
+        """Shift+Up/Down in a set's filter: move, giving the next entry the state of the one left."""
+        if not self.query("#selection"):
+            return
+        selection = self.query_one("#selection", SelectionList)
+        start = selection.highlighted_option
+        if start is None:
+            return
+        (selection.action_cursor_down if delta > 0 else selection.action_cursor_up)()
+        end = selection.highlighted_option
+        if end is not None and end is not start:
+            self.mark([end.value], start.value in selection.selected)
+
+    def action_mark_all(self) -> None:
+        if not self.query("#selection"):
+            return
+        selection = self.query_one("#selection", SelectionList)
+        shown = [option.value for option in selection.options]
+        self.mark(shown, not all(item in selection.selected for item in shown))
 
     @on(SelectionList.SelectionToggled, "#selection")
     @editor_event

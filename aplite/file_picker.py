@@ -17,7 +17,9 @@ from aplite import prefs
 
 
 class FilteredTree(DirectoryTree):
-    BINDINGS = [Binding("backspace", "parent", "Parent folder")]
+    """Tree keys (research/keyboard.md): Right opens a folder / goes into it, Left closes it / goes up."""
+    BINDINGS = [Binding("backspace", "parent", "Parent folder"), Binding("right", "open_node", show=False),
+                Binding("left", "close_node", show=False)]
 
     def __init__(self, path: Path, suffixes: typing.Sequence[str], show_all: bool = False) -> None:
         super().__init__(path)
@@ -39,6 +41,26 @@ class FilteredTree(DirectoryTree):
         if location == root and root.parent != root:
             yield location / ".."
         yield from super()._directory_content(location, worker)
+
+    def action_open_node(self) -> None:
+        node = self.cursor_node
+        if node is None or node.data is None or not node.allow_expand:
+            return
+        if node.data.path.name == "..":
+            self.action_parent()
+        elif not node.is_expanded:
+            node.expand()
+        elif node.children:
+            self.move_cursor(node.children[0])
+
+    def action_close_node(self) -> None:
+        node = self.cursor_node
+        if node is not None and node.allow_expand and node.is_expanded and not node.is_root:
+            node.collapse()
+        elif node is not None and node.parent is not None and not node.parent.is_root:
+            self.move_cursor(node.parent)
+        else:
+            self.action_parent()
 
     def action_parent(self) -> None:
         self.path = Path(self.path).resolve().parent
