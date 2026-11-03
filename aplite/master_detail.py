@@ -8,6 +8,8 @@ the highlight rests, so long lists stay fast.
 """
 from __future__ import annotations
 
+import asyncio
+import functools
 import typing
 
 import yaml
@@ -64,6 +66,16 @@ def to_yaml(value: typing.Any) -> str:
     return yaml.safe_dump(value, sort_keys=False, allow_unicode=True).replace("...\n", "")
 
 
+def editor_event(handler: typing.Callable) -> typing.Callable:
+    """For handlers of editor widget events: drops events from widgets a rebuild already removed, which would otherwise
+    edit whatever row the editor shows now (or query widgets that are gone)."""
+    @functools.wraps(handler)
+    def wrapper(self, event=None) -> None:  # event None: called directly
+        if event is None or event.control is None or event.control.is_attached:
+            handler(self, event)
+    return wrapper
+
+
 class MasterDetailApp(AppliteApp):
     def __init__(self) -> None:
         super().__init__()
@@ -71,6 +83,7 @@ class MasterDetailApp(AppliteApp):
         self.editor_key: str | None = None  # row the editor widgets belong to; their events edit this one
         self.name_width = 10  # longest row name in the current list
         self._editor_timer = None
+        self._editor_lock = asyncio.Lock()  # one build at a time: a timer firing mid-build mounted duplicate ids
         self._armed: set[str] = set()
 
     # rows
@@ -116,11 +129,13 @@ class MasterDetailApp(AppliteApp):
 
     async def _build_editor_now(self) -> None:
         self._editor_timer = None
-        editor = self.query_one("#editor")
-        await editor.remove_children()
-        self.editor_key = self.current
-        if self.editor_key is not None:
-            await self.build_editor()
+        async with self._editor_lock:
+            if not self.query("#editor"):  # the timer fired while the app was closing
+                return
+            await self.query_one("#editor").remove_children()
+            self.editor_key = self.current
+            if self.editor_key is not None:
+                await self.build_editor()
 
     def show_rows(self, rows: list) -> None:
         """Replace the rows (and highlight the first selectable one); the editor follows the highlight."""

@@ -25,7 +25,8 @@ from textual.widgets.option_list import Option as ListOption
 
 import settings
 from aplite.file_picker import FilePicker, PathInput
-from aplite.master_detail import CSS as MASTER_DETAIL_CSS, SIDE_TEXT_WIDTH, MasterDetailApp, describe, fit, to_yaml
+from aplite.master_detail import CSS as MASTER_DETAIL_CSS, SIDE_TEXT_WIDTH, MasterDetailApp, describe, editor_event, \
+    fit, to_yaml
 
 if typing.TYPE_CHECKING:
     from pathlib import Path
@@ -56,14 +57,17 @@ def kind(hint: typing.Any) -> tuple[str, type | None]:
 
 
 def plain(value: typing.Any) -> typing.Any:
-    """Setting value -> builtin value for editing (IntEnum -> int, Path -> str, Group -> dict)."""
+    """Setting value -> builtin value for editing (IntEnum -> int, Path -> str, Group -> dict, list subclass -> list)."""
     if isinstance(value, settings.Group):
         # raw values: getattr would resolve (and validate) paths, and "" resolves to the AP dir
         return {k: plain(value.__dict__[k] if k in value.__dict__ else getattr(type(value), k, None))
                 for k in value}
-    if isinstance(value, (list, dict, tuple, set)) or value is None:
-        return list(value) if isinstance(value, (tuple, set)) else value
-    return settings._to_builtin(value)
+    value = settings._to_builtin(value)  # also list/dict subclasses (sc2 colors): YAML can only show builtins
+    if isinstance(value, (list, tuple, set)):
+        return [plain(item) for item in value]
+    if isinstance(value, dict):
+        return {key: plain(item) for key, item in value.items()}
+    return value
 
 
 @dataclasses.dataclass
@@ -274,6 +278,7 @@ class SettingsApp(MasterDetailApp):
         self.query_one("#exists", Label).update(text)
 
     @on(Input.Submitted, "#path")
+    @editor_event
     def path_submitted(self, event: Input.Submitted) -> None:
         event.stop()
         self.set_value(self.editor_key, os.path.expanduser(event.value.strip()))
@@ -296,14 +301,17 @@ class SettingsApp(MasterDetailApp):
                                     folders=setting.kind == "folder", show_all=True), chosen)
 
     @on(Checkbox.Changed, "#bool")
+    @editor_event
     def bool_changed(self, event: Checkbox.Changed) -> None:
         self.set_value(self.editor_key, event.value)
 
     @on(OptionList.OptionSelected, "#enum")
+    @editor_event
     def enum_selected(self, event: OptionList.OptionSelected) -> None:
         self.set_value(self.editor_key, list(self.setting().cls)[event.option_index].value)
 
     @on(Input.Submitted, "#int")
+    @editor_event
     def int_submitted(self, event: Input.Submitted) -> None:
         try:
             self.set_value(self.editor_key, int(event.value))
@@ -312,10 +320,12 @@ class SettingsApp(MasterDetailApp):
             self.error("Not a number.")
 
     @on(Input.Submitted, "#str")
+    @editor_event
     def str_submitted(self, event: Input.Submitted) -> None:
         self.set_value(self.editor_key, event.value)
 
     @on(TextArea.Changed, "#yaml")
+    @editor_event
     def yaml_changed(self, event: TextArea.Changed) -> None:
         ok, value = self.parse_yaml(event.text_area.text)
         if ok:
