@@ -203,6 +203,7 @@ class OptionsApp(MasterDetailApp):
     #top { height: 3; }
     #name { width: 30; }
     #game-label { padding: 1 2; }
+    #side-list { text-wrap: nowrap; text-overflow: ellipsis; }  /* long game names: one line each */
     #random-opts { height: 3; }
     #random-opts Label { padding: 1 1; }
     #random-bias { width: 14; }
