@@ -4,6 +4,7 @@ Run an Archipelago component in the terminal.
 Import order matters: patches must land before CommonClient/clients import the patched names.
 Worlds are loaded by load(), which the launcher runs in the background so it can show immediately.
 """
+import atexit
 import os
 import signal
 import sys
@@ -20,12 +21,23 @@ from aplite.requirements import lite_requirements
 
 def _use_lite_requirements() -> None:
     """Swap core requirements.txt for a copy without kivy, so ModuleUpdate doesn't try to install it."""
+    if ModuleUpdate.update_ran:  # SKIP_REQUIREMENTS_UPDATE (aplite.sh, AppRun): no check, nothing to swap
+        return
     lines = lite_requirements(ModuleUpdate.core_constraints)
-    lite = os.path.join(tempfile.gettempdir(), "aplite-requirements.txt")
-    with open(lite, "w") as f:
+    # per user: /tmp is shared, and another user's copy can't be overwritten
+    fd, lite = tempfile.mkstemp(prefix="aplite-requirements-", suffix=".txt")
+    with os.fdopen(fd, "w") as f:
         f.writelines(lines)
+    atexit.register(_remove, lite)
     ModuleUpdate.requirements_files.discard(ModuleUpdate.core_constraints)
     ModuleUpdate.requirements_files.add(lite)
+
+
+def _remove(path: str) -> None:
+    try:
+        os.remove(path)
+    except OSError:
+        pass
 
 
 _use_lite_requirements()

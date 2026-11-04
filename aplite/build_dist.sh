@@ -84,13 +84,7 @@ python_tree "$APPDIR" "cpython-$PYVER-linux-x86_64-gnu" "lib/python$PYVER/site-p
 lib="$APPDIR/python/lib/python$PYVER"
 rm -rf "$APPDIR/python/include" "$APPDIR/python/share" "$lib/idlelib" "$lib/turtledemo" "$lib/ensurepip" \
     "$lib"/config-$PYVER-*
-cat > "$APPDIR/AppRun" <<'EOF'
-#!/bin/sh
-HERE=$(dirname "$(readlink -f "$0")")
-export SKIP_REQUIREMENTS_UPDATE=1
-export PYTHONPATH="$HERE/app${PYTHONPATH:+:$PYTHONPATH}"
-exec "$HERE/python/bin/python3" -m aplite "$@"
-EOF
+cp "$REPO/aplite/apprun.sh" "$APPDIR/AppRun"  # also reopens itself in a terminal when double-clicked
 chmod +x "$APPDIR/AppRun"
 ln -s AppRun "$APPDIR/aplite"
 cp "$REPO/data/icon.png" "$APPDIR/archipelago-lite.png"
