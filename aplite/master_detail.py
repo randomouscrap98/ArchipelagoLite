@@ -95,6 +95,13 @@ class Rows(OptionList):
                 Binding("shift+right", "screen.step(10)", show=False),
                 Binding("space", "screen.edit", show=False)]
 
+    def on_resize(self) -> None:
+        """Rows are fitted to this width by hand: refit whenever it changes (first layout included; rows filled
+        before it, e.g. while #main was still hidden, were fitted to MIN_ROW_WIDTH)."""
+        screen = self.screen
+        if isinstance(screen, MasterDetailScreen):
+            screen.call_after_refresh(screen.refresh_rows)
+
 
 class EditorApp(AppliteApp):
     """Runs one editor screen as a whole app (pushed, not the default screen: a default screen's CSS isn't loaded)."""
