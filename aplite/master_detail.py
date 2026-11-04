@@ -1,6 +1,8 @@
 """
-Shared skeleton of aplite's editors (Options Creator, settings editor): a side list (games / sections), a list of
-rows, and a detail pane with an editor for the highlighted row plus its description.
+Shared skeleton of aplite's editors (Options Creator, settings editor, self-host settings): a side list (games /
+sections), a list of rows, and a detail pane with an editor for the highlighted row plus its description. A Screen, so
+it can be pushed over another app's screen (self-host settings, closable: Esc on the rows closes it); the full editors
+run it in an EditorApp.
 
 Subclasses compose these ids: #side (containing #side-filter and #side-list), #rows, #detail (containing #editor and
 #doc > #doc-text), and implement row(key) and build_editor(). Only the highlighted row gets editor widgets, built once
@@ -17,6 +19,7 @@ from rich.text import Text
 from textual import on
 from textual.actions import SkipAction
 from textual.binding import Binding
+from textual.screen import Screen
 from textual.widgets import Input, Label, OptionList, SelectionList
 
 from aplite.nav import AppliteApp
@@ -87,16 +90,31 @@ def editor_event(handler: typing.Callable) -> typing.Callable:
 
 class Rows(OptionList):
     """The rows, grid-like (research/keyboard.md): Left/Right step the value in place, Enter/Space edit it."""
-    BINDINGS = [Binding("left", "app.step(-1)", show=False), Binding("right", "app.step(1)", show=False),
-                Binding("shift+left", "app.step(-10)", show=False), Binding("shift+right", "app.step(10)", show=False),
-                Binding("space", "app.edit", show=False)]
+    BINDINGS = [Binding("left", "screen.step(-1)", show=False), Binding("right", "screen.step(1)", show=False),
+                Binding("shift+left", "screen.step(-10)", show=False),
+                Binding("shift+right", "screen.step(10)", show=False),
+                Binding("space", "screen.edit", show=False)]
 
 
-class MasterDetailApp(AppliteApp):
-    BINDINGS = [Binding("escape", "back_to_rows", show=False)]
+class EditorApp(AppliteApp):
+    """Runs one editor screen as a whole app (pushed, not the default screen: a default screen's CSS isn't loaded)."""
 
-    def __init__(self) -> None:
+    def __init__(self, screen: MasterDetailScreen, title: str) -> None:
         super().__init__()
+        self.editor = screen
+        self.title = title
+
+    def on_mount(self) -> None:
+        self.push_screen(self.editor)
+
+
+class MasterDetailScreen(Screen):
+    BINDINGS = [Binding("escape", "back_to_rows", show=False)]
+    CSS = CSS
+
+    def __init__(self, closable: bool = False) -> None:
+        super().__init__()
+        self.closable = closable  # Esc outside the editor closes the screen (pushed over another app's screen)
         self.current: str | None = None  # highlighted row
         self.editor_key: str | None = None  # row the editor widgets belong to; their events edit this one
         self.name_width = 10  # longest row name in the current list
@@ -202,10 +220,15 @@ class MasterDetailApp(AppliteApp):
             (preferred or focusable)[0].focus()
 
     def action_back_to_rows(self) -> None:
-        """Esc in the editor."""
+        """Esc in the editor; elsewhere it closes a closable screen."""
         focused = self.focused
         if focused is None or not any(ancestor.id == "editor" for ancestor in focused.ancestors):
-            raise SkipAction()
+            if not self.closable:
+                raise SkipAction()
+            if not self.dirty or self.confirm_twice(
+                    "close", "Unsaved changes. Press Esc again to close without saving, or Ctrl+S to save."):
+                self.dismiss(None)
+            return
         self.back_to_rows()
 
     def back_to_rows(self) -> None:
@@ -272,7 +295,9 @@ class MasterDetailApp(AppliteApp):
             widget.styles.visibility = "visible"  # hidden until fitted the first time: unfitted, it showed cut off
 
     def error(self, message: str) -> None:
-        self.query_one("#error", Label).update(message)
+        # query, not query_one: an editor widget's event (Select.Changed on mount) can arrive before #error is mounted
+        for label in self.query("#error").results(Label):
+            label.update(message)
 
     def parse_yaml(self, text: str) -> tuple[bool, typing.Any]:
         """(ok, value) for a YAML editor's text; shows the parse error in #error."""
@@ -297,6 +322,7 @@ class MasterDetailApp(AppliteApp):
     dirty: bool  # unsaved changes
 
     def can_leave(self, step: str) -> bool:
+        """Asked by AppliteApp on ctrl+q / ctrl+l."""
         key, verb = ("Ctrl+Q", "quit") if step == "quit" else ("Ctrl+L", "go to the launcher")
         return not self.dirty or self.confirm_twice(
             step, f"Unsaved changes. Press {key} again to {verb} without saving, or Ctrl+S to save.")

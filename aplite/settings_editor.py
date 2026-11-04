@@ -27,8 +27,8 @@ import settings
 from aplite import glyphs
 from aplite.combo import FilterInput, highlight_first
 from aplite.file_picker import FilePicker, PathInput
-from aplite.master_detail import CSS as MASTER_DETAIL_CSS, SIDE_TEXT_WIDTH, MasterDetailApp, Rows, describe, \
-    editor_event, fit, to_yaml
+from aplite.master_detail import SIDE_TEXT_WIDTH, EditorApp, MasterDetailScreen, Rows, describe, editor_event, fit, \
+    to_yaml
 
 if typing.TYPE_CHECKING:
     from pathlib import Path
@@ -114,9 +114,7 @@ class Section:
                 required=getattr(setting_cls, "required", False))
 
 
-class SettingsApp(MasterDetailApp):
-    TITLE = "Settings (host.yaml)"
-    CSS = MASTER_DETAIL_CSS
+class SettingsScreen(MasterDetailScreen):
     BINDINGS = [Binding("ctrl+g", "toggle_side", "Sections"), Binding("ctrl+s", "save", "Save"),
                 Binding("ctrl+e", "external", "Edit in $EDITOR"), Binding("ctrl+r", "reset", "Reset setting"),
                 Binding("ctrl+b", "browse", "Browse", show=False)]
@@ -328,7 +326,7 @@ class SettingsApp(MasterDetailApp):
                 self.set_value(self.editor_key, str(path))
                 self.update_exists()
 
-        self.push_screen(FilePicker(f"Choose {self.editor_key}", [], "settings_browse_dir",
+        self.app.push_screen(FilePicker(f"Choose {self.editor_key}", [], "settings_browse_dir",
                                     start if os.path.isdir(start) else os.path.expanduser("~"),
                                     folders=setting.kind == "folder", show_all=True), chosen)
 
@@ -405,7 +403,7 @@ class SettingsApp(MasterDetailApp):
         if not editor or not current.filename:
             self.notify("No editor found; set $EDITOR", severity="error")
             return
-        with self.suspend():
+        with self.app.suspend():
             subprocess.call([*shlex.split(editor), current.filename])
         settings.get_settings._cache = None  # reload what the editor wrote
         selected = self.section.key if self.section else None
@@ -417,4 +415,4 @@ class SettingsApp(MasterDetailApp):
 
 
 def run() -> None:
-    SettingsApp().run()
+    EditorApp(SettingsScreen(), "Settings (host.yaml)").run()

@@ -24,7 +24,8 @@ import Utils
 from aplite import prefs
 from aplite.combo import FilterInput, highlight_first
 from aplite.file_picker import FilePicker
-from aplite.master_detail import CSS as MASTER_DETAIL_CSS, MasterDetailApp, Rows, describe, editor_event, to_yaml
+from aplite.master_detail import CSS as MASTER_DETAIL_CSS, EditorApp, MasterDetailScreen, Rows, describe, editor_event, \
+    to_yaml
 
 if typing.TYPE_CHECKING:
     from Options import Option
@@ -242,12 +243,11 @@ class GamePicker(ModalScreen[str | None]):
 class SetFilter(FilterInput):
     """A set option's filter: Enter toggles the highlighted entry, Shift+Up/Down carry its state along as the
     highlight moves, Ctrl+A marks all shown entries (or none if all are)."""
-    BINDINGS = [Binding("shift+up", "app.paint(-1)", show=False), Binding("shift+down", "app.paint(1)", show=False),
-                Binding("ctrl+a", "app.mark_all", show=False)]
+    BINDINGS = [Binding("shift+up", "screen.paint(-1)", show=False),
+                Binding("shift+down", "screen.paint(1)", show=False), Binding("ctrl+a", "screen.mark_all", show=False)]
 
 
-class OptionsApp(MasterDetailApp):
-    TITLE = "Options Creator"
+class OptionsScreen(MasterDetailScreen):
     CSS = MASTER_DETAIL_CSS + """
     #main { display: none; }  /* until a game is picked */
     #top { height: 3; }
@@ -303,7 +303,7 @@ class OptionsApp(MasterDetailApp):
 
     def load_in_thread(self) -> None:
         self.load_worlds()
-        self.call_from_thread(self.worlds_loaded)
+        self.app.call_from_thread(self.worlds_loaded)
 
     def worlds_loaded(self) -> None:
         from worlds.AutoWorld import AutoWorldRegister
@@ -436,7 +436,7 @@ class OptionsApp(MasterDetailApp):
             widgets.append(SetFilter(placeholder=f"Filter {len(option.valid_keys)} entries. Enter marks, "
                                                  f"Shift+↑/↓ carries the mark, Ctrl+A all", id="filter",
                                      target="#selection"))
-            widgets.append(SelectionList[str](*self.selections(option, value, ""), id="selection"))
+            widgets.append(SelectionList[str](*self.selection_items(option, value, ""), id="selection"))
         elif option_kind == "list":
             widgets += self.yaml_editor(value, "A YAML list, one '- entry' per line.")
         elif option_kind == "counter":
@@ -478,7 +478,7 @@ class OptionsApp(MasterDetailApp):
         return [Label(Text(hint, style="dim")), TextArea(to_yaml(value), id="yaml")]
 
     @staticmethod
-    def selections(option: type[Option], value: typing.Any, search: str) -> list[tuple[str, str, bool]]:
+    def selection_items(option: type[Option], value: typing.Any, search: str) -> list[tuple[str, str, bool]]:
         chosen = set(value) if isinstance(value, list) else set()
         return [(key, key, key in chosen) for key in valid_keys(option) if search in key.casefold()]
 
@@ -587,7 +587,7 @@ class OptionsApp(MasterDetailApp):
         option = self.options[self.editor_key]
         selection = self.query_one("#selection", SelectionList)
         selection.clear_options()
-        selection.add_options(self.selections(option, self.values[self.editor_key], event.value.strip().casefold()))
+        selection.add_options(self.selection_items(option, self.values[self.editor_key], event.value.strip().casefold()))
         highlight_first(selection)
 
     @on(Input.Submitted, "#filter")
@@ -674,7 +674,7 @@ class OptionsApp(MasterDetailApp):
                 "load", "Unsaved changes. Loading a file replaces this game's edits: press Ctrl+O again to load "
                         "anyway, or Ctrl+S to save first."):
             return
-        self.push_screen(FilePicker("Load options", [".yaml", ".yml"], "options_dir", DEFAULT_DIR), self.load_file)
+        self.app.push_screen(FilePicker("Load options", [".yaml", ".yml"], "options_dir", DEFAULT_DIR), self.load_file)
 
     def load_file(self, path: Path | None) -> None:
         if path is None:
@@ -697,7 +697,7 @@ class OptionsApp(MasterDetailApp):
             if len(games) == 1:
                 game = games[0]
             elif games:
-                self.push_screen(GamePicker(games), lambda chosen: chosen and self.apply_loaded(path, data, chosen))
+                self.app.push_screen(GamePicker(games), lambda chosen: chosen and self.apply_loaded(path, data, chosen))
                 return
             else:
                 game = None
@@ -730,7 +730,7 @@ class OptionsApp(MasterDetailApp):
         folder = prefs.get("options_dir") or DEFAULT_DIR
         default = str(self.loaded_path) if self.loaded_path else \
             os.path.join(folder, f"{Utils.get_file_safe_name(name)}.yaml")
-        self.push_screen(SaveScreen(default), self.save_file)
+        self.app.push_screen(SaveScreen(default), self.save_file)
 
     def save_file(self, path: Path | None) -> None:
         if path is None:
@@ -750,4 +750,4 @@ class OptionsApp(MasterDetailApp):
 
 
 def run(load_worlds: typing.Callable[[], typing.Any] | None = None) -> None:
-    OptionsApp(load_worlds).run()
+    EditorApp(OptionsScreen(load_worlds), "Options Creator").run()

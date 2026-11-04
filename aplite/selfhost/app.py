@@ -12,14 +12,18 @@ import typing
 from pathlib import Path
 
 from rich.text import Text
+from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
-from textual.screen import ModalScreen, Screen
+from textual.screen import Screen
 from textual.widgets import Button, Footer, Input, Label, RichLog, Static
+from textual.widgets.option_list import Option as ListOption
 
 import Utils
-from aplite import selfhost
+from aplite import glyphs, selfhost
+from aplite.file_picker import FilePicker, PathInput
+from aplite.master_detail import MasterDetailScreen, Rows, editor_event
 from aplite.nav import AppliteApp
 
 SUFFIXES = (".zip", ".archipelago")
@@ -35,70 +39,170 @@ def ago(when: datetime.datetime) -> str:
     return f"{seconds // 3600} h {seconds % 3600 // 60} min ago"
 
 
-class SettingsModal(ModalScreen[bool]):
-    """selfhost/config.yaml as a form; dismisses True when saved."""
-    CSS = """
-    SettingsModal { align: center middle; }
-    #settings-box { width: 90%; height: 90%; padding: 0 1; border: thick $primary; background: $surface; }
-    #settings-fields { height: 1fr; }
-    #settings-fields Label { padding: 1 1 0 1; }
-    #settings-error { color: $error; padding: 0 1; }
-    #settings-buttons { height: auto; align-horizontal: right; }
-    """
-    BINDINGS = [Binding("escape", "cancel", "Cancel")]
+PATH_KEYS = {"cert": False, "key": False, "archive_dir": True}  # path settings: folder?
 
-    def __init__(self) -> None:
-        super().__init__()
+
+class SettingsScreen(MasterDetailScreen):
+    """selfhost/config.yaml in the editors' layout (rows + editor + description), pushed over the Self-host screen:
+    Esc on the rows closes it."""
+    BINDINGS = [Binding("ctrl+s", "save", "Save"), Binding("ctrl+r", "reset", "Reset setting"),
+                Binding("ctrl+b", "browse", "Browse", show=False)]
+
+    def __init__(self, saved: typing.Callable[[dict[str, typing.Any]], None]) -> None:
+        super().__init__(closable=True)
+        self.saved = saved
         self.config = selfhost.load_config()
+        self.values = {key: self.config[key] for key in selfhost.DESCRIPTIONS}
+        self.dirty = False
+        self.name_width = max(map(len, selfhost.DESCRIPTIONS))
 
     def compose(self) -> ComposeResult:
-        with Vertical(id="settings-box"):
-            yield Label(f"Self-host settings ({selfhost.root('config.yaml')}); they apply when the server starts.")
-            with VerticalScroll(id="settings-fields"):
-                for key, description in selfhost.DESCRIPTIONS.items():
-                    yield Label(description)
-                    yield Input(str(self.config[key]), id=f"set-{key}",
-                                type="integer" if isinstance(selfhost.DEFAULTS[key], int) else "text")
-            yield Label("", id="settings-error")
-            with Horizontal(id="settings-buttons"):
-                yield Button("Save", id="settings-save", variant="primary")
-                yield Button("Cancel", id="settings-cancel")
+        with Horizontal():
+            yield Rows(id="rows")
+            with Vertical(id="detail"):
+                yield Vertical(id="editor")
+                with VerticalScroll(id="doc"):
+                    yield Static(id="doc-text")
+        yield Footer()
 
-    def on_input_submitted(self, event: Input.Submitted) -> None:
-        event.stop()
-        self.focus_next()
+    def on_mount(self) -> None:
+        self.sub_title = selfhost.root("config.yaml")
+        self.show_rows([ListOption(self.row(key), id=key) for key in self.values])
+        self.query_one("#rows", Rows).focus()
 
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        event.stop()
-        if event.button.id == "settings-save":
-            self.save()
+    # rows
+
+    def row_keys(self) -> typing.Iterable[str]:
+        return self.values
+
+    def row(self, key: str) -> Text:
+        value = self.values[key]
+        return self.fitted_row(key, str(value) if value != "" else "(not set)", value != selfhost.DEFAULTS[key])
+
+    def stepped(self, key: str, delta: int) -> typing.Any:
+        value = self.values[key]
+        return max(0, value + delta) if isinstance(value, int) else None
+
+    def update_editor(self, key: str) -> bool:
+        if not self.query("#int"):
+            return False
+        self.query_one("#int", Input).value = str(self.values[key])
+        return True
+
+    def set_value(self, key: str, value: typing.Any) -> None:
+        if self.values[key] != value:
+            self.values[key] = value
+            self.dirty = True
+        self.refresh_row(key)
+
+    # editor
+
+    async def build_editor(self) -> None:
+        key = self.editor_key
+        value, default = self.values[key], selfhost.DEFAULTS[key]
+        widgets: list = [Label(Text(key, style="bold")),
+                         Label(Text(f"default: {default if default != '' else '(not set)'}", style="dim"),
+                               classes="heading-end")]
+        if key in PATH_KEYS:
+            widgets.append(PathInput(str(value), id="path",
+                                     placeholder="Path. Enter sets, Ctrl+Space completes, Ctrl+B browses"))
+            widgets.append(Label("", id="exists"))
+        elif isinstance(default, int):
+            widgets.append(Input(str(value), type="integer", id="int", placeholder="Number (Enter to set)"))
         else:
-            self.action_cancel()
+            widgets.append(Input(str(value), id="str", placeholder="Text (Enter to set)"))
+        widgets.append(Label("", id="error"))
+        await self.mount_editor(widgets)
+        self.update_exists()
+        self.query_one("#doc-text", Static).update(Text(selfhost.DESCRIPTIONS[key] + "\n\n" + APPLY_NOTE))
+        self.query_one("#doc", VerticalScroll).scroll_home(animate=False)
 
-    def save(self) -> None:
-        config = dict(self.config)
-        for key in selfhost.DESCRIPTIONS:
-            value = self.query_one(f"#set-{key}", Input).value.strip()
-            if isinstance(selfhost.DEFAULTS[key], int):
-                try:
-                    value = int(value)
-                except ValueError:
-                    self.query_one("#settings-error", Label).update(f"{selfhost.DESCRIPTIONS[key]}: not a number")
-                    return
-            config[key] = value
-        for key in ("cert", "key"):
-            if config[key] and not os.path.isfile(os.path.expanduser(config[key])):
-                self.query_one("#settings-error", Label).update(f"{key} file not found: {config[key]}")
-                return
-        if bool(config["cert"]) != bool(config["key"]):
-            self.query_one("#settings-error", Label).update("Set both the certificate and the key (or neither).")
+    def update_exists(self) -> None:
+        if not self.query("#exists"):
             return
-        config["cert"], config["key"] = (os.path.expanduser(config[k]) if config[k] else "" for k in ("cert", "key"))
-        selfhost.save_config(config)
-        self.dismiss(True)
+        value = self.values[self.editor_key]
+        if not value:
+            text = Text("not set", style="dim")
+        elif os.path.exists(os.path.expanduser(value)):
+            text = Text(f"{glyphs.symbol('exists')} exists", style="green")
+        else:
+            text = Text("x doesn't exist", style="red")
+        self.query_one("#exists", Label).update(text)
 
-    def action_cancel(self) -> None:
-        self.dismiss(False)
+    @on(Input.Submitted, "#path")
+    @editor_event
+    def path_submitted(self, event: Input.Submitted) -> None:
+        event.stop()
+        value = event.value.strip()
+        self.set_value(self.editor_key, os.path.expanduser(value) if value else "")
+        self.update_exists()
+        self.back_to_rows()
+
+    def action_browse(self) -> None:
+        if not self.query("#path"):
+            return
+        key = self.editor_key
+        value = os.path.expanduser(self.values[key])
+        start = value if os.path.isdir(value) else os.path.dirname(value) if value else os.path.expanduser("~")
+
+        def chosen(path: Path | None) -> None:
+            if path is not None:
+                self.query_one("#path", PathInput).value = str(path)
+                self.set_value(key, str(path))
+                self.update_exists()
+
+        self.app.push_screen(FilePicker(f"Choose {key}", [], "selfhost_browse_dir",
+                                        start if os.path.isdir(start) else os.path.expanduser("~"),
+                                        folders=PATH_KEYS[key], show_all=True), chosen)
+
+    @on(Input.Submitted, "#int")
+    @editor_event
+    def int_submitted(self, event: Input.Submitted) -> None:
+        event.stop()
+        try:
+            self.set_value(self.editor_key, int(event.value))
+        except ValueError:
+            self.error("Not a number.")
+            return
+        self.error("")
+        self.back_to_rows()
+
+    @on(Input.Submitted, "#str")
+    @editor_event
+    def str_submitted(self, event: Input.Submitted) -> None:
+        event.stop()
+        self.set_value(self.editor_key, event.value.strip())
+        self.back_to_rows()
+
+    async def action_reset(self) -> None:
+        if self.editor_key:
+            self.set_value(self.editor_key, selfhost.DEFAULTS[self.editor_key])
+            await self._build_editor_now()
+
+    def action_save(self) -> None:
+        if not self.dirty:
+            self.notify("No changes to save")
+            return
+        values = self.values
+        problem = next((f"{key} file not found: {values[key]}" for key in ("cert", "key")
+                        if values[key] and not os.path.isfile(values[key])), None)
+        if bool(values["cert"]) != bool(values["key"]):
+            problem = "Set both cert and key (or neither)."
+        if problem:
+            self.notify(problem, severity="error", timeout=8)
+            return
+        config = {**self.config, **values}
+        try:
+            selfhost.save_config(config)
+        except OSError as e:
+            self.notify(f"Could not save: {e}", severity="error", timeout=10)
+            return
+        self.config, self.dirty = config, False
+        self.refresh_rows()
+        self.saved(config)
+
+
+APPLY_NOTE = "Changes apply when the server (re)starts."
 
 
 SCREEN_CSS = """
@@ -284,18 +388,17 @@ class SelfHostScreen(Screen):
         self.in_background(f"Loading {Path(path).name}…", work)
 
     def action_settings(self) -> None:
-        def saved(ok: bool | None) -> None:
-            if not ok:
-                return
-            config = selfhost.load_config()
+        def saved(config: dict[str, typing.Any]) -> None:
+            message = "Saved."
             if self.info:
                 try:
                     selfhost.set_timeout(self.info, int(config["room_timeout"]))
-                except Exception:
-                    pass
+                except Exception as e:
+                    message += f" Couldn't set the room timeout: {e}"
             if self.status:
-                self.notify("Saved. Restart the server (Ctrl+R twice) to apply.", timeout=8)
-        self.app.push_screen(SettingsModal(), saved)
+                message += " Restart the server (stop, then start) to apply."
+            self.notify(message, timeout=8)
+        self.app.push_screen(SettingsScreen(saved))
 
     def action_open_room(self) -> None:
         if not (self.info and self.status):

@@ -64,6 +64,13 @@ def on_app_thread(app: App, func: typing.Callable[..., T], *args) -> T:
     return app.call_from_thread(func, *args)
 
 
+def _stdin_is_tty() -> bool:
+    try:
+        return os.isatty(sys.__stdin__.fileno())
+    except (AttributeError, ValueError, OSError):  # no or closed stdin (multiprocessing children close it)
+        return False
+
+
 class AppliteApp(App):
     BINDINGS = [Binding("ctrl+q", "leave('quit')", "Quit"), Binding("ctrl+l", "leave('launcher')", "Launcher"),
                 Binding("ctrl+p", "command_palette", "Options", show=False)]  # the footer shows it at the right
@@ -78,13 +85,13 @@ class AppliteApp(App):
     def on_mount(self) -> None:  # Textual calls each class's on_mount, so subclasses get this too
         prefs.bind_theme(self)
         self.animation_level = "none"  # Textual's own animations (tab underline, smooth scrolls) lagged behind
-        if hasattr(signal, "SIGHUP") and os.isatty(sys.__stdin__.fileno()):
+        if hasattr(signal, "SIGHUP") and _stdin_is_tty():
             self.set_interval(TTY_CHECK, self.check_terminal)
 
     def check_terminal(self) -> None:
         """A closed terminal that didn't kill us (SIGHUP ignored or never delivered) makes stdin read EOF forever,
         and Textual's input thread spins on it at 100% CPU: die the way the hangup should have made us."""
-        if not os.isatty(sys.__stdin__.fileno()):
+        if not _stdin_is_tty():
             signal.signal(signal.SIGHUP, signal.SIG_DFL)
             os.kill(os.getpid(), signal.SIGHUP)
 
@@ -103,7 +110,11 @@ class AppliteApp(App):
         return len(self.screen_stack) == 1 or action not in _own_actions(type(self))
 
     def can_leave(self, step: str) -> bool:
-        """Override to guard unsaved work; called on every ctrl+q / ctrl+l."""
+        """Called on every ctrl+q / ctrl+l: the topmost screen with a can_leave (editors: unsaved work) decides."""
+        for screen in reversed(self.screen_stack):
+            guard = getattr(screen, "can_leave", None)
+            if guard:
+                return guard(step)
         return True
 
     def action_leave(self, step: typing.Literal["quit", "launcher"]) -> None:
