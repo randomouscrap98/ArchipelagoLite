@@ -1,14 +1,15 @@
 """
 The self-host server process (see aplite/selfhost/__init__.py):
-    python -m aplite.selfhost.server serve        upstream's WebHost, cut down to one room's pages (in selfhost/current;
+    python -m aplite.selfhost.server serve        upstream's WebHost, cut down to our games' pages (in selfhost/data;
                                                   also usable headless, e.g. under systemd: SIGTERM stops it)
-    python -m aplite.selfhost.server load FILE    import a generated game into cwd and create its room
+    python -m aplite.selfhost.server load FILE    import a generated game into cwd's DB and create its room
 
 Differences from WebHost.py: config from selfhost/config.yaml; no generation, options pages, tutorials, sprite
 download or /stats (bokeh); worlds without web tutorials are kept (WebHost.py drops them for its tutorial and options
-pages; their games can still be in a seed); only the room's pages are served (ALLOWED), other site pages redirect to
-archipelago.gg; room logs in cwd/logs (upstream writes them to user_path but reads them from cwd); optional game
-server bind address.
+pages; their games can still be in a seed); only room pages are served (ALLOWED), other site pages redirect to
+archipelago.gg; only active games are hosted (selfhost.active(); inactive ones get a notice instead of the room page);
+our /owner/<id> instead of /session; room logs in cwd/logs (upstream writes them to user_path but reads them from cwd);
+optional game server bind address.
 Top level stays light: room processes are spawned (multiprocessing) and re-import this module.
 """
 from __future__ import annotations
@@ -46,7 +47,7 @@ def webhost_config(config: dict[str, typing.Any]) -> dict[str, typing.Any]:
         "PORT": config["port"],
         "SECRET_KEY": bytes.fromhex(config["secret_key"]),
         "HOST_ADDRESS": config["public_address"],
-        "GAME_PORTS": [config["game_port"], 0],  # 0: any free port if it's taken (the room page shows the real one)
+        "GAME_PORTS": selfhost.game_ports(config),  # no 0 (any free port): it wouldn't be forwarded
         "SELFLAUNCHCERT": config["cert"] or None,
         "SELFLAUNCHKEY": config["key"] or None,
         "SELFGEN": False,
@@ -75,22 +76,24 @@ def create_app(config: dict[str, typing.Any], serving: bool) -> Flask:
 
 
 def restrict(app: Flask) -> None:
-    from flask import abort, redirect, request, session
+    from flask import abort, redirect, render_template_string, request, session
     missing = (ALLOWED | BLOCKED) - set(app.view_functions)
     if missing:
         logging.warning(f"Allowed/blocked endpoints that don't exist (renamed upstream?): {sorted(missing)}")
 
     @app.before_request
     def only_the_room():
-        info = selfhost.room_info()
         if request.path == "/":
-            return redirect(f"/room/{selfhost.suuid(info['room'])}") if info else ("No game is hosted here.", 404)
+            return index()
         if request.path.startswith("/owner/"):
             # the owner link: this browser's session becomes the room's owner (console, log), then the room page
-            if not info or request.path != f"/owner/{info['owner']}":
+            info = next((info for info in selfhost.games() if request.path == f"/owner/{info['owner']}"), None)
+            if not info:
                 abort(404)
             session["_id"] = uuid.UUID(info["owner"])
             return redirect(f"/room/{selfhost.suuid(info['room'])}")
+        if request.endpoint == "host_room" and str(request.view_args["room"]) not in selfhost.active():
+            return not_hosted(request.view_args["room"])
         if request.endpoint in ALLOWED:
             return None
         if request.endpoint is None or request.endpoint in BLOCKED or request.method != "GET":
@@ -100,8 +103,100 @@ def restrict(app: Flask) -> None:
         # general site pages (header links: games, tutorials, ...) live on the real site
         return redirect(f"https://archipelago.gg{request.full_path.rstrip('?')}")
 
+    def index():
+        hosted = [info for room in selfhost.active() if (info := selfhost.game(room))]
+        if len(hosted) == 1:
+            return redirect(f"/room/{selfhost.suuid(hosted[0]['room'])}")
+        return render_template_string(INDEX_PAGE, games=hosted, suuid=selfhost.suuid)
+
+    def not_hosted(room: uuid.UUID):
+        """An inactive game: its tracker and download pages still work, its room page would wait for a port."""
+        from pony.orm import db_session
+        from WebHostLib.models import Room
+        with db_session:
+            found = Room.get(id=room)
+            if not found:
+                abort(404)
+            info = selfhost.game(str(room)) or {"name": "This game"}
+            slots = sorted((slot.player_id, slot.player_name, slot.game, slot.data is not None)
+                           for slot in found.seed.slots)
+            return render_template_string(NOT_HOSTED_PAGE, name=info["name"], room=found, slots=slots,
+                                          suuid=selfhost.suuid)
+
     # first, before upstream's session handler
     app.before_request_funcs[None].insert(0, app.before_request_funcs[None].pop())
+
+
+def only_active(autolauncher: types.ModuleType) -> None:
+    """Upstream starts every room whose page was visited lately; here only active games are hosted."""
+    original = autolauncher.MultiworldInstance.start_room
+    cache: dict[str, typing.Any] = {"stamp": None, "active": set()}
+
+    def start_room(self, room_id) -> None:
+        try:
+            stamp = os.stat(selfhost.root("active.json")).st_mtime_ns
+        except OSError:
+            stamp = None
+        if stamp != cache["stamp"]:  # called ~10 times a second per room: reread only when it changed
+            cache["stamp"], cache["active"] = stamp, set(selfhost.active())
+        if str(room_id) in cache["active"]:
+            original(self, room_id)
+
+    autolauncher.MultiworldInstance.start_room = start_room
+
+
+INDEX_PAGE = """
+{% extends 'pageWrapper.html' %}
+{% block head %}
+    <title>Games</title>
+    <link rel="stylesheet" type="text/css" href="{{ url_for('static', filename='styles/markdown.css') }}" />
+{% endblock %}
+{% block body %}
+    {% include 'header/grassHeader.html' %}
+    <div class="markdown" style="max-width: 60rem; margin: 1rem auto; padding: 1rem 2rem;">
+        <h1>Games hosted here</h1>
+        {% if games %}
+        <ul>
+            {% for game in games %}
+            <li><a href="/room/{{ suuid(game.room) }}">{{ game.name }}</a> ({{ game.players|length }} players)</li>
+            {% endfor %}
+        </ul>
+        {% else %}
+        <p>No game is hosted here right now.</p>
+        {% endif %}
+    </div>
+{% endblock %}
+"""
+
+NOT_HOSTED_PAGE = """
+{% extends 'pageWrapper.html' %}
+{% block head %}
+    <title>{{ name }} (not hosted)</title>
+    <link rel="stylesheet" type="text/css" href="{{ url_for('static', filename='styles/markdown.css') }}" />
+{% endblock %}
+{% block body %}
+    {% include 'header/grassHeader.html' %}
+    <div class="markdown" style="max-width: 60rem; margin: 1rem auto; padding: 1rem 2rem;">
+        <h1>{{ name }}</h1>
+        <p>This game isn't hosted right now, so you can't connect to it. Its trackers and downloads still work:
+           <a href="{{ url_for('get_multiworld_tracker', tracker=room.tracker) }}">Multiworld Tracker</a>,
+           <a href="{{ url_for('get_multiworld_sphere_tracker', tracker=room.tracker) }}">Sphere Tracker</a>.</p>
+        <table>
+            <tr><th>Id</th><th>Name</th><th>Game</th><th>Download</th><th>Tracker</th></tr>
+            {% for player_id, player_name, game, has_file in slots %}
+            <tr>
+                <td>{{ player_id }}</td><td>{{ player_name }}</td><td>{{ game }}</td>
+                <td>{% if has_file %}
+                    <a href="{{ url_for('download_slot_file', room_id=room.id, player_id=player_id) }}">Download</a>
+                {% endif %}</td>
+                <td><a href="{{ url_for('get_player_tracker', tracker=room.tracker, tracked_team=0,
+                                        tracked_player=player_id) }}">Tracker</a></td>
+            </tr>
+            {% endfor %}
+        </table>
+    </div>
+{% endblock %}
+"""
 
 
 def room_process(bind: str, *args: typing.Any) -> None:
@@ -160,8 +255,8 @@ def serve() -> None:
     config = selfhost.load_config()
     if selfhost.server_status():
         sys.exit("A self-host server is already running.")
-    os.makedirs(selfhost.current(), exist_ok=True)
-    os.chdir(selfhost.current())  # WebHostLib's relative paths (logs, file_locks); also when run by hand
+    os.makedirs(selfhost.data(), exist_ok=True)
+    os.chdir(selfhost.data())  # WebHostLib's relative paths (logs, file_locks); also when run by hand
     write_status(serving=False)
 
     def terminate(signum, frame):
@@ -173,6 +268,7 @@ def serve() -> None:
         restrict(app)
         from WebHostLib import autolauncher
         autolauncher.run_server_process = functools.partial(room_process, config["game_bind"])
+        only_active(autolauncher)
         autolauncher.autohost(app.config)
         from waitress import create_server
         server = create_server(app, host=config["bind"], port=config["port"], threads=10)
@@ -221,9 +317,8 @@ def load(path: str) -> None:
             "name": os.path.splitext(os.path.basename(path))[0], "source": os.path.abspath(path),
             "loaded": time.strftime("%Y-%m-%d %H:%M:%S"), "players": [list(p) for p in players],
         }
-    with open(selfhost.ROOM_FILE, "w", encoding="utf-8") as f:
-        json.dump(info, f, indent=1)
-    print(f"Loaded {info['name']}: {len(players)} players")
+    selfhost.save_game(info)
+    print(f"room: {info['room']}")
 
 
 def main() -> None:

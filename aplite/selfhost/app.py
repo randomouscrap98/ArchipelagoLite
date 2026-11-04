@@ -1,7 +1,7 @@
 """
-Self-host TUI: start/stop the self-host server (it keeps running after leaving; coming back attaches to it), host a
-new generated game or an archived one (the current room is archived either way), the room's links and state, and its
-server console (log tail + commands). See aplite/selfhost/__init__.py.
+Self-host TUI: start/stop the self-host server (it keeps running after leaving; coming back attaches to it), add
+games, a tab per active game (state, owner link, server console: log tail + commands), the Games box (activate,
+deactivate, delete) and settings. See aplite/selfhost/__init__.py.
 """
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen, Screen
-from textual.widgets import Button, Footer, Input, Label, OptionList, RichLog, Static
+from textual.widgets import Button, Footer, Input, Label, OptionList, RichLog, Static, Tab, Tabs
 from textual.widgets.option_list import Option as ListOption
 
 import Utils
@@ -39,7 +39,7 @@ def ago(when: datetime.datetime) -> str:
     return f"{seconds // 3600} h {seconds % 3600 // 60} min ago"
 
 
-PATH_KEYS = {"cert": False, "key": False, "archive_dir": True}  # path settings: folder?
+PATH_KEYS = {"cert": False, "key": False}  # path settings: folder?
 
 
 class SettingsScreen(MasterDetailScreen, ModalScreen):
@@ -200,6 +200,10 @@ class SettingsScreen(MasterDetailScreen, ModalScreen):
                         if values[key] and not os.path.isfile(values[key])), None)
         if bool(values["cert"]) != bool(values["key"]):
             problem = "Set both cert and key (or neither)."
+        active = len(selfhost.active())
+        if values["room_count"] < max(1, active):
+            problem = (f"room_count can't be below 1 or the {active} active game(s): deactivate some in Games "
+                       "first.")
         if problem:
             self.notify(problem, severity="error", timeout=8)
             return
@@ -217,98 +221,131 @@ class SettingsScreen(MasterDetailScreen, ModalScreen):
 APPLY_NOTE = "Changes apply when the server (re)starts."
 
 
-class ArchiveScreen(ModalScreen[typing.Optional[str]]):
-    """Archived rooms (newest first) with their details; dismisses with the folder to host again."""
+class GamesScreen(ModalScreen[None]):
+    """Every loaded game (newest first) with its details; activate / deactivate / delete them here."""
     CSS = """
-    ArchiveScreen { align: center middle; }
-    #archive-box { width: 90%; height: 80%; border: thick $primary; background: $surface; border-title-style: bold; }
-    #archive-list { width: 1fr; height: 1fr; text-wrap: nowrap; text-overflow: ellipsis; }
-    #archive-detail { width: 1fr; height: 1fr; padding: 0 1; }
-    #archive-buttons { height: auto; align-horizontal: right; }
-    #archive-buttons Button { margin-left: 1; }
+    GamesScreen { align: center middle; }
+    #games-box { width: 90%; height: 80%; border: thick $primary; background: $surface; border-title-style: bold; }
+    #games-list { width: 1fr; height: 1fr; text-wrap: nowrap; text-overflow: ellipsis; }
+    #games-detail { width: 1fr; height: 1fr; padding: 0 1; }
+    #games-buttons { height: auto; align-horizontal: right; }
+    #games-buttons Button { margin-left: 1; }
     """
-    BINDINGS = [Binding("escape", "close", "Back")]
+    BINDINGS = [Binding("escape", "close", "Back"), Binding("delete", "delete", "Delete game")]
 
-    def __init__(self) -> None:
+    def __init__(self, running: bool) -> None:
         super().__init__()
+        self.running = running
         self.config = selfhost.load_config()
-        self.archives = selfhost.archives(self.config)
+        self.games: list[selfhost.Info] = []
+        self.armed: str | None = None  # room id a first Delete press armed
 
     def compose(self) -> ComposeResult:
-        with Vertical(id="archive-box"):
+        with Vertical(id="games-box"):
             with Horizontal():
-                yield OptionList(*[ListOption(self.label(folder, info), id=folder) for folder, info in self.archives],
-                                 id="archive-list")
-                with VerticalScroll(id="archive-detail"):
-                    yield Static(id="archive-text")
-            with Horizontal(id="archive-buttons"):
-                yield Button("Host this", id="archive-host", variant="primary")
-                yield Button("Back", id="archive-back")
+                yield OptionList(id="games-list")
+                with VerticalScroll(id="games-detail"):
+                    yield Static(id="games-text")
+            with Horizontal(id="games-buttons"):
+                yield Button("Activate", id="games-toggle", variant="primary")
+                yield Button("Delete", id="games-delete", variant="error")
+                yield Button("Back", id="games-back")
         yield Footer()
 
     def on_mount(self) -> None:
-        box = self.query_one("#archive-box")
-        box.border_title = "Archived games"
-        box.border_subtitle = selfhost.archive_root(self.config)
-        if not self.archives:
-            self.query_one("#archive-list", OptionList).display = False
-            self.query_one("#archive-host", Button).disabled = True
-            self.query_one("#archive-text", Static).update(Text(
-                "No archived games yet. Hosting a new game archives the current one here.", style="dim"))
-            self.query_one("#archive-back", Button).focus()
-        else:
-            archive_list = self.query_one("#archive-list", OptionList)
-            archive_list.highlighted = 0
-            archive_list.focus()
-            # again after the first layout: details shown during mount kept a 1-line height
-            self.call_after_refresh(lambda: self.show_detail(self.archives[archive_list.highlighted or 0][0]))
+        self.query_one("#games-box").border_title = "Games"
+        self.fill()
+        self.query_one("#games-list", OptionList).focus()
+        # again after the first layout: details shown during mount kept a 1-line height
+        self.call_after_refresh(self.show_detail)
+
+    def fill(self, keep: str | None = None) -> None:
+        self.games = selfhost.games()
+        active = selfhost.active()
+        games_list = self.query_one("#games-list", OptionList)
+        games_list.clear_options()
+        games_list.add_options([ListOption(self.label(info, info["room"] in active), id=info["room"])
+                                for info in self.games])
+        ids = [info["room"] for info in self.games]
+        if ids:
+            games_list.highlighted = ids.index(keep) if keep in ids else 0
+        self.query_one("#games-box").border_subtitle = (f"{len(active)} of {self.config['room_count']} room(s) "
+                                                        "active")
+        self.show_detail()
 
     @staticmethod
-    def label(folder: str, info: dict[str, typing.Any] | None) -> Text:
-        name = os.path.basename(folder)  # <YYYY-mm-dd_HHMMSS>_<game>, see selfhost.archive_current
-        stamp = f"{name[:10]} {name[11:13]}:{name[13:15]}"
-        if not info:
-            return Text(f"{stamp}  (no room info)", style="dim")
-        return Text.assemble(f"{stamp}  ", (info["name"], "bold"), f"  {len(info['players'])} players")
+    def label(info: selfhost.Info, active: bool) -> Text:
+        return Text.assemble(("● " if active else "○ ", "green" if active else "dim"), (info["name"], "bold"),
+                             f"  {len(info['players'])} players  {info['loaded'][:16]}")
+
+    def selected(self) -> selfhost.Info | None:
+        option = self.query_one("#games-list", OptionList).highlighted_option
+        return next((info for info in self.games if option and info["room"] == option.id), None)
 
     def on_option_list_option_highlighted(self, event: OptionList.OptionHighlighted) -> None:
-        self.show_detail(event.option.id)
+        self.armed = None
+        self.show_detail()
 
-    def show_detail(self, folder: str) -> None:
-        info = dict(self.archives)[folder]
-        text = Text()
-        if info:
-            state = selfhost.room_state(info, folder)
-            text.append(info["name"] + "\n", style="bold")
-            text.append(f"Loaded {info['loaded']}\n")
-            if state:
-                local = state["last_activity"].replace(tzinfo=datetime.timezone.utc).astimezone()
-                text.append(f"Last activity {local:%Y-%m-%d %H:%M:%S} ({ago(state['last_activity'])})\n")
-            text.append(f"Source: {info['source']}\n\n")
-            text.append(f"{len(info['players'])} players:\n")
-            for _, name, game in info["players"]:
-                text.append(f"  {name} ({game})\n")
-        else:
-            text.append("This folder has no room.json, so it can't be hosted again.\n", style="red")
-        text.append(f"\nFolder: {folder}", style="dim")
-        self.query_one("#archive-text", Static).update(text)
-        self.query_one("#archive-host", Button).disabled = not info
+    def show_detail(self) -> None:
+        info = self.selected()
+        toggle, delete = self.query_one("#games-toggle", Button), self.query_one("#games-delete", Button)
+        toggle.disabled = delete.disabled = info is None
+        if info is None:
+            self.query_one("#games-text", Static).update(Text(
+                "No games yet. New game (Ctrl+N) on the main screen adds one.", style="dim"))
+            return
+        active = info["room"] in selfhost.active()
+        toggle.label = "Deactivate" if active else "Activate"
+        text = Text.assemble((info["name"] + "\n", "bold"),
+                             ("Active (hosted)\n", "green") if active else ("Inactive (kept, not hosted)\n", "dim"),
+                             f"Loaded {info['loaded']}\n")
+        state = selfhost.room_state(info)
+        if state:
+            local = state["last_activity"].replace(tzinfo=datetime.timezone.utc).astimezone()
+            text.append(f"Last activity {local:%Y-%m-%d %H:%M:%S} ({ago(state['last_activity'])})\n")
+        text.append(f"Source: {info['source']}\n\n{len(info['players'])} players:\n")
+        for _, name, game in info["players"]:
+            text.append(f"  {name} ({game})\n")
+        self.query_one("#games-text", Static).update(text)
 
     def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
         event.stop()
-        self.host()
+        self.toggle()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         event.stop()
-        if event.button.id == "archive-host":
-            self.host()
-        else:
-            self.action_close()
+        {"games-toggle": self.toggle, "games-delete": self.action_delete,
+         "games-back": self.action_close}[event.button.id]()
 
-    def host(self) -> None:
-        option = self.query_one("#archive-list", OptionList).highlighted_option
-        if option and dict(self.archives)[option.id]:
-            self.dismiss(option.id)
+    def toggle(self) -> None:
+        info = self.selected()
+        if info is None:
+            return
+        if info["room"] in selfhost.active():
+            selfhost.deactivate(info, self.running)
+            self.notify(f"{info['name']} deactivated: no longer hosted, its data is kept.")
+        elif error := selfhost.activate(info, self.config):
+            self.notify(error, severity="warning", timeout=8)
+        else:
+            self.notify(f"{info['name']} activated." + ("" if self.running else " Start the server to host it."))
+        self.fill(keep=info["room"])
+
+    def action_delete(self) -> None:
+        info = self.selected()
+        if info is None:
+            return
+        if info["room"] in selfhost.active():
+            self.notify("Deactivate it first.", severity="warning")
+            return
+        if self.armed != info["room"]:
+            self.armed = info["room"]
+            self.notify(f"Delete {info['name']} and its progress for good? Press Delete again to confirm.",
+                        severity="warning", timeout=6)
+            return
+        self.armed = None
+        selfhost.delete_game(info)
+        self.notify(f"Deleted {info['name']}.")
+        self.fill()
 
     def action_close(self) -> None:
         self.dismiss(None)
@@ -327,7 +364,7 @@ SCREEN_CSS = """
 class SelfHostScreen(Screen):
     CSS = SCREEN_CSS
     BINDINGS = [Binding("ctrl+r", "toggle_server", "Start/stop server"), Binding("ctrl+n", "new_game", "New game"),
-                Binding("ctrl+a", "archive", "Archive"),
+                Binding("ctrl+g", "games", "Games"),
                 Binding("ctrl+e", "settings", "Settings"), Binding("ctrl+b", "open_room", "Open room", show=False),
                 Binding("ctrl+w", "wake", "Wake room", show=False), Binding("escape", "back", "Back", show=False)]
 
@@ -336,7 +373,10 @@ class SelfHostScreen(Screen):
         self.initial_load = load
         self.busy = ""  # what's running in the background (start/stop/load), shown instead of the server state
         self.status: dict[str, typing.Any] | None = None
-        self.info: dict[str, typing.Any] | None = None
+        self.active: list[str] = []  # active room ids, as the tabs show them
+        self.selected: str | None = None  # room id of the shown game
+        self.syncing_tabs = False
+        self.info: selfhost.Info | None = None  # the shown game
         self.log_file: str | None = None
         self.log_offset = 0
         self.focus_before: typing.Any = None
@@ -347,11 +387,12 @@ class SelfHostScreen(Screen):
         with Horizontal(id="buttons"):
             yield Button("Start server", id="toggle", variant="primary")
             yield Button("New game", id="new")
-            yield Button("Archive", id="archive")
+            yield Button("Games", id="games")
             yield Button("Settings", id="settings")
             yield Button("Open room", id="open")
             yield Button("Wake room", id="wake")
-        yield Label("Room", classes="heading")
+        yield Label("Room", id="room-heading", classes="heading")
+        yield Tabs(id="rooms")
         yield Static(id="room")
         yield Label("Server console", classes="heading")
         yield RichLog(id="console", wrap=True, markup=False)
@@ -370,9 +411,10 @@ class SelfHostScreen(Screen):
 
     def refresh_state(self) -> None:
         self.status = selfhost.server_status()
-        self.info = selfhost.room_info()
         config = selfhost.load_config()
         running = bool(self.status and self.status.get("serving"))
+        self.refresh_tabs()
+        self.info = selfhost.game(self.selected) if self.selected else None
         server = self.query_one("#server", Static)
         toggle = self.query_one("#toggle", Button)
         toggle.label = "Stop server" if self.status else "Start server"
@@ -395,10 +437,52 @@ class SelfHostScreen(Screen):
         self.query_one("#wake", Button).disabled = bool(self.busy) or not (running and self.info)
         self.tail_log()
 
+    def refresh_tabs(self) -> None:
+        """One tab per active game, shown when there's more than one; keeps the selection if it's still active."""
+        active = selfhost.active()
+        if self.selected not in active:
+            self.selected = active[0] if active else None
+        tabs = self.query_one("#rooms", Tabs)
+        tabs.display = len(active) > 1
+        self.query_one("#room-heading").display = len(active) <= 1
+        if active != self.active and not self.syncing_tabs:
+            self.syncing_tabs = True
+            self.run_worker(self.sync_tabs(active))
+
+    async def sync_tabs(self, active: list[str]) -> None:
+        """Rebuilds the tabs (clear/add are async: adding right after clear hit duplicate ids). Adding activates
+        tabs on its own, so the selection is put back afterwards (those events come first, in order)."""
+        want = self.selected
+        tabs = self.query_one("#rooms", Tabs)
+        try:
+            await tabs.clear()
+            for number, room in enumerate(active, 1):  # numbered: the same seed can be loaded twice
+                info = selfhost.game(room)
+                await tabs.add_tab(Tab(f"{number} {info['name'] if info else room}", id=tab_id(room)))
+            self.active = active
+            if want in active:
+                self.selected = want
+                tabs.active = tab_id(want)
+        finally:
+            self.syncing_tabs = False
+
+    def on_tabs_tab_activated(self, event: Tabs.TabActivated) -> None:
+        if event.tab is not None:
+            room = next((room for room in self.active if tab_id(room) == event.tab.id), None)
+            if room and room != self.selected:
+                self.selected = room
+                self.refresh_state()
+
+    def select(self, room: str) -> None:
+        self.selected = room
+        self.refresh_state()
+        if self.query_one("#rooms", Tabs).display:
+            self.query_one("#rooms", Tabs).active = tab_id(room)
+
     def room_text(self, config: dict[str, typing.Any], running: bool) -> Text:
         if not self.info:
-            return Text("No game hosted. Ctrl+N hosts a generated game (.zip / .archipelago), Ctrl+A an archived one.",
-                        style="dim")
+            return Text("No game active. Ctrl+N adds a generated game (.zip / .archipelago); Games (Ctrl+G) "
+                        "activates one loaded before.", style="dim")
         info = self.info
         players = ", ".join(f"{name} ({game})" for _, name, game in info["players"])
         text = Text.assemble((info["name"], "bold"), f"  loaded {info['loaded']}\n",
@@ -490,43 +574,28 @@ class SelfHostScreen(Screen):
         self.app.push_screen(picker, lambda path: path and self.new_game(str(path)))
 
     def new_game(self, path: str) -> None:
+        """Loads a game (kept in the DB from now on) and activates it if a room is free."""
         def work() -> str:
-            folder = selfhost.load_game(path)
-            self.app.call_from_thread(setattr, self, "busy", "Loaded; restarting the server with it…")
-            selfhost.stop_server()
-            archived = selfhost.replace_current(selfhost.load_config(), folder)
-            started = start()
-            return " ".join(filter(None, [f"Hosting {Path(path).stem}.", started,
-                                          f"Previous room archived in {archived}" if archived else None]))
+            info = selfhost.load_game(path)
+            error = selfhost.activate(info, selfhost.load_config())
+            if error:
+                return f"Added {info['name']}, but not active. {error} Then activate it in Games (Ctrl+G)."
+            self.app.call_from_thread(self.select, info["room"])
+            if selfhost.server_status():
+                return f"Added {info['name']}."
+            self.app.call_from_thread(setattr, self, "busy", "Starting the server (loading worlds)…")
+            return " ".join(filter(None, [f"Added {info['name']}.", start()]))
         self.in_background(f"Loading {Path(path).name}…", work)
 
-    def action_archive(self) -> None:
+    def action_games(self) -> None:
         if not self.busy:
-            self.app.push_screen(ArchiveScreen(), lambda folder: folder and self.restore(folder))
-
-    def restore(self, folder: str) -> None:
-        """Host an archived room again: same ids (links, owner link) and its saved progress."""
-        name = (selfhost.room_info(folder) or {}).get("name", os.path.basename(folder))
-
-        def work() -> str:
-            selfhost.stop_server()
-            archived = selfhost.replace_current(selfhost.load_config(), folder)
-            started = start()
-            return " ".join(filter(None, [f"Hosting {name} again, progress kept.", started,
-                                          f"Previous room archived in {archived}" if archived else None]))
-        self.in_background(f"Restoring {name}…", work)
+            self.app.push_screen(GamesScreen(running=bool(self.status)), lambda _: self.refresh_state())
 
     def action_settings(self) -> None:
         def saved(config: dict[str, typing.Any]) -> None:
-            message = "Saved."
-            if self.info:
-                try:
-                    selfhost.set_timeout(self.info, int(config["room_timeout"]))
-                except Exception as e:
-                    message += f" Couldn't set the room timeout: {e}"
-            if self.status:
-                message += " Restart the server (stop, then start) to apply."
-            self.notify(message, timeout=8)
+            selfhost.set_timeouts(int(config["room_timeout"]))
+            self.notify("Saved." + (" Restart the server (stop, then start) to apply." if self.status else ""),
+                        timeout=8)
         self.app.push_screen(SettingsScreen(saved))
 
     def action_open_room(self) -> None:
@@ -550,9 +619,8 @@ class SelfHostScreen(Screen):
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         event.stop()
-        {"toggle": self.action_toggle_server, "new": self.action_new_game, "archive": self.action_archive,
-         "settings": self.action_settings,
-         "open": self.action_open_room, "wake": self.action_wake}[event.button.id]()
+        {"toggle": self.action_toggle_server, "new": self.action_new_game, "games": self.action_games,
+         "settings": self.action_settings, "open": self.action_open_room, "wake": self.action_wake}[event.button.id]()
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         event.stop()
@@ -560,7 +628,7 @@ class SelfHostScreen(Screen):
         if not text:
             return
         if not self.info:
-            self.notify("No game loaded.", severity="warning")
+            self.notify("No game active.", severity="warning")
             return
         state = selfhost.room_state(self.info)
         if state and not state["awake"]:
@@ -568,6 +636,10 @@ class SelfHostScreen(Screen):
         selfhost.send_command(self.info, text)
         self.query_one("#console", RichLog).write(Text(f"> {text}", style="bold"))
         event.input.value = ""
+
+
+def tab_id(room: str) -> str:
+    return "room-" + room.replace("-", "")
 
 
 def start() -> str | None:

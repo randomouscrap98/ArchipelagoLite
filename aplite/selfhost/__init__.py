@@ -1,16 +1,20 @@
 """
-Self-host: upstream's WebHost (WebHostLib) serving one room (room page, trackers, sphere tracker, downloads), run as a
-detached server process (aplite/selfhost/server.py) that the TUI (aplite/selfhost/app.py) starts, attaches to and
-controls through files: the pid file, the room's sqlite DB (commands go in as Command rows, exactly like the web
-console's) and the room log.
+Self-host: upstream's WebHost (WebHostLib) serving our games' pages (room page, trackers, sphere tracker, downloads),
+run as a detached server process (aplite/selfhost/server.py) that the TUI (aplite/selfhost/app.py) starts, attaches to
+and controls through files: the pid file, the shared sqlite DB (commands go in as Command rows, exactly like the web
+console's), the room logs and the active list.
+
+Every game loaded stays in the DB (progress included) until deleted. Up to room_count of them are active: hosted,
+each on a port of game_port .. game_port + room_count - 1. Inactive games keep their tracker and download pages;
+their room page says they aren't hosted.
 
 Layout, in Utils.user_path("selfhost"):
-    config.yaml     settings (DEFAULTS), shared by every room
-    server.json     running server: pid, process create time, effective address/port
-    server.log      server output (appended)
-    incoming/       a game being loaded (moved to current/ once it loaded)
-    current/        the hosted room: ap.db3 (everything: multidata, patches, save), logs/<room id>.txt, room.json
-    archive/<name>/ earlier rooms, moved here whole when a new game is loaded (archive_dir overrides the location)
+    config.yaml        settings (DEFAULTS)
+    server.json        running server: pid, process create time, effective address/port
+    server.log         server output (appended)
+    active.json        room ids of the active games, in tab order
+    games/<room>.json  one per loaded game: room/seed/tracker ids, owner, name, players, source file
+    data/              the server's folder: ap.db3 (everything: multidata, patches, saves), logs/<room>.txt
 
 Kept light (no worlds, no WebHostLib): the server's room processes are spawned and import this package.
 """
@@ -20,7 +24,6 @@ import datetime
 import json
 import os
 import secrets
-import shutil
 import sqlite3
 import subprocess
 import sys
@@ -37,12 +40,12 @@ DEFAULTS: dict[str, typing.Any] = {
     "port": 8080,  # website port
     "public_address": "",  # host name/IP players connect to (shown on the room page); empty: detect public IP
     "public_url": "",  # website URL for links, e.g. behind a reverse proxy; empty: http://public_address:port
-    "game_port": 38281,  # the room's game server port
-    "game_bind": "",  # address the game server listens on; empty: all (127.0.0.1 for a TLS reverse proxy)
-    "cert": "",  # TLS certificate + key for the game server (wss), e.g. certbot's fullchain.pem / privkey.pem
+    "room_count": 1,  # games hosted at once, each on its own game port
+    "game_port": 38281,  # first game port (game_port .. game_port + room_count - 1)
+    "game_bind": "",  # address the game servers listen on; empty: all (127.0.0.1 for a TLS reverse proxy)
+    "cert": "",  # TLS certificate + key for the game servers (wss), e.g. certbot's fullchain.pem / privkey.pem
     "key": "",
-    "room_timeout": 7200,  # seconds without activity before the room sleeps (opening the room page wakes it)
-    "archive_dir": "",  # where replaced rooms go; empty: selfhost/archive
+    "room_timeout": 7200,  # seconds without activity before a room sleeps (opening the room page wakes it)
     "secret_key": "",  # signs the website's session cookies; generated
 }
 DESCRIPTIONS: dict[str, str] = {
@@ -50,32 +53,34 @@ DESCRIPTIONS: dict[str, str] = {
     "port": "Website port",
     "public_address": "Host name or IP players connect to (empty = detect the public IP)",
     "public_url": "Website URL for links, e.g. behind a reverse proxy (empty = http://address:port)",
-    "game_port": "Game server port (forward this one and the website port)",
+    "room_count": "How many games can be active (hosted) at once; each needs its own game port",
+    "game_port": "First game port: the games use game_port up to game_port + room_count - 1 (forward those and the "
+                 "website port)",
     "game_bind": "Game server listen address (empty = everywhere, 127.0.0.1 for a TLS reverse proxy)",
-    "cert": "TLS certificate file for the game server (wss), empty = plain ws",
-    "key": "TLS key file for the game server",
-    "room_timeout": "Seconds without activity before the room sleeps (the room page wakes it)",
-    "archive_dir": "Folder for replaced rooms (empty = selfhost/archive)",
+    "cert": "TLS certificate file for the game servers (wss), empty = plain ws",
+    "key": "TLS key file for the game servers",
+    "room_timeout": "Seconds without activity before a room sleeps (the room page wakes it)",
 }
 SERVER_MODULE = "aplite.selfhost.server"
-ROOM_FILE = "room.json"
 DB_FILE = "ap.db3"
 LOAD_ERROR = "aplite-load-error: "
+
+Info = dict[str, typing.Any]
 
 
 def root(*path: str) -> str:
     return os.path.join(os.environ.get("APLITE_SELFHOST_DIR") or Utils.user_path("selfhost"), *path)
 
 
-def current(*path: str) -> str:
-    return root("current", *path)
+def data(*path: str) -> str:
+    return root("data", *path)
 
 
 def load_config() -> dict[str, typing.Any]:
     config = dict(DEFAULTS)
     try:
         with open(root("config.yaml"), encoding="utf-8") as f:
-            config.update(yaml.safe_load(f) or {})
+            config.update({k: v for k, v in (yaml.safe_load(f) or {}).items() if k in DEFAULTS})
     except FileNotFoundError:
         pass
     if not config["secret_key"]:
@@ -90,8 +95,8 @@ def save_config(config: dict[str, typing.Any]) -> None:
         yaml.safe_dump(config, f, sort_keys=False)
 
 
-def archive_root(config: dict[str, typing.Any]) -> str:
-    return os.path.abspath(os.path.expanduser(config["archive_dir"])) if config["archive_dir"] else root("archive")
+def game_ports(config: dict[str, typing.Any]) -> list[int]:
+    return list(range(config["game_port"], config["game_port"] + max(1, config["room_count"])))
 
 
 # --- server process ---
@@ -111,7 +116,7 @@ def server_status() -> dict[str, typing.Any] | None:
 
 
 def start_server() -> None:
-    os.makedirs(current(), exist_ok=True)
+    os.makedirs(data(), exist_ok=True)
     from aplite import child_env
     log = open(root("server.log"), "ab")
     log.write(f"\n--- starting {datetime.datetime.now():%Y-%m-%d %H:%M:%S} ---\n".encode())
@@ -122,7 +127,7 @@ def start_server() -> None:
     else:
         kwargs["start_new_session"] = True  # survives the TUI and its terminal
     with log:
-        subprocess.Popen([sys.executable, "-m", SERVER_MODULE, "serve"], cwd=current(),
+        subprocess.Popen([sys.executable, "-m", SERVER_MODULE, "serve"], cwd=data(),
                          env={**child_env(), "PYTHONUNBUFFERED": "1"},
                          stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT, **kwargs)
 
@@ -174,15 +179,90 @@ def base_url(config: dict[str, typing.Any], status: dict[str, typing.Any] | None
     return f"http://{address}:{config['port']}"
 
 
-# --- the room ---
+# --- games ---
 
-def room_info(folder: str | None = None) -> dict[str, typing.Any] | None:
-    """room.json written when the game was loaded: room/seed/tracker ids, owner, players, source file."""
+def games() -> list[Info]:
+    """Every loaded game's info (games/<room>.json), newest first."""
+    folder = root("games")
+    found = []
+    for name in os.listdir(folder) if os.path.isdir(folder) else ():
+        try:
+            with open(os.path.join(folder, name), encoding="utf-8") as f:
+                found.append(json.load(f))
+        except (OSError, ValueError):
+            pass
+    return sorted(found, key=lambda info: info.get("loaded", ""), reverse=True)
+
+
+def game(room: str) -> Info | None:
     try:
-        with open(os.path.join(folder or current(), ROOM_FILE), encoding="utf-8") as f:
+        with open(root("games", f"{room}.json"), encoding="utf-8") as f:
             return json.load(f)
     except (OSError, ValueError):
         return None
+
+
+def save_game(info: Info) -> None:
+    os.makedirs(root("games"), exist_ok=True)
+    with open(root("games", f"{info['room']}.json"), "w", encoding="utf-8") as f:
+        json.dump(info, f, indent=1)
+
+
+def active() -> list[str]:
+    """Room ids of the active games (tab order); ids whose game is gone are dropped."""
+    try:
+        with open(root("active.json"), encoding="utf-8") as f:
+            ids = json.load(f)
+    except (OSError, ValueError):
+        return []
+    return [room for room in ids if os.path.exists(root("games", f"{room}.json"))]
+
+
+def _save_active(ids: list[str]) -> None:
+    os.makedirs(root(), exist_ok=True)
+    with open(root("active.json") + ".tmp", "w", encoding="utf-8") as f:
+        json.dump(ids, f)
+    os.replace(root("active.json") + ".tmp", root("active.json"))
+
+
+def activate(info: Info, config: dict[str, typing.Any]) -> str | None:
+    """Makes a game active (hosted once the server runs; woken now). Returns why it can't be, if it can't."""
+    ids = active()
+    if info["room"] in ids:
+        return None
+    if len(ids) >= config["room_count"]:
+        return (f"All {config['room_count']} room(s) are in use: deactivate a game first, or raise room_count in "
+                "Settings (and forward the extra port).")
+    _save_active(ids + [info["room"]])
+    with _db() as db:  # an /exit left from deactivating it would stop it again at once
+        db.execute("DELETE FROM Command WHERE room = ? AND commandtext = '/exit'", (_room_key(info),))
+    wake(info)
+    return None
+
+
+def deactivate(info: Info, running: bool) -> None:
+    """No longer hosted: a running room is told to /exit (it saves); the server won't start it again."""
+    _save_active([room for room in active() if room != info["room"]])
+    state = room_state(info)
+    if running and state and state["awake"]:
+        send_command(info, "/exit")
+
+
+def delete_game(info: Info) -> None:
+    """Removes an inactive game for good: its DB rows, log and info."""
+    key = _room_key(info)
+    with _db() as db:
+        db.execute("DELETE FROM Command WHERE room = ?", (key,))
+        db.execute("DELETE FROM Room WHERE id = ?", (key,))
+        seed = uuid.UUID(info["seed"]).bytes
+        if not db.execute("SELECT COUNT(*) FROM Room WHERE seed = ?", (seed,)).fetchone()[0]:
+            db.execute("DELETE FROM Slot WHERE seed = ?", (seed,))
+            db.execute("DELETE FROM Seed WHERE id = ?", (seed,))
+    for path in (log_path(info), root("games", f"{info['room']}.json")):
+        try:
+            os.remove(path)
+        except FileNotFoundError:
+            pass
 
 
 def suuid(value: str) -> str:
@@ -191,31 +271,27 @@ def suuid(value: str) -> str:
     return base64.urlsafe_b64encode(uuid.UUID(value).bytes).rstrip(b"=").decode("ascii")
 
 
-def links(info: dict[str, typing.Any], base: str) -> dict[str, str]:
-    return {
-        "Room": f"{base}/room/{suuid(info['room'])}",
-        "Multiworld tracker": f"{base}/tracker/{suuid(info['tracker'])}",
-        "Sphere tracker": f"{base}/sphere_tracker/{suuid(info['tracker'])}",
-        "Owner link (room page with its console; keep it to yourself)": f"{base}/owner/{info['owner']}",
-    }
+def room_url(info: Info, base: str) -> str:
+    return f"{base}/room/{suuid(info['room'])}"
 
 
-def owner_link(info: dict[str, typing.Any], base: str) -> str:
-    return next(url for name, url in links(info, base).items() if name.startswith("Owner link"))
+def owner_link(info: Info, base: str) -> str:
+    """Our /owner/<id> page: makes the browser the room's owner (console, log), then shows the room page."""
+    return f"{base}/owner/{info['owner']}"
 
 
-def _db(folder: str | None = None) -> sqlite3.Connection:
-    return sqlite3.connect(os.path.join(folder or current(), DB_FILE), timeout=10)
+def _db() -> sqlite3.Connection:
+    return sqlite3.connect(data(DB_FILE), timeout=10)
 
 
-def _room_key(info: dict[str, typing.Any]) -> bytes:
+def _room_key(info: Info) -> bytes:
     return uuid.UUID(info["room"]).bytes  # pony stores UUIDs as 16-byte blobs in sqlite (datetimes as str())
 
 
-def room_state(info: dict[str, typing.Any], folder: str | None = None) -> dict[str, typing.Any] | None:
+def room_state(info: Info) -> dict[str, typing.Any] | None:
     """last_activity (UTC), last_port (-1 = failed), timeout, and whether it should be running (awake)."""
     try:
-        with _db(folder) as db:
+        with _db() as db:
             row = db.execute("SELECT last_activity, last_port, timeout FROM Room WHERE id = ?",
                              (_room_key(info),)).fetchone()
     except sqlite3.Error:
@@ -227,86 +303,48 @@ def room_state(info: dict[str, typing.Any], folder: str | None = None) -> dict[s
     return {"last_activity": last_activity, "last_port": row[1], "timeout": row[2], "awake": awake}
 
 
-def wake(info: dict[str, typing.Any]) -> None:
-    """What opening the room page does: fresh activity makes the server start the room."""
+def wake(info: Info) -> None:
+    """What opening the room page does: fresh activity makes the server start the room (if it's active)."""
     with _db() as db:
         db.execute("UPDATE Room SET last_activity = ? WHERE id = ?", (str(Utils.utcnow()), _room_key(info)))
 
 
-def set_timeout(info: dict[str, typing.Any], seconds: int) -> None:
-    with _db() as db:
-        db.execute("UPDATE Room SET timeout = ? WHERE id = ?", (seconds, _room_key(info)))
+def set_timeouts(seconds: int) -> None:
+    """For every room (each room reads its timeout when it starts)."""
+    try:
+        with _db() as db:
+            db.execute("UPDATE Room SET timeout = ?", (seconds,))
+    except sqlite3.Error:
+        pass  # no DB yet
 
 
-def send_command(info: dict[str, typing.Any], text: str) -> None:
+def send_command(info: Info, text: str) -> None:
     """A server console command, as the room page's console sends it (the room process polls these)."""
     with _db() as db:
         db.execute("INSERT INTO Command (room, commandtext) VALUES (?, ?)", (_room_key(info), text))
 
 
-def log_path(info: dict[str, typing.Any], folder: str | None = None) -> str:
-    return os.path.join(folder or current(), "logs", f"{info['room']}.txt")
+def log_path(info: Info) -> str:
+    return data("logs", f"{info['room']}.txt")
 
 
-# --- loading and archiving ---
+# --- loading ---
 
 class LoadError(Exception):
     pass
 
 
-def archive_current(config: dict[str, typing.Any]) -> str | None:
-    """Moves current/ into the archive (server must be stopped); returns the archive folder. A current/ without a game
-    (the server was started before any game was hosted: empty DB, logs) is just removed."""
-    if not os.path.isdir(current()) or not os.listdir(current()):
-        return None
-    info = room_info()
-    if not info and not _has_rooms(current()):
-        shutil.rmtree(current())
-        return None
-    info = info or {}
-    stamp = datetime.datetime.now().strftime("%Y-%m-%d_%H%M%S")
-    name = Utils.get_file_safe_name(f"{stamp}_{info.get('name', 'room')}")
-    target = os.path.join(archive_root(config), name)
-    os.makedirs(archive_root(config), exist_ok=True)
-    shutil.move(current(), target)
-    return target
-
-
-def _has_rooms(folder: str) -> bool:
-    try:
-        with _db(folder) as db:
-            return bool(db.execute("SELECT COUNT(*) FROM Room").fetchone()[0])
-    except sqlite3.Error:
-        return False  # no DB, or no tables yet
-
-
-def load_game(path: str) -> str:
-    """Imports a generated game into a fresh folder and creates its room, in a child process (needs the worlds and
-    WebHostLib; the server can keep running meanwhile). Returns the folder, for replace_current."""
+def load_game(path: str) -> Info:
+    """Imports a generated game into the DB and creates its room (inactive), in a child process (needs the worlds and
+    WebHostLib); the server can keep running meanwhile. Returns its info."""
     from aplite import child_env
-    folder = root("incoming")
-    shutil.rmtree(folder, ignore_errors=True)
-    os.makedirs(folder)
-    result = subprocess.run([sys.executable, "-m", SERVER_MODULE, "load", os.path.abspath(path)], cwd=folder,
+    os.makedirs(data(), exist_ok=True)
+    result = subprocess.run([sys.executable, "-m", SERVER_MODULE, "load", os.path.abspath(path)], cwd=data(),
                             env=child_env(), stdin=subprocess.DEVNULL, capture_output=True, text=True)
-    if result.returncode != 0 or not room_info(folder):
+    room = next((line[len("room: "):].strip() for line in result.stdout.splitlines() if line.startswith("room: ")),
+                None)
+    info = game(room) if room else None
+    if result.returncode != 0 or not info:
         errors = [line[len(LOAD_ERROR):] for line in result.stderr.splitlines() if line.startswith(LOAD_ERROR)]
-        shutil.rmtree(folder, ignore_errors=True)
         raise LoadError(errors[-1] if errors else f"loading failed (exit code {result.returncode})")
-    return folder
-
-
-def replace_current(config: dict[str, typing.Any], folder: str) -> str | None:
-    """Archives current/ and puts `folder` in its place (server must be stopped). Returns the archive folder."""
-    archived = archive_current(config)
-    shutil.rmtree(current(), ignore_errors=True)  # an empty leftover
-    shutil.move(folder, current())
-    return archived
-
-
-def archives(config: dict[str, typing.Any]) -> list[tuple[str, dict[str, typing.Any] | None]]:
-    folder = archive_root(config)
-    if not os.path.isdir(folder):
-        return []
-    return [(os.path.join(folder, name), room_info(os.path.join(folder, name)))
-            for name in sorted(os.listdir(folder), reverse=True) if os.path.isdir(os.path.join(folder, name))]
+    return info
