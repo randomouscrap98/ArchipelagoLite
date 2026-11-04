@@ -272,7 +272,7 @@ class SettingsApp(MasterDetailApp):
             widgets.append(Label(Text("required" if setting.required else "optional", style="dim"),
                                  classes="heading-end"))
             widgets.append(PathInput(str(value or ""), id="path",
-                                     placeholder="Path. Enter sets, Tab completes, Ctrl+B browses"))
+                                     placeholder="Path. Enter sets, Ctrl+Space completes, Ctrl+B browses"))
             widgets.append(Label("", id="exists"))
         elif setting.kind == "bool":
             widgets.append(Checkbox("Enabled", bool(value), id="bool"))

@@ -12,6 +12,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import typing
 from pathlib import Path
 
 from rich.text import Text
@@ -19,13 +20,13 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen, Screen
-from textual.widgets import Button, DirectoryTree, Footer, Label, OptionList, ProgressBar, RichLog, Static
+from textual.widgets import Button, DirectoryTree, Footer, Input, Label, OptionList, ProgressBar, RichLog
 from textual.widgets.option_list import Option as ListOption
 
 import Utils
 import aplite
 from aplite import prefs, prompts
-from aplite.file_picker import FilePicker, FilteredTree
+from aplite.file_picker import FilePicker, FilteredTree, PathInput
 from aplite.nav import AppliteApp
 
 SUFFIXES = (".yaml", ".yml")
@@ -36,6 +37,9 @@ STAGES = ("Generating for", "Creating MultiWorld.", "Creating Items.", "Calculat
           "Beginning output", "Calculating playthrough.", "Creating final archive", "Done.")
 """Log lines (Generate.py / Main.py) that mark progress, in order; the bar moves to the last one seen."""
 ARCHIVE = "Creating final archive at "
+LIST_GAMES = ("import json; from aplite import bytecode_cache; bytecode_cache.install(); "
+              "from worlds.AutoWorld import AutoWorldRegister; print(json.dumps(sorted(AutoWorldRegister.world_types)))")
+"""A fresh process's installed games (this one's loaded worlds can't be reloaded); the JSON is its last line."""
 
 
 @dataclasses.dataclass
@@ -52,9 +56,16 @@ class Entry:
         return text
 
 
-def check_yaml(path: Path) -> Entry:
-    """Read a player YAML and check every game it can roll is installed."""
-    from worlds.AutoWorld import AutoWorldRegister
+def installed_games() -> set[str]:
+    """Games installed now, apworlds added since aplite started included. Slow (loads every world)."""
+    import json
+    out = subprocess.run([sys.executable, "-c", LIST_GAMES], env=aplite.child_env(), stdin=subprocess.DEVNULL,
+                         stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, check=True).stdout
+    return set(json.loads(out.strip().splitlines()[-1]))
+
+
+def check_yaml(path: Path, games: typing.Collection[str]) -> Entry:
+    """Read a player YAML and check every game it can roll is in `games`."""
     entry = Entry(path, [], [])
     try:
         with open(path, encoding="utf-8-sig") as f:
@@ -69,14 +80,14 @@ def check_yaml(path: Path) -> Entry:
             entry.problems.append("not a player YAML")
             continue
         game = doc.get("game")
-        games = [g for g, weight in game.items() if weight] if isinstance(game, dict) else [game]
+        rolls = [g for g, weight in game.items() if weight] if isinstance(game, dict) else [game]
         name = str(doc.get("name", "?"))
-        entry.players.append((name, " / ".join(map(str, games))))
+        entry.players.append((name, " / ".join(map(str, rolls))))
         if not game:
             entry.problems.append(f"{name}: no game")
-        for g in games:
-            if g and g not in AutoWorldRegister.world_types:
-                entry.problems.append(f"{name}: game {g!r} isn't installed (missing apworld?)")
+        for g in rolls:
+            if g and g not in games:
+                entry.problems.append(f"{name}: game {g!r} isn't installed (missing apworld? Ctrl+R rechecks)")
     return entry
 
 
@@ -195,6 +206,7 @@ class GenerateModal(ModalScreen[None]):
 
 class GenerateScreen(Screen):
     BINDINGS = [Binding("ctrl+t", "toggle_all", "Show all files"), Binding("ctrl+g", "generate", "Generate"),
+                Binding("ctrl+r", "recheck", "Recheck"),
                 Binding("delete", "remove", "Remove", show=False)]
 
     def __init__(self) -> None:
@@ -202,28 +214,31 @@ class GenerateScreen(Screen):
         last = prefs.get(PREF_KEY)
         self.start = Path(last if last and os.path.isdir(last) else Utils.user_path("Players"))
         self.entries: list[Entry] = []
+        from worlds.AutoWorld import AutoWorldRegister
+        self.games: typing.Collection[str] = AutoWorldRegister.world_types
+        self.rechecking = False
 
     def compose(self) -> ComposeResult:
-        yield Static(id="folder")
         with Horizontal(id="panes"):
             with Vertical(id="left"):
-                yield FilteredTree(self.start, SUFFIXES)
+                yield Label("Files: Enter adds a YAML", classes="heading")
+                tree = FilteredTree(self.start, SUFFIXES)
+                yield tree
+                yield PathInput(placeholder="Path to a YAML or folder. Enter opens, Ctrl+Space completes.", shows=tree.shows)
             with Vertical(id="right"):
+                yield Label("YAMLs to generate: Delete removes", classes="heading")
                 yield OptionList(id="yamls")
                 yield Button("Generate", id="generate", variant="primary")
+        yield Label("Log", classes="heading")
         yield RichLog(id="log", wrap=True, markup=False)
         yield Footer()
 
     def on_mount(self) -> None:
         self.update_folder()
-        self.query_one("#yamls").border_title = "YAMLs (Enter in the tree adds, Delete removes)"
-        self.query_one("#log").border_title = "Log"
         self.query_one(FilteredTree).focus()
 
     def update_folder(self) -> None:  # FilteredTree calls this when it changes folder
-        tree = self.query_one(FilteredTree)
-        shown = "all files" if tree.show_all else ", ".join(SUFFIXES)
-        self.query_one("#folder", Static).update(f"Player YAMLs: {Path(tree.path).resolve()}  ({shown})")
+        self.query_one(PathInput).value = str(Path(self.query_one(FilteredTree).path).resolve())
 
     def log_line(self, text: str, style: str = "") -> None:
         self.query_one("#log", RichLog).write(Text(text, style=style))
@@ -232,6 +247,25 @@ class GenerateScreen(Screen):
         if event.path.name == "..":
             event.stop()
             self.query_one(FilteredTree).action_parent()
+
+    def on_tree_node_highlighted(self, event) -> None:
+        entry = event.node.data
+        if entry is not None:
+            self.query_one(PathInput).value = str(entry.path.resolve())
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        """A typed path: a folder is shown in the tree, a file is added."""
+        event.stop()
+        path = Path(os.path.expanduser(event.value.strip())).resolve()
+        tree = self.query_one(FilteredTree)
+        if path.is_dir():
+            tree.path = path
+            self.update_folder()
+            tree.focus()
+        elif path.is_file():
+            self.add(path)
+        else:
+            self.log_line(f"Not found: {path}", "red")
 
     def on_directory_tree_file_selected(self, event: DirectoryTree.FileSelected) -> None:
         event.stop()
@@ -242,15 +276,52 @@ class GenerateScreen(Screen):
             self.log_line(f"{path.name} is already in the list.", "yellow")
             return
         prefs.put(PREF_KEY, str(path.parent))
-        entry = check_yaml(path)
+        entry = check_yaml(path, self.games)
         self.entries.append(entry)
         self.query_one("#yamls", OptionList).add_option(ListOption(entry.label()))
+        self.report(entry, "Added")
+        self.check_names()
+
+    def report(self, entry: Entry, verb: str) -> None:
         if entry.problems:
-            self.log_line(f"{path.name}:", "bold red")
+            self.log_line(f"{entry.path.name}:", "bold red")
             for problem in entry.problems:
                 self.log_line(f"  {problem}", "red")
         else:
-            self.log_line(f"Added {path.name}: " + ", ".join(f"{n} ({g})" for n, g in entry.players))
+            self.log_line(f"{verb} {entry.path.name}: " + ", ".join(f"{n} ({g})" for n, g in entry.players))
+
+    def action_recheck(self) -> None:
+        """Reload the installed games in a fresh process (apworlds installed meanwhile) and re-read every YAML."""
+        if self.rechecking:
+            return
+        self.rechecking = True
+        self.log_line("Rechecking installed games…")
+        threading.Thread(target=self.load_games, daemon=True).start()
+
+    def load_games(self) -> None:
+        try:
+            games, error = installed_games(), None
+        except Exception as e:
+            games, error = None, e
+        self.app.call_from_thread(self.games_loaded, games, error)
+
+    def games_loaded(self, games: set[str] | None, error: Exception | None) -> None:
+        self.rechecking = False
+        if games is None:
+            self.log_line(f"Couldn't recheck the installed games: {error}", "red")
+            return
+        added = len(games - set(self.games))
+        self.games = games
+        self.log_line(f"{len(games)} games installed" + (f" ({added} new)." if added else "."))
+        yamls = self.query_one("#yamls", OptionList)
+        highlighted = yamls.highlighted
+        self.entries = [check_yaml(entry.path, games) for entry in self.entries]
+        yamls.clear_options()
+        yamls.add_options([ListOption(entry.label()) for entry in self.entries])
+        if highlighted is not None and self.entries:
+            yamls.highlighted = min(highlighted, len(self.entries) - 1)
+        for entry in self.entries:
+            self.report(entry, "Checked")
         self.check_names()
 
     def check_names(self) -> None:
@@ -292,19 +363,20 @@ class GenerateScreen(Screen):
         tree = self.query_one(FilteredTree)
         tree.show_all = not tree.show_all
         tree.reload()
-        self.update_folder()
 
 
 class GenerateApp(AppliteApp):
     TITLE = "Generate GUI"
     CSS = """  /* here, not on GenerateScreen: a default screen's own CSS isn't loaded */
-    #folder { height: 1; padding: 0 1; background: $panel; }
     #panes { height: 1fr; }
     #left { width: 1fr; }
     #right { width: 1fr; }
     #yamls { height: 1fr; }
+    FilteredTree { height: 1fr; border: tall $border-blurred; }  /* same box as the lists, so focus shows */
+    FilteredTree:focus { border: tall $border; }
+    .heading { padding: 0 1; }
     #generate { width: 100%; }
-    #log { height: 12; border: tall $border-blurred; }
+    #log { height: 10; border: tall $border-blurred; }
     #log:focus { border: tall $border; }
     """
 

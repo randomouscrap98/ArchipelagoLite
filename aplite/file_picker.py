@@ -42,6 +42,30 @@ class FilteredTree(DirectoryTree):
             yield location / ".."
         yield from super()._directory_content(location, worker)
 
+    def _populate_node(self, node, content) -> None:
+        # private DirectoryTree method: a folder's first expansion fills it here, after NodeExpanded
+        super()._populate_node(node, content)
+        if not node.is_root:
+            self.call_after_refresh(self.reveal, node)
+
+    def on_tree_node_expanded(self, event) -> None:
+        if event.node.children and not event.node.is_root:  # expanded again: already filled
+            self.call_after_refresh(self.reveal, event.node)
+
+    def reveal(self, node) -> None:
+        """Scroll an expanded folder's contents into view; if they don't fit, put the folder at the top."""
+        last = node
+        while last.is_expanded and last.children:
+            last = last.children[-1]
+        first, end = node.line, last.line
+        height = self.scrollable_content_region.height
+        if first < 0 or height <= 0:
+            return
+        if end - first + 1 > height or first < self.scroll_y:
+            self.scroll_to(y=first, animate=False)
+        elif end >= self.scroll_y + height:
+            self.scroll_to(y=end - height + 1, animate=False)
+
     def action_open_node(self) -> None:
         node = self.cursor_node
         if node is None or node.data is None or not node.allow_expand:
@@ -91,15 +115,15 @@ def _not_hidden(path: Path) -> bool:
 
 
 class PathInput(Input):
-    """Tab completes the path like a shell: as far as the matches agree, then further Tabs cycle through them in place
-    (shift+tab leaves)."""
-    BINDINGS = [Binding("tab", "complete", "Complete path", show=False)]
+    """Ctrl+Space completes the path like a shell: as far as the matches agree, then further presses cycle through them
+    in place. Tab moves focus as usual (research/keyboard.md). Terminals send Ctrl+Space as NUL (ctrl+@)."""
+    BINDINGS = [Binding("ctrl+space,ctrl+@", "complete", "Complete path", show=False)]
 
     def __init__(self, *args, shows: typing.Callable[[Path], bool] = _not_hidden, **kwargs) -> None:
         """`shows` decides which entries completion offers."""
         super().__init__(*args, **kwargs)
         self.shows = shows
-        self.cycle: list[str] = []  # completions Tab is cycling through; reset once the value is edited otherwise
+        self.cycle: list[str] = []  # completions Ctrl+Space is cycling through; reset once the value is edited otherwise
 
     def _on_paste(self, event: events.Paste) -> None:
         """A dropped file replaces the value (cleaned up); in a FilePicker it opens right away."""
@@ -173,7 +197,7 @@ class FilePicker(Screen[Path | None]):
         yield Static(id="folder")
         tree = FilteredTree(self.start, self.suffixes, self.show_all)
         yield tree
-        yield PathInput(placeholder="Path to a file or folder. Enter opens, Tab completes, Shift+Tab: back to list.",
+        yield PathInput(placeholder="Path to a file or folder. Enter opens, Ctrl+Space completes.",
                         shows=tree.shows)
         yield Footer()
 
