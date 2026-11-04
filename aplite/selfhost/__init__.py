@@ -251,16 +251,29 @@ class LoadError(Exception):
 
 
 def archive_current(config: dict[str, typing.Any]) -> str | None:
-    """Moves current/ into the archive (server must be stopped); returns the archive folder."""
+    """Moves current/ into the archive (server must be stopped); returns the archive folder. A current/ without a game
+    (the server was started before any game was hosted: empty DB, logs) is just removed."""
     if not os.path.isdir(current()) or not os.listdir(current()):
         return None
-    info = room_info() or {}
+    info = room_info()
+    if not info and not _has_rooms(current()):
+        shutil.rmtree(current())
+        return None
+    info = info or {}
     stamp = datetime.datetime.now().strftime("%Y-%m-%d_%H%M%S")
     name = Utils.get_file_safe_name(f"{stamp}_{info.get('name', 'room')}")
     target = os.path.join(archive_root(config), name)
     os.makedirs(archive_root(config), exist_ok=True)
     shutil.move(current(), target)
     return target
+
+
+def _has_rooms(folder: str) -> bool:
+    try:
+        with _db(folder) as db:
+            return bool(db.execute("SELECT COUNT(*) FROM Room").fetchone()[0])
+    except sqlite3.Error:
+        return False  # no DB, or no tables yet
 
 
 def load_game(path: str) -> str:

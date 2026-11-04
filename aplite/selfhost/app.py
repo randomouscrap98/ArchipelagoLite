@@ -1,7 +1,7 @@
 """
-Self-host TUI: start/stop the self-host server (it keeps running after leaving; coming back attaches to it), load a
-generated game (the previous room is archived), the room's links and state, and its server console (log tail +
-commands). See aplite/selfhost/__init__.py.
+Self-host TUI: start/stop the self-host server (it keeps running after leaving; coming back attaches to it), host a
+new generated game or an archived one (the current room is archived either way), the room's links and state, and its
+server console (log tail + commands). See aplite/selfhost/__init__.py.
 """
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen, Screen
-from textual.widgets import Button, Footer, Input, Label, RichLog, Static
+from textual.widgets import Button, Footer, Input, Label, OptionList, RichLog, Static
 from textual.widgets.option_list import Option as ListOption
 
 import Utils
@@ -217,6 +217,103 @@ class SettingsScreen(MasterDetailScreen, ModalScreen):
 APPLY_NOTE = "Changes apply when the server (re)starts."
 
 
+class ArchiveScreen(ModalScreen[typing.Optional[str]]):
+    """Archived rooms (newest first) with their details; dismisses with the folder to host again."""
+    CSS = """
+    ArchiveScreen { align: center middle; }
+    #archive-box { width: 90%; height: 80%; border: thick $primary; background: $surface; border-title-style: bold; }
+    #archive-list { width: 1fr; height: 1fr; text-wrap: nowrap; text-overflow: ellipsis; }
+    #archive-detail { width: 1fr; height: 1fr; padding: 0 1; }
+    #archive-buttons { height: auto; align-horizontal: right; }
+    #archive-buttons Button { margin-left: 1; }
+    """
+    BINDINGS = [Binding("escape", "close", "Back")]
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.config = selfhost.load_config()
+        self.archives = selfhost.archives(self.config)
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="archive-box"):
+            with Horizontal():
+                yield OptionList(*[ListOption(self.label(folder, info), id=folder) for folder, info in self.archives],
+                                 id="archive-list")
+                with VerticalScroll(id="archive-detail"):
+                    yield Static(id="archive-text")
+            with Horizontal(id="archive-buttons"):
+                yield Button("Host this", id="archive-host", variant="primary")
+                yield Button("Back", id="archive-back")
+        yield Footer()
+
+    def on_mount(self) -> None:
+        box = self.query_one("#archive-box")
+        box.border_title = "Archived games"
+        box.border_subtitle = selfhost.archive_root(self.config)
+        if not self.archives:
+            self.query_one("#archive-list", OptionList).display = False
+            self.query_one("#archive-host", Button).disabled = True
+            self.query_one("#archive-text", Static).update(Text(
+                "No archived games yet. Hosting a new game archives the current one here.", style="dim"))
+            self.query_one("#archive-back", Button).focus()
+        else:
+            archive_list = self.query_one("#archive-list", OptionList)
+            archive_list.highlighted = 0
+            archive_list.focus()
+            # again after the first layout: details shown during mount kept a 1-line height
+            self.call_after_refresh(lambda: self.show_detail(self.archives[archive_list.highlighted or 0][0]))
+
+    @staticmethod
+    def label(folder: str, info: dict[str, typing.Any] | None) -> Text:
+        name = os.path.basename(folder)  # <YYYY-mm-dd_HHMMSS>_<game>, see selfhost.archive_current
+        stamp = f"{name[:10]} {name[11:13]}:{name[13:15]}"
+        if not info:
+            return Text(f"{stamp}  (no room info)", style="dim")
+        return Text.assemble(f"{stamp}  ", (info["name"], "bold"), f"  {len(info['players'])} players")
+
+    def on_option_list_option_highlighted(self, event: OptionList.OptionHighlighted) -> None:
+        self.show_detail(event.option.id)
+
+    def show_detail(self, folder: str) -> None:
+        info = dict(self.archives)[folder]
+        text = Text()
+        if info:
+            state = selfhost.room_state(info, folder)
+            text.append(info["name"] + "\n", style="bold")
+            text.append(f"Loaded {info['loaded']}\n")
+            if state:
+                local = state["last_activity"].replace(tzinfo=datetime.timezone.utc).astimezone()
+                text.append(f"Last activity {local:%Y-%m-%d %H:%M:%S} ({ago(state['last_activity'])})\n")
+            text.append(f"Source: {info['source']}\n\n")
+            text.append(f"{len(info['players'])} players:\n")
+            for _, name, game in info["players"]:
+                text.append(f"  {name} ({game})\n")
+        else:
+            text.append("This folder has no room.json, so it can't be hosted again.\n", style="red")
+        text.append(f"\nFolder: {folder}", style="dim")
+        self.query_one("#archive-text", Static).update(text)
+        self.query_one("#archive-host", Button).disabled = not info
+
+    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+        event.stop()
+        self.host()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        if event.button.id == "archive-host":
+            self.host()
+        else:
+            self.action_close()
+
+    def host(self) -> None:
+        option = self.query_one("#archive-list", OptionList).highlighted_option
+        if option and dict(self.archives)[option.id]:
+            self.dismiss(option.id)
+
+    def action_close(self) -> None:
+        self.dismiss(None)
+
+
 SCREEN_CSS = """
 .heading { padding: 0 1; text-style: bold; }
 #server, #room { padding: 0 1; height: auto; }
@@ -229,9 +326,10 @@ SCREEN_CSS = """
 
 class SelfHostScreen(Screen):
     CSS = SCREEN_CSS
-    BINDINGS = [Binding("ctrl+r", "toggle_server", "Start/stop server"), Binding("ctrl+o", "load", "Load game"),
-                Binding("ctrl+e", "settings", "Settings"), Binding("ctrl+b", "open_room", "Open room"),
-                Binding("ctrl+w", "wake", "Wake room"), Binding("escape", "back", "Back", show=False)]
+    BINDINGS = [Binding("ctrl+r", "toggle_server", "Start/stop server"), Binding("ctrl+n", "new_game", "New game"),
+                Binding("ctrl+a", "archive", "Archive"),
+                Binding("ctrl+e", "settings", "Settings"), Binding("ctrl+b", "open_room", "Open room", show=False),
+                Binding("ctrl+w", "wake", "Wake room", show=False), Binding("escape", "back", "Back", show=False)]
 
     def __init__(self, load: str | None = None) -> None:
         super().__init__()
@@ -248,7 +346,8 @@ class SelfHostScreen(Screen):
         yield Static(id="server")
         with Horizontal(id="buttons"):
             yield Button("Start server", id="toggle", variant="primary")
-            yield Button("Load game", id="load")
+            yield Button("New game", id="new")
+            yield Button("Archive", id="archive")
             yield Button("Settings", id="settings")
             yield Button("Open room", id="open")
             yield Button("Wake room", id="wake")
@@ -265,7 +364,7 @@ class SelfHostScreen(Screen):
         self.set_interval(1, self.refresh_state)
         self.query_one("#toggle", Button).focus()
         if self.initial_load:
-            self.load(self.initial_load)
+            self.new_game(self.initial_load)
 
     # --- state ---
 
@@ -298,7 +397,8 @@ class SelfHostScreen(Screen):
 
     def room_text(self, config: dict[str, typing.Any], running: bool) -> Text:
         if not self.info:
-            return Text("No game loaded. Ctrl+O loads a generated game (.zip / .archipelago).", style="dim")
+            return Text("No game hosted. Ctrl+N hosts a generated game (.zip / .archipelago), Ctrl+A an archived one.",
+                        style="dim")
         info = self.info
         players = ", ".join(f"{name} ({game})" for _, name, game in info["players"])
         text = Text.assemble((info["name"], "bold"), f"  loaded {info['loaded']}\n",
@@ -380,15 +480,15 @@ class SelfHostScreen(Screen):
         else:
             self.in_background("Starting (loading worlds)…", start)
 
-    def action_load(self) -> None:
+    def action_new_game(self) -> None:
         if self.busy:
             return
         from aplite.file_picker import FilePicker
         from aplite.webhost import output_folder
         picker = FilePicker("Self-host: pick a generated game", SUFFIXES, "host_dir", output_folder())
-        self.app.push_screen(picker, lambda path: path and self.load(str(path)))
+        self.app.push_screen(picker, lambda path: path and self.new_game(str(path)))
 
-    def load(self, path: str) -> None:
+    def new_game(self, path: str) -> None:
         def work() -> str:
             folder = selfhost.load_game(path)
             self.app.call_from_thread(setattr, self, "busy", "Loaded; restarting the server with it…")
@@ -398,6 +498,22 @@ class SelfHostScreen(Screen):
             return " ".join(filter(None, [f"Hosting {Path(path).stem}.", started,
                                           f"Previous room archived in {archived}" if archived else None]))
         self.in_background(f"Loading {Path(path).name}…", work)
+
+    def action_archive(self) -> None:
+        if not self.busy:
+            self.app.push_screen(ArchiveScreen(), lambda folder: folder and self.restore(folder))
+
+    def restore(self, folder: str) -> None:
+        """Host an archived room again: same ids (links, owner link) and its saved progress."""
+        name = (selfhost.room_info(folder) or {}).get("name", os.path.basename(folder))
+
+        def work() -> str:
+            selfhost.stop_server()
+            archived = selfhost.replace_current(selfhost.load_config(), folder)
+            started = start()
+            return " ".join(filter(None, [f"Hosting {name} again, progress kept.", started,
+                                          f"Previous room archived in {archived}" if archived else None]))
+        self.in_background(f"Restoring {name}…", work)
 
     def action_settings(self) -> None:
         def saved(config: dict[str, typing.Any]) -> None:
@@ -432,7 +548,8 @@ class SelfHostScreen(Screen):
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         event.stop()
-        {"toggle": self.action_toggle_server, "load": self.action_load, "settings": self.action_settings,
+        {"toggle": self.action_toggle_server, "new": self.action_new_game, "archive": self.action_archive,
+         "settings": self.action_settings,
          "open": self.action_open_room, "wake": self.action_wake}[event.button.id]()
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
@@ -464,10 +581,10 @@ class SelfHostApp(AppliteApp):
 
     def __init__(self, load: str | None = None) -> None:
         super().__init__()
-        self.load = load
+        self.initial_load = load
 
     def get_default_screen(self) -> Screen:
-        return SelfHostScreen(self.load)
+        return SelfHostScreen(self.initial_load)
 
 
 def run(*args: str) -> None:
