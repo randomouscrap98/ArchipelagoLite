@@ -16,7 +16,7 @@ from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
-from textual.screen import Screen
+from textual.screen import ModalScreen, Screen
 from textual.widgets import Button, Footer, Input, Label, RichLog, Static
 from textual.widgets.option_list import Option as ListOption
 
@@ -42,10 +42,19 @@ def ago(when: datetime.datetime) -> str:
 PATH_KEYS = {"cert": False, "key": False, "archive_dir": True}  # path settings: folder?
 
 
-class SettingsScreen(MasterDetailScreen):
-    """selfhost/config.yaml in the editors' layout (rows + editor + description), pushed over the Self-host screen:
-    Esc on the rows closes it."""
-    BINDINGS = [Binding("ctrl+s", "save", "Save"), Binding("ctrl+r", "reset", "Reset setting"),
+class SettingsScreen(MasterDetailScreen, ModalScreen):
+    """selfhost/config.yaml in the editors' layout (rows + editor + description), in a box over the dimmed Self-host
+    screen: Esc on the rows (or the footer's Back) closes it."""
+    CSS = MasterDetailScreen.CSS + """
+    SettingsScreen { align: center middle; background: $background 60%; }  /* dims Self-host, still visible */
+    #settings-box { width: 90%; height: auto; max-height: 90%; border: thick $primary; background: $surface;
+                    border-title-style: bold; }
+    #settings-box > Horizontal { height: auto; }
+    #settings-box #detail { height: auto; }
+    #settings-box #doc { height: auto; }
+    """
+    BINDINGS = [Binding("escape", "back_to_rows", "Back"),  # shown (clickable): editor -> rows -> Self-host
+                Binding("ctrl+s", "save", "Save"), Binding("ctrl+r", "reset", "Reset setting"),
                 Binding("ctrl+b", "browse", "Browse", show=False)]
 
     def __init__(self, saved: typing.Callable[[dict[str, typing.Any]], None]) -> None:
@@ -57,16 +66,19 @@ class SettingsScreen(MasterDetailScreen):
         self.name_width = max(map(len, selfhost.DESCRIPTIONS))
 
     def compose(self) -> ComposeResult:
-        with Horizontal():
-            yield Rows(id="rows")
-            with Vertical(id="detail"):
-                yield Vertical(id="editor")
-                with VerticalScroll(id="doc"):
-                    yield Static(id="doc-text")
+        with Vertical(id="settings-box"):
+            with Horizontal():
+                yield Rows(id="rows")
+                with Vertical(id="detail"):
+                    yield Vertical(id="editor")
+                    with VerticalScroll(id="doc"):
+                        yield Static(id="doc-text")
         yield Footer()
 
     def on_mount(self) -> None:
-        self.sub_title = selfhost.root("config.yaml")
+        box = self.query_one("#settings-box")
+        box.border_title = "Server settings"
+        box.border_subtitle = selfhost.root("config.yaml")
         self.show_rows([ListOption(self.row(key), id=key) for key in self.values])
         self.query_one("#rows", Rows).focus()
 
