@@ -196,8 +196,12 @@ def links(info: dict[str, typing.Any], base: str) -> dict[str, str]:
         "Room": f"{base}/room/{suuid(info['room'])}",
         "Multiworld tracker": f"{base}/tracker/{suuid(info['tracker'])}",
         "Sphere tracker": f"{base}/sphere_tracker/{suuid(info['tracker'])}",
-        "Owner link (open once in your browser for the room console)": f"{base}/session/{info['owner']}",
+        "Owner link (room page with its console; keep it to yourself)": f"{base}/owner/{info['owner']}",
     }
+
+
+def owner_link(info: dict[str, typing.Any], base: str) -> str:
+    return next(url for name, url in links(info, base).items() if name.startswith("Owner link"))
 
 
 def _db(folder: str | None = None) -> sqlite3.Connection:

@@ -392,7 +392,7 @@ class SelfHostScreen(Screen):
             server.update(Text.assemble(("○ Stopped", "bold"), ("  Ctrl+R starts it.", "dim")))
         self.query_one("#room", Static).update(self.room_text(config, running))
         self.query_one("#open", Button).disabled = bool(self.busy) or not (running and self.info)
-        self.query_one("#wake", Button).disabled = bool(self.busy) or not self.info
+        self.query_one("#wake", Button).disabled = bool(self.busy) or not (running and self.info)
         self.tail_log()
 
     def room_text(self, config: dict[str, typing.Any], running: bool) -> Text:
@@ -421,8 +421,9 @@ class SelfHostScreen(Screen):
             text.append(f"Game server: sleeping (no activity for {state['timeout'] // 60} min). "
                         "Opening the room page or Ctrl+W wakes it.\n", style="yellow")
         base = selfhost.base_url(config, self.status)
-        for name, url in selfhost.links(info, base).items():
-            text.append_text(Text.assemble(f"{name}: ", (url, f"link {url}"), "\n"))
+        url = selfhost.owner_link(info, base)  # the other pages are linked from the room page it opens
+        text.append_text(Text.assemble("Owner link (room page with its console; keep it to yourself):\n",
+                                       (url, f"link {url}"), "\n"))
         text.rstrip()
         return text
 
@@ -532,12 +533,13 @@ class SelfHostScreen(Screen):
         if not (self.info and self.status):
             return
         from aplite.desktop import open_path
-        url = selfhost.links(self.info, selfhost.base_url(selfhost.load_config(), self.status))["Room"]
+        # the owner link: the host's browser gets the room page with its console
+        url = selfhost.owner_link(self.info, selfhost.base_url(selfhost.load_config(), self.status))
         if not open_path(url):
             self.notify(f"No browser opener found; open {url}", timeout=10)
 
     def action_wake(self) -> None:
-        if self.info:
+        if self.info and self.status:
             selfhost.wake(self.info)
             self.refresh_state()
 

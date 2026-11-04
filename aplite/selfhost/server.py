@@ -32,11 +32,13 @@ if typing.TYPE_CHECKING:
 ALLOWED = {
     "static", "favicon", "host_room", "host_room_command", "display_log", "view_seed",
     "get_multiworld_tracker", "get_multiworld_sphere_tracker", "get_player_tracker", "get_generic_game_tracker",
-    "download_patch", "download_spoiler", "download_slot_file", "show_session", "set_session",
+    "download_patch", "download_spoiler", "download_slot_file",
     "api.room_info", "api.tracker_data", "api.static_tracker_data", "api.tracker_slot_data",
     "api.get_datapackage", "api.get_datapackage_by_checksum", "api.get_datapackage_checksums",
 }
 """Endpoints served. The api ones are what external trackers read; names checked against the app at startup."""
+BLOCKED = {"show_session", "set_session"}
+"""404 rather than redirected to archipelago.gg (that would hand it the owner id): /owner/<id> replaces them."""
 
 
 def webhost_config(config: dict[str, typing.Any]) -> dict[str, typing.Any]:
@@ -73,19 +75,25 @@ def create_app(config: dict[str, typing.Any], serving: bool) -> Flask:
 
 
 def restrict(app: Flask) -> None:
-    from flask import abort, redirect, request
-    missing = ALLOWED - set(app.view_functions)
+    from flask import abort, redirect, request, session
+    missing = (ALLOWED | BLOCKED) - set(app.view_functions)
     if missing:
-        logging.warning(f"Allowed endpoints that don't exist (renamed upstream?): {sorted(missing)}")
+        logging.warning(f"Allowed/blocked endpoints that don't exist (renamed upstream?): {sorted(missing)}")
 
     @app.before_request
     def only_the_room():
+        info = selfhost.room_info()
         if request.path == "/":
-            info = selfhost.room_info()
             return redirect(f"/room/{selfhost.suuid(info['room'])}") if info else ("No game is hosted here.", 404)
+        if request.path.startswith("/owner/"):
+            # the owner link: this browser's session becomes the room's owner (console, log), then the room page
+            if not info or request.path != f"/owner/{info['owner']}":
+                abort(404)
+            session["_id"] = uuid.UUID(info["owner"])
+            return redirect(f"/room/{selfhost.suuid(info['room'])}")
         if request.endpoint in ALLOWED:
             return None
-        if request.endpoint is None or request.method != "GET":
+        if request.endpoint is None or request.endpoint in BLOCKED or request.method != "GET":
             abort(404)
         if any(isinstance(value, uuid.UUID) for value in (request.view_args or {}).values()):
             abort(404)  # pages about other seeds/rooms (or new rooms) don't exist here
