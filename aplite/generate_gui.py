@@ -121,6 +121,7 @@ class GenerateModal(ModalScreen[None]):
             with Horizontal(id="buttons"):
                 yield Button("Cancel", id="cancel", variant="error")
                 yield Button("Upload to Archipelago", id="upload", variant="primary")
+                yield Button("Host here", id="selfhost")
                 yield Button("Close", id="close", disabled=True)
 
     def on_mount(self) -> None:
@@ -134,6 +135,7 @@ class GenerateModal(ModalScreen[None]):
             text=True, encoding="utf-8", errors="replace", bufsize=1)
         threading.Thread(target=self.read_output, daemon=True).start()
         self.query_one("#upload", Button).display = False  # once there's something to upload
+        self.query_one("#selfhost", Button).display = False
         self.query_one("#cancel", Button).focus()
 
     def read_output(self) -> None:
@@ -177,6 +179,7 @@ class GenerateModal(ModalScreen[None]):
             self.query_one("#status", Label).update("Done")
             log.write(Text(f"Generated: {self.archive}", style="bold green"))
             self.query_one("#upload", Button).display = True
+            self.query_one("#selfhost", Button).display = True
         elif self.cancelled:
             self.query_one("#status", Label).update("Cancelled")
         else:
@@ -197,6 +200,9 @@ class GenerateModal(ModalScreen[None]):
             from aplite.webhost import UploadModal
             # afterwards Close, not Upload again
             self.app.push_screen(UploadModal(Path(self.archive)), lambda _: self.query_one("#close", Button).focus())
+        elif event.button.id == "selfhost":
+            from aplite.selfhost.app import SelfHostScreen
+            self.app.push_screen(SelfHostScreen(self.archive))
         else:
             self.action_close()
 

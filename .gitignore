@@ -51,6 +51,7 @@ EnemizerCLI/
 /VC_redist.x64.exe
 /host.yaml
 /aplite.yaml
+/selfhost/
 /options.yaml
 /config.yaml
 /logs/
