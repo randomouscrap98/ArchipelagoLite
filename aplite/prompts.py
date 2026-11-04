@@ -68,7 +68,28 @@ def ask(title: str, folder: bool, suffixes: tuple[str, ...], suggest: str) -> st
     return answer
 
 
+RELAY_ENV = "APLITE_PROMPT_RELAY"
+"""Set for a child whose stdin/stdout are pipes to an aplite app (Generate GUI): prompts are relayed to it."""
+RELAY_MARK = "\x1eaplite-ask "
+"""Starts a relayed prompt's line on stdout; the answer comes back as one line on stdin (empty: cancelled)."""
+
+
+def _relay(title: str, folder: bool, suffixes: tuple[str, ...], suggest: str) -> str | None:
+    import json
+    sys.stdout.write(RELAY_MARK + json.dumps([title, folder, suggest, suffixes]) + "\n")
+    sys.stdout.flush()
+    return sys.stdin.readline().strip() or None
+
+
+def relay_request(line: str) -> tuple[str, bool, str, list[str]]:
+    import json
+    title, folder, suggest, suffixes = json.loads(line)
+    return title, folder, suggest, suffixes
+
+
 def _ask(title: str, folder: bool, suffixes: tuple[str, ...], suggest: str) -> str | None:
+    if os.environ.get(RELAY_ENV):
+        return _relay(title, folder, suffixes, suggest)
     app = active_app
     if app is None:
         return _pick_or_prompt(title, folder, suffixes, suggest)

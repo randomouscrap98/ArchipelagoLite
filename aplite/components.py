@@ -134,8 +134,8 @@ def override_for(component: Component) -> Override:
 
 def extra_components() -> list[Component]:
     """aplite's own launcher entries."""
-    from aplite import web_options
-    return [web_options.component()]
+    from aplite import generate_gui, web_options
+    return [web_options.component(), generate_gui.component()]
 
 
 # running
