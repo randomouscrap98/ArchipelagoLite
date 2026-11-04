@@ -126,6 +126,43 @@ for folder in (folder for folder in (user_folder, local_folder) if folder):
             elif entry.is_file() and entry.name.endswith(".apworld"):
                 world_sources.append(WorldSource(file_name, is_zip=True, relative=relative))
 
+# aplite: a user .apworld newer than a core world folder replaces it (betas of core worlds). That is what official
+# builds do: setup.py ships most core worlds as .apworlds, and the highest world_version of a game loads.
+FOLDER_ONLY_WORLDS = {"A Link to the Past", "Adventure", "Archipelago", "Lufia II Ancient Cave", "Meritous",
+                      "Ocarina of Time", "Overcooked! 2", "Raft", "Super Mario 64", "VVVVVV", "Wargroove"}
+"""setup.py's non_apworlds: still folders in official builds, so a user .apworld never replaces them there."""
+
+
+def _drop_replaced_folders() -> None:
+    newest: dict[str, Version] = {}
+    for source in world_sources:
+        if source.is_zip and not source.relative:
+            container = APWorldContainer(source.resolved_path)
+            try:
+                container.read()
+            except Exception:
+                continue  # reported when the apworlds are loaded
+            if not container.game or not container.world_version or \
+                    (container.minimum_ap_version and container.minimum_ap_version > version_tuple) or \
+                    (container.maximum_ap_version and container.maximum_ap_version < version_tuple):
+                continue
+            newest[container.game] = max(newest.get(container.game, Version(0, 0, 0)), container.world_version)
+    for source in [source for source in world_sources if not source.is_zip and source.relative]:
+        try:
+            with open(os.path.join(source.resolved_path, "archipelago.json"), encoding="utf-8") as manifest_file:
+                manifest = json.load(manifest_file)
+        except (OSError, ValueError):
+            continue
+        game = manifest.get("game")
+        if game in newest and game not in FOLDER_ONLY_WORLDS and \
+                newest[game] > tuplize_version(manifest.get("world_version", "0.0.0")):
+            world_sources.remove(source)
+            logging.warning(f"Not loading core world {source.path} ({manifest.get('world_version', 'no version')}): "
+                         f"a newer {game} .apworld ({'.'.join(map(str, newest[game]))}) is installed.")
+
+
+_drop_replaced_folders()
+
 # import all submodules to trigger AutoWorldRegister
 logger.info("Processing found worlds")
 world_sources.sort()
