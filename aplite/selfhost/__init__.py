@@ -52,7 +52,8 @@ DESCRIPTIONS: dict[str, str] = {
     "bind": "Website listen address (0.0.0.0 = everywhere, 127.0.0.1 = this machine / reverse proxy only)",
     "port": "Website port",
     "public_address": "Host name or IP players connect to (empty = detect the public IP)",
-    "public_url": "Website URL for links, e.g. behind a reverse proxy (empty = http://address:port)",
+    "public_url": "Website URL, e.g. behind a reverse proxy; a path (https://host/archipelago) also prefixes the "
+                  "website's links (empty = http://address:port)",
     "room_count": "How many games can be active (hosted) at once; each needs its own game port",
     "game_port": "First game port: the games use game_port up to game_port + room_count - 1 (forward those and the "
                  "website port)",

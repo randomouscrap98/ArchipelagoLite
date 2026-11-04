@@ -66,6 +66,7 @@ def load() -> list:
         import worlds.LauncherComponents as LauncherComponents
         LauncherComponents.run_in_process = True  # core hook: clients need this terminal's stdin
         LauncherComponents.components.extend(components.extra_components())
+        components.rename_old_host(LauncherComponents.components)
         _loaded = True
     import worlds.LauncherComponents as LauncherComponents
     return LauncherComponents.components
@@ -117,7 +118,7 @@ def main() -> None:
         return
 
     from worlds.LauncherComponents import identify
-    file, component = identify(target)
+    file, component = identify(components.RENAMED.get(target, target))
     if not component:
         sys.exit(f"Unknown component, patch or game: {target}")  # Launcher.main would open the kivy GUI
     run(component, (*((file,) if file else ()), *component_args), come_back=False)

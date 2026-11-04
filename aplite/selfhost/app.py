@@ -49,9 +49,7 @@ class SettingsScreen(MasterDetailScreen, ModalScreen):
     SettingsScreen { align: center middle; background: $background 60%; }  /* dims Self-host, still visible */
     #settings-box { width: 90%; height: auto; max-height: 90%; border: thick $primary; background: $surface;
                     border-title-style: bold; }
-    #settings-box > Horizontal { height: auto; }
-    #settings-box #detail { height: auto; }
-    #settings-box #doc { height: auto; }
+    #settings-box > Horizontal { height: auto; }  /* fixed to the rows' height in on_mount: long help scrolls */
     """
     BINDINGS = [Binding("escape", "back_to_rows", "Back"),  # shown (clickable): editor -> rows -> Self-host
                 Binding("ctrl+s", "save", "Save"), Binding("ctrl+r", "reset", "Reset setting"),
@@ -77,6 +75,7 @@ class SettingsScreen(MasterDetailScreen, ModalScreen):
 
     def on_mount(self) -> None:
         box = self.query_one("#settings-box")
+        box.query_one(Horizontal).styles.height = len(self.values) + 2  # the rows and their border
         box.border_title = "Server settings"
         box.border_subtitle = selfhost.root("config.yaml")
         self.show_rows([ListOption(self.row(key), id=key) for key in self.values])
@@ -221,8 +220,9 @@ class SettingsScreen(MasterDetailScreen, ModalScreen):
 APPLY_NOTE = "Changes apply when the server (re)starts."
 
 
-class GamesScreen(ModalScreen[None]):
-    """Every loaded game (newest first) with its details; activate / deactivate / delete them here."""
+class GamesScreen(ModalScreen[typing.Optional[str]]):
+    """Every loaded game (newest first) with its details; activate / deactivate / delete them here. Dismisses with
+    an active game's room id to show it on the main screen (Show), else None."""
     CSS = """
     GamesScreen { align: center middle; }
     #games-box { width: 90%; height: 80%; border: thick $primary; background: $surface; border-title-style: bold; }
@@ -247,6 +247,7 @@ class GamesScreen(ModalScreen[None]):
                 with VerticalScroll(id="games-detail"):
                     yield Static(id="games-text")
             with Horizontal(id="games-buttons"):
+                yield Button("Show", id="games-show")
                 yield Button("Activate", id="games-toggle", variant="primary")
                 yield Button("Delete", id="games-delete", variant="error")
                 yield Button("Back", id="games-back")
@@ -291,11 +292,13 @@ class GamesScreen(ModalScreen[None]):
         toggle, delete = self.query_one("#games-toggle", Button), self.query_one("#games-delete", Button)
         toggle.disabled = delete.disabled = info is None
         if info is None:
+            self.query_one("#games-show", Button).disabled = True
             self.query_one("#games-text", Static).update(Text(
                 "No games yet. New game (Ctrl+N) on the main screen adds one.", style="dim"))
             return
         active = info["room"] in selfhost.active()
         toggle.label = "Deactivate" if active else "Activate"
+        self.query_one("#games-show", Button).disabled = not active
         text = Text.assemble((info["name"] + "\n", "bold"),
                              ("Active (hosted)\n", "green") if active else ("Inactive (kept, not hosted)\n", "dim"),
                              f"Loaded {info['loaded']}\n")
@@ -309,12 +312,20 @@ class GamesScreen(ModalScreen[None]):
         self.query_one("#games-text", Static).update(text)
 
     def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
-        event.stop()
-        self.toggle()
+        event.stop()  # Enter / click only pick the game; the buttons act on it
+
+    def show_game(self) -> None:
+        info = self.selected()
+        if info is None:
+            return
+        if info["room"] not in selfhost.active():
+            self.notify(f"{info['name']} isn't active: Activate it first.", severity="warning")
+            return
+        self.dismiss(info["room"])
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         event.stop()
-        {"games-toggle": self.toggle, "games-delete": self.action_delete,
+        {"games-show": self.show_game, "games-toggle": self.toggle, "games-delete": self.action_delete,
          "games-back": self.action_close}[event.button.id]()
 
     def toggle(self) -> None:
@@ -356,6 +367,9 @@ SCREEN_CSS = """
 #server, #room { padding: 0 1; height: auto; }
 #buttons { height: auto; }
 #buttons Button { margin-right: 1; }
+#room-bar { height: 1; padding: 0 1; }
+#room-bar Button { margin-right: 2; }
+#room-loaded { padding-left: 1; }
 #console { height: 1fr; border: tall $border-blurred; }
 #console:focus { border: tall $border; }
 """
@@ -389,10 +403,12 @@ class SelfHostScreen(Screen):
             yield Button("New game", id="new")
             yield Button("Games", id="games")
             yield Button("Settings", id="settings")
-            yield Button("Open room", id="open")
-            yield Button("Wake room", id="wake")
         yield Label("Room", id="room-heading", classes="heading")
         yield Tabs(id="rooms")
+        with Horizontal(id="room-bar"):  # the selected game's own actions
+            yield Button("Open room ^B", id="open", compact=True)
+            yield Button("Wake room ^W", id="wake", compact=True)
+            yield Label(id="room-loaded")
         yield Static(id="room")
         yield Label("Server console", classes="heading")
         yield RichLog(id="console", wrap=True, markup=False)
@@ -433,6 +449,11 @@ class SelfHostScreen(Screen):
         else:
             server.update(Text.assemble(("○ Stopped", "bold"), ("  Ctrl+R starts it.", "dim")))
         self.query_one("#room", Static).update(self.room_text(config, running))
+        self.query_one("#room-bar").display = self.info is not None
+        if self.info:
+            self.query_one("#room-loaded", Label).update(Text(f"loaded {self.info['loaded']}", style="dim"))
+        # without tabs (one game) the heading names it
+        self.query_one("#room-heading", Label).update(f"Room: {self.info['name']}" if self.info else "Room")
         self.query_one("#open", Button).disabled = bool(self.busy) or not (running and self.info)
         self.query_one("#wake", Button).disabled = bool(self.busy) or not (running and self.info)
         self.tail_log()
@@ -485,8 +506,7 @@ class SelfHostScreen(Screen):
                         "activates one loaded before.", style="dim")
         info = self.info
         players = ", ".join(f"{name} ({game})" for _, name, game in info["players"])
-        text = Text.assemble((info["name"], "bold"), f"  loaded {info['loaded']}\n",
-                             f"{len(info['players'])} players: {players}\n")
+        text = Text(f"{len(info['players'])} players: {players}\n")
         state = selfhost.room_state(info)
         address = config["public_address"] or (self.status or {}).get("host_address") or "localhost"
         if not running:
@@ -589,7 +609,8 @@ class SelfHostScreen(Screen):
 
     def action_games(self) -> None:
         if not self.busy:
-            self.app.push_screen(GamesScreen(running=bool(self.status)), lambda _: self.refresh_state())
+            self.app.push_screen(GamesScreen(running=bool(self.status)),
+                                 lambda room: self.select(room) if room else self.refresh_state())
 
     def action_settings(self) -> None:
         def saved(config: dict[str, typing.Any]) -> None:

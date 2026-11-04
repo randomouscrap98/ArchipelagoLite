@@ -76,7 +76,7 @@ def create_app(config: dict[str, typing.Any], serving: bool) -> Flask:
 
 
 def restrict(app: Flask) -> None:
-    from flask import abort, redirect, render_template_string, request, session
+    from flask import abort, redirect, render_template_string, request, session, url_for
     missing = (ALLOWED | BLOCKED) - set(app.view_functions)
     if missing:
         logging.warning(f"Allowed/blocked endpoints that don't exist (renamed upstream?): {sorted(missing)}")
@@ -91,7 +91,7 @@ def restrict(app: Flask) -> None:
             if not info:
                 abort(404)
             session["_id"] = uuid.UUID(info["owner"])
-            return redirect(f"/room/{selfhost.suuid(info['room'])}")
+            return redirect(url_for("host_room", room=uuid.UUID(info["room"])))
         if request.endpoint == "host_room" and str(request.view_args["room"]) not in selfhost.active():
             return not_hosted(request.view_args["room"])
         if request.endpoint in ALLOWED:
@@ -106,8 +106,8 @@ def restrict(app: Flask) -> None:
     def index():
         hosted = [info for room in selfhost.active() if (info := selfhost.game(room))]
         if len(hosted) == 1:
-            return redirect(f"/room/{selfhost.suuid(hosted[0]['room'])}")
-        return render_template_string(INDEX_PAGE, games=hosted, suuid=selfhost.suuid)
+            return redirect(url_for("host_room", room=uuid.UUID(hosted[0]["room"])))
+        return render_template_string(INDEX_PAGE, games=hosted, UUID=uuid.UUID)
 
     def not_hosted(room: uuid.UUID):
         """An inactive game: its tracker and download pages still work, its room page would wait for a port."""
@@ -120,11 +120,41 @@ def restrict(app: Flask) -> None:
             info = selfhost.game(str(room)) or {"name": "This game"}
             slots = sorted((slot.player_id, slot.player_name, slot.game, slot.data is not None)
                            for slot in found.seed.slots)
-            return render_template_string(NOT_HOSTED_PAGE, name=info["name"], room=found, slots=slots,
-                                          suuid=selfhost.suuid)
+            return render_template_string(NOT_HOSTED_PAGE, name=info["name"], room=found, slots=slots)
 
     # first, before upstream's session handler
     app.before_request_funcs[None].insert(0, app.before_request_funcs[None].pop())
+
+
+def mount_at_url_path(app: Flask, config: dict[str, typing.Any]) -> None:
+    """Behind a reverse proxy on a sub-path (public_url https://host/archipelago): links get that prefix
+    (SCRIPT_NAME, which url_for uses), and requests work whether the proxy strips the prefix or passes it on. Taken
+    from our own config, not a request header, so clients can't change the links (pages are cached)."""
+    from urllib.parse import urlparse
+    prefix = urlparse(config["public_url"]).path.rstrip("/")
+    if not prefix:
+        return
+    wsgi_app = app.wsgi_app
+
+    def mounted(environ, start_response):
+        path = environ.get("PATH_INFO", "")
+        if path == prefix or path.startswith(prefix + "/"):
+            environ["PATH_INFO"] = path[len(prefix):] or "/"
+        environ["SCRIPT_NAME"] = prefix
+        return wsgi_app(environ, start_response)
+
+    app.wsgi_app = mounted
+    # upstream's page header (header/baseHeader.html) has hardcoded root links (logo, games, faq...): prefix those
+    import re
+    root_link = re.compile(r'(\s(?:href|src|action)=")/(?!/|' + re.escape(prefix[1:]) + r'(?:/|"))')
+
+    @app.after_request
+    def prefix_root_links(response):  # runs before Flask-Compress's (registered earlier)
+        if response.mimetype == "text/html" and not response.direct_passthrough:
+            response.set_data(root_link.sub(rf"\1{prefix}/", response.get_data(as_text=True)))
+        return response
+
+    logging.info(f"Links use the URL path {prefix} (from public_url)")
 
 
 def only_active(autolauncher: types.ModuleType) -> None:
@@ -158,7 +188,8 @@ INDEX_PAGE = """
         {% if games %}
         <ul>
             {% for game in games %}
-            <li><a href="/room/{{ suuid(game.room) }}">{{ game.name }}</a> ({{ game.players|length }} players)</li>
+            <li><a href="{{ url_for('host_room', room=UUID(game.room)) }}">{{ game.name }}</a>
+                ({{ game.players|length }} players)</li>
             {% endfor %}
         </ul>
         {% else %}
@@ -271,6 +302,7 @@ def serve() -> None:
         only_active(autolauncher)
         autolauncher.autohost(app.config)
         from waitress import create_server
+        mount_at_url_path(app, config)
         server = create_server(app, host=config["bind"], port=config["port"], threads=10)
         write_status(serving=True, host_address=app.config["HOST_ADDRESS"], bind=config["bind"],
                      port=config["port"])

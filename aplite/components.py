@@ -134,6 +134,19 @@ def override_for(component: Component) -> Override:
     return table.get(component.func) or table.get(component.script_name) or Override()
 
 
+RENAMED = {"Host": "Host (old)"}
+"""Upstream component names aplite shows differently; the old names still work for `python -m aplite <name>`."""
+
+
+def rename_old_host(components: list[Component]) -> None:
+    """Upstream's Host is only the game server; Self-host is the full room (website pages too)."""
+    for component in components:
+        if component.script_name == "MultiServer" and component.display_name == "Host":
+            component.display_name = RENAMED["Host"]
+            component.description = ("Old, limited hosting: only the game server for a generated multiworld, in this "
+                                     "terminal. No room page, trackers or downloads; Self-host has those.")
+
+
 def extra_components() -> list[Component]:
     """aplite's own launcher entries."""
     from aplite import generate_gui, web_options, webhost
