@@ -115,7 +115,9 @@ def overrides() -> dict[typing.Callable | str, Override]:
     worlds.LauncherComponents loads every world."""
     from worlds.LauncherComponents import export_datapackage, generate_yamls, install_apworld, open_host_yaml, \
         open_patch
+    from aplite import webhost
     return {
+        webhost.run: Override(picker=webhost.picker, picked=lambda component, path: (component, (str(path),))),
         open_patch: Override(run=_open_patch, picker=_patch_picker, picked=_patch_picked,
                              returns=True),  # the patch's client comes back to the launcher (user request)
         install_apworld: Override(picker=_apworld_picker, picked=lambda component, path: (component, (str(path),)),
@@ -134,8 +136,8 @@ def override_for(component: Component) -> Override:
 
 def extra_components() -> list[Component]:
     """aplite's own launcher entries."""
-    from aplite import generate_gui, web_options
-    return [web_options.component(), generate_gui.component()]
+    from aplite import generate_gui, web_options, webhost
+    return [web_options.component(), generate_gui.component(), webhost.component()]
 
 
 # running

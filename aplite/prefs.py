@@ -14,6 +14,7 @@ if typing.TYPE_CHECKING:
 
 DEFAULTS: dict[str, typing.Any] = {
     "theme": "textual-dark",
+    "webhost_url": "https://archipelago.gg",  # Host on Archipelago uploads here (a self-hosted WebHost works too)
 }
 
 _prefs: dict[str, typing.Any] | None = None

@@ -119,6 +119,7 @@ class GenerateModal(ModalScreen[None]):
             yield RichLog(id="gen-log", wrap=True, markup=False)
             with Horizontal(id="buttons"):
                 yield Button("Cancel", id="cancel", variant="error")
+                yield Button("Upload to Archipelago", id="upload", variant="primary")
                 yield Button("Close", id="close", disabled=True)
 
     def on_mount(self) -> None:
@@ -131,6 +132,7 @@ class GenerateModal(ModalScreen[None]):
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env,
             text=True, encoding="utf-8", errors="replace", bufsize=1)
         threading.Thread(target=self.read_output, daemon=True).start()
+        self.query_one("#upload", Button).display = False  # once there's something to upload
         self.query_one("#cancel", Button).focus()
 
     def read_output(self) -> None:
@@ -173,6 +175,7 @@ class GenerateModal(ModalScreen[None]):
             self.query_one(ProgressBar).progress = len(STAGES)
             self.query_one("#status", Label).update("Done")
             log.write(Text(f"Generated: {self.archive}", style="bold green"))
+            self.query_one("#upload", Button).display = True
         elif self.cancelled:
             self.query_one("#status", Label).update("Cancelled")
         else:
@@ -182,12 +185,16 @@ class GenerateModal(ModalScreen[None]):
         self.query_one("#cancel", Button).disabled = True
         close = self.query_one("#close", Button)
         close.disabled = False
-        close.focus()
+        upload = self.query_one("#upload", Button)
+        (upload if upload.display else close).focus()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         event.stop()
         if event.button.id == "cancel":
             self.stop()
+        elif event.button.id == "upload":
+            from aplite.webhost import UploadModal
+            self.app.push_screen(UploadModal(Path(self.archive)))
         else:
             self.action_close()
 
