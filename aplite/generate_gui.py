@@ -38,7 +38,8 @@ STAGES = ("Generating for", "Creating MultiWorld.", "Creating Items.", "Calculat
 """Log lines (Generate.py / Main.py) that mark progress, in order; the bar moves to the last one seen."""
 ARCHIVE = "Creating final archive at "
 LIST_GAMES = ("import json; from aplite import bytecode_cache; bytecode_cache.install(); "
-              "from worlds.AutoWorld import AutoWorldRegister; print(json.dumps(sorted(AutoWorldRegister.world_types)))")
+              "from worlds.AutoWorld import AutoWorldRegister; "
+              "print(json.dumps(sorted(AutoWorldRegister.world_types)))")
 """A fresh process's installed games (this one's loaded worlds can't be reloaded); the JSON is its last line."""
 
 
@@ -194,7 +195,8 @@ class GenerateModal(ModalScreen[None]):
             self.stop()
         elif event.button.id == "upload":
             from aplite.webhost import UploadModal
-            self.app.push_screen(UploadModal(Path(self.archive)))
+            # afterwards Close, not Upload again
+            self.app.push_screen(UploadModal(Path(self.archive)), lambda _: self.query_one("#close", Button).focus())
         else:
             self.action_close()
 
@@ -231,7 +233,8 @@ class GenerateScreen(Screen):
                 yield Label("Files: Enter adds a YAML", classes="heading")
                 tree = FilteredTree(self.start, SUFFIXES)
                 yield tree
-                yield PathInput(placeholder="Path to a YAML or folder. Enter opens, Ctrl+Space completes.", shows=tree.shows)
+                yield PathInput(placeholder="Path to a YAML or folder. Enter opens, Ctrl+Space completes.",
+                                shows=tree.shows)
             with Vertical(id="right"):
                 yield Label("YAMLs to generate: Delete removes", classes="heading")
                 yield OptionList(id="yamls")
