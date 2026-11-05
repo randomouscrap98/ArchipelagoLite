@@ -17,7 +17,7 @@ import sys
 import typing
 
 from rich.segment import Segment
-from textual import _border, _styles_cache, keys
+from textual import _border, _styles_cache, command, keys
 from textual.renderables.bar import Bar
 from textual.scrollbar import ScrollBarRender
 from textual.content import Content
@@ -47,7 +47,7 @@ BLURRED = {"fancy": (("▗", "▄", "▖"), ("▐", " ", "▌"), ("▝", "▀", 
 SCROLLBAR_ENDS = {"fancy": (["▄", " "], ["▌", " "]), "simple": ([" "], [" "])}
 """ScrollBarRender's vertical and horizontal bars: half a cell of smoothness, or none."""
 SYMBOLS = {"favorite": ("♥", "*"), "connected": ("●", "+"), "disconnected": ("○", "-"), "exists": ("√", "ok"),
-           "folder": ("►", ">"), "open folder": ("▼", "v")}
+           "folder": ("►", ">"), "open folder": ("▼", "v"), "search": ("►", ">")}
 """name: (fancy, simple). Fancy ones are in conhost's fonts but missing from some Linux tty fonts."""
 
 UNSAFE = {name for name in _border.BORDER_CHARS if name not in SAFE_BORDERS}
@@ -132,6 +132,9 @@ def _install() -> None:
     Bar.BAR = Bar.HALF_BAR_LEFT = Bar.HALF_BAR_RIGHT = "─"
     ToggleButton._button = property(_checkbox)
     DirectoryTree.ICON_FILE = "  "  # emoji, like its folder icons (set by apply)
+    command.SearchIcon.render = lambda self: symbol("search")  # command palette's 🔎
+    # its CSS hard-codes black (invisible on dark themes; the emoji ignored it)
+    command.SearchIcon.DEFAULT_CSS = command.SearchIcon.DEFAULT_CSS.replace("color: #000;", "color: $foreground;")
     # footer key names
     keys.KEY_DISPLAY_ALIASES.update(backspace="bksp", enter="enter")
 

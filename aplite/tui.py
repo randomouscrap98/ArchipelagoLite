@@ -17,7 +17,7 @@ from textual.widgets.input import Selection
 from textual.widgets.tabbed_content import ContentTab
 from textual.widgets import Button, DataTable, Footer, Input, RichLog, Static, TabbedContent, TabPane
 
-from aplite import glyphs, prompts, tracker
+from aplite import colors, glyphs, prompts, tracker
 from aplite.nav import AppliteApp, on_app_thread, terminal_handlers
 
 if typing.TYPE_CHECKING:
@@ -28,18 +28,19 @@ STATE_REFRESH = 0.5
 
 @functools.cache
 def hint_status_display() -> tuple[dict[int, str], dict[int, str], dict[int, int]]:
-    """(names, colors, sort order; higher first) per hint status. Copied from kvui.py (status_names, status_colors,
-    status_sort_weights), since importing kvui loads kivy: keep in sync when upstream changes them. Built on first use
-    because importing NetUtils takes ~150ms, which the launcher shouldn't pay."""
+    """(names, color roles, sort order; higher first) per hint status. Names and order copied from kvui.py
+    (status_names, status_sort_weights), since importing kvui loads kivy: keep in sync when upstream changes them.
+    Built on first use because importing NetUtils takes ~150ms, which the launcher shouldn't pay."""
     from NetUtils import HintStatus
     names = {HintStatus.HINT_FOUND: "Found", HintStatus.HINT_UNSPECIFIED: "Unspecified",
              HintStatus.HINT_NO_PRIORITY: "No Priority", HintStatus.HINT_AVOID: "Avoid",
              HintStatus.HINT_PRIORITY: "Priority"}
-    colors = {HintStatus.HINT_FOUND: "green", HintStatus.HINT_UNSPECIFIED: "white",
-              HintStatus.HINT_NO_PRIORITY: "cyan", HintStatus.HINT_AVOID: "salmon", HintStatus.HINT_PRIORITY: "plum"}
+    roles = {HintStatus.HINT_FOUND: "hint_found", HintStatus.HINT_UNSPECIFIED: "hint_unspecified",
+             HintStatus.HINT_NO_PRIORITY: "hint_no_priority", HintStatus.HINT_AVOID: "hint_avoid",
+             HintStatus.HINT_PRIORITY: "hint_priority"}
     order = {HintStatus.HINT_FOUND: 0, HintStatus.HINT_UNSPECIFIED: 1, HintStatus.HINT_NO_PRIORITY: 2,
              HintStatus.HINT_AVOID: 3, HintStatus.HINT_PRIORITY: 4}
-    return names, colors, order
+    return names, roles, order
 
 
 ARCHIPELAGO_LOGGERS = {"Client", "StreamLog"}
@@ -277,7 +278,7 @@ class ClientApp(AppliteApp):
             return
         self._hints_snapshot = [dict(hint) for hint in hints]
         from NetUtils import HintStatus
-        names, colors, order = hint_status_display()
+        names, roles, order = hint_status_display()
 
         def render(node: dict) -> Text:
             return Text.from_ansi(ctx.jsontotextparser.handle_node(node))
@@ -292,7 +293,8 @@ class ClientApp(AppliteApp):
         table.clear()
         for hint in sorted(hints, key=lambda h: order.get(status_of(h), 0), reverse=True):
             status = status_of(hint)
-            status_text = Text(names.get(status, "Unknown"), style=colors.get(status, "red"))
+            status_text = Text(names.get(status, "Unknown"),
+                               style=colors.style(roles[status]) if status in roles else "red")
             if status != HintStatus.HINT_FOUND and ctx.slot_concerns_self(hint["receiving_player"]):
                 status_text.stylize("underline")
             table.add_row(
@@ -301,7 +303,7 @@ class ClientApp(AppliteApp):
                         "player": hint["receiving_player"]}),
                 render({"type": "player_id", "text": hint["finding_player"]}),
                 render({"type": "location_id", "text": hint["location"], "player": hint["finding_player"]}),
-                Text(hint["entrance"], style="blue") if hint["entrance"] else Text("Vanilla"),
+                Text(hint["entrance"], style=colors.style("entrance")) if hint["entrance"] else Text("Vanilla"),
                 status_text,
             )
         if table.row_count:
@@ -373,6 +375,8 @@ async def console_loop(ctx: CommonContext) -> None:
         return
     setattr(ctx, RUNNING, True)
     log_buffer.attach(replace_terminal=True)
+    upstream_parser = ctx.jsontotextparser
+    ctx.jsontotextparser = colors.make_parser(ctx)  # role markers; only RoleFilter in a running app reads them
     app = ClientApp(ctx)
 
     async def watch_exit() -> None:
@@ -385,6 +389,7 @@ async def console_loop(ctx: CommonContext) -> None:
             await app.run_async()
     finally:
         watcher.cancel()
+        ctx.jsontotextparser = upstream_parser
         log_buffer.detach()
         await _release_input_requests(ctx)
         ctx.exit_event.set()
