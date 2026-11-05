@@ -1,8 +1,6 @@
 """Theme Explorer (Options menu): every client color role with its dark/light color, a preview, and a picker."""
 from __future__ import annotations
 
-import colorsys
-
 from rich.style import Style
 from rich.text import Text
 from textual import on
@@ -17,8 +15,28 @@ from aplite import colors
 BACKGROUND = {"dark": "#0C0C0C", "light": "#F7F7F7"}
 """Picker preview backgrounds (Textual's dark / light ANSI palette backgrounds)."""
 SAMPLE = " Sample Text "
-HUES = 12
-LIGHTNESS = (0.35, 0.5, 0.65, 0.8)
+ENDESGA_64 = (
+    "FF0040 131313 1B1B1B 272727 3D3D3D 5D5D5D 858585 B4B4B4",
+    "FFFFFF C7CFDD 92A1B9 657392 424C6E 2A2F4E 1A1932 0E071B",
+    "1C121C 391F21 5D2C28 8A4836 BF6F4A E69C69 F6CA9F F9E6CF",
+    "EDAB50 E07438 C64524 8E251D FF5000 ED7614 FFA214 FFC825",
+    "FFEB57 D3FC7E 99E65F 5AC54F 33984B 1E6F50 134C4C 0C2E44",
+    "00396D 0069AA 0098DC 00CDF9 0CF1FF 94FDFF FDD2ED F389F5",
+    "DB3FFD 7A09FA 3003D9 0C0293 03193F 3B1443 622461 93388F",
+    "CA52C9 C85086 F68187 F5555D EA323C C42430 891E2B 571C27",
+)
+BLK_NX64 = (
+    "000000 12173D 293268 464B8C 6B74B2 909EDD C1D9F2 E3EFFA",
+    "A293C4 7B6AA5 53427F 3C2C68 431E66 5D2F8C 854CBF B483EF",
+    "8CFF9B 42BC7F 22896E 14665B 0F4A4C 0A2A33 1D1A59 322D89",
+    "354AB2 3E83D1 50B9EB 8CDAFF 53A1AD 3B768F 21526B 163755",
+    "008782 00AAA5 27D3CB 78FAE6 CDC599 988F64 5C5D41 353F23",
+    "919B45 AFD370 FFE091 FFAA6E FF695A B23C40 FF6675 DD3745",
+    "A52639 721C2F B22E69 E54286 FF6EAF FFA5D5 FFD3AD CC817A",
+    "895654 61393B 3F1F3C 723352 994C69 C37289 F29FAA FFCCD0",
+)
+"""Picker palettes (Endesga 64, BLK NX64), 8 colors per line as published: shown side by side, line for line.
+NX64's FFFFFF (also in Endesga) is E3EFFA here, continuing its blue ramp."""
 
 
 def swatch(value: str, text_color: str, custom: bool = False) -> Text:
@@ -57,13 +75,7 @@ def preview() -> Text:
 
 
 def grid_colors() -> list[list[str]]:
-    rows = [[_hex(*colorsys.hls_to_rgb(hue / HUES, light, 1.0)) for hue in range(HUES)] for light in LIGHTNESS]
-    rows.append([_hex(level, level, level) for level in (i / (HUES - 1) for i in range(HUES))])
-    return rows
-
-
-def _hex(r: float, g: float, b: float) -> str:
-    return "#%02X%02X%02X" % (round(r * 255), round(g * 255), round(b * 255))
+    return [[f"#{value}" for value in (left + " " + right).split()] for left, right in zip(ENDESGA_64, BLK_NX64)]
 
 
 class ThemeExplorer(Screen):
@@ -137,86 +149,148 @@ class ThemeExplorer(Screen):
         self.notify("All colors reset to defaults.")
 
 
+class Swatches(Static):
+    """The picker's color grid. Never focused: arrow keys in a hex field move its selection (combobox-style)."""
+    CELL = 4
+
+    def __init__(self, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.rows = grid_colors()
+        self.position: tuple[int, int] | None = None
+        """(row, column) of the selected color; None when the field's color isn't in the grid."""
+        self.last = (0, 0)
+
+    def render(self) -> Text:
+        text = Text()
+        for y, row in enumerate(self.rows):
+            if y:
+                text.append("\n")
+            for x, value in enumerate(row):
+                if (y, x) == self.position:
+                    text.append("[  ]", style=Style(color=_contrast(value), bgcolor=value, bold=True))
+                else:
+                    text.append(" " * self.CELL, style=Style(bgcolor=value))
+        return text
+
+    def show(self, value: str | None) -> None:
+        """Select the cell holding `value`, if any."""
+        self.position = next(((y, x) for y, row in enumerate(self.rows) for x, cell in enumerate(row)
+                              if cell == value), None)
+        if self.position:
+            self.last = self.position
+        self.refresh()
+
+    def move(self, dx: int, dy: int) -> str:
+        """Move the selection (from an unmatched color: select the last cell first) and return its color."""
+        if self.position is None:
+            y, x = self.last
+        else:
+            y, x = self.position
+            y = max(0, min(len(self.rows) - 1, y + dy))
+            x = max(0, min(len(self.rows[0]) - 1, x + dx))
+        self.position = self.last = (y, x)
+        self.refresh()
+        return self.rows[y][x]
+
+    def on_click(self, event) -> None:
+        y, x = event.y, event.x // self.CELL
+        if 0 <= y < len(self.rows) and 0 <= x < len(self.rows[0]):
+            self.position = (y, x)
+            self.move(0, 0)
+            self.screen.grid_picked(self.rows[y][x])
+
+
+def _contrast(value: str) -> str:
+    r, g, b = (int(value[i:i + 2], 16) for i in (1, 3, 5))
+    return "#000000" if 0.299 * r + 0.587 * g + 0.114 * b > 140 else "#FFFFFF"
+
+
+class HexInput(Input):
+    """A hex field: arrow keys pick from the grid instead of moving the text cursor."""
+    BINDINGS = [Binding(key, f"grid({dx}, {dy})", show=False)
+                for key, dx, dy in (("left", -1, 0), ("right", 1, 0), ("up", 0, -1), ("down", 0, 1))]
+
+    def action_grid(self, dx: int, dy: int) -> None:
+        self.value = self.screen.query_one(Swatches).move(dx, dy)
+        self.cursor_position = len(self.value)
+
+
 class ColorPicker(ModalScreen[bool]):
     CSS = """
     ColorPicker { align: center middle; }
     ColorPicker > Vertical { width: auto; height: auto; max-width: 100%; border: solid $primary;
                              background: $surface; padding: 0 1; }
     ColorPicker #title { text-style: bold; }
-    ColorPicker DataTable { width: auto; height: auto; margin: 1 0; }
     ColorPicker .field { height: 1; width: auto; }
     ColorPicker .field Static { width: auto; }
     ColorPicker .field .label { width: 7; }
-    ColorPicker Input { width: 11; }
-    ColorPicker #buttons { height: auto; width: auto; margin-top: 1; }
+    ColorPicker HexInput { width: 9; }
+    ColorPicker HexInput:focus { background: $block-cursor-background; color: $block-cursor-foreground; }
+    ColorPicker Swatches { width: auto; height: auto; margin: 1 0; }
+    ColorPicker #buttons { height: auto; width: auto; }
     """
     BINDINGS = [Binding("escape", "cancel", "Cancel")]
 
     def __init__(self, role: str) -> None:
         super().__init__()
         self.role = role
-        self.target = "dark"
-        """Field the grid writes to (the last one focused)."""
 
     def compose(self) -> ComposeResult:
         with Vertical():
             yield Static(f"{colors.ROLES[self.role].label}: {colors.ROLES[self.role].used_for}", id="title")
-            yield Static("Enter on a color sets the field marked <-; type a hex to set your own.")
-            yield DataTable(show_header=False, cursor_type="cell", id="grid")
+            yield Static("Arrow keys pick a color, or type a hex.")
             for mode in colors.MODES:
                 with Horizontal(classes="field"):
                     yield Static(f"{mode.capitalize()}:", classes="label")
-                    yield Input(colors.color(self.role, mode), id=f"input-{mode}", compact=True, max_length=7)
+                    yield HexInput(colors.color(self.role, mode), id=f"input-{mode}", compact=True, max_length=7)
                     yield Static(id=f"sample-{mode}")
-                    yield Static(id=f"target-{mode}")
+            yield Swatches()
             with Horizontal(id="buttons"):
                 yield Button("Default", id="default", compact=True)
                 yield Button("Cancel", id="cancel", compact=True)
                 yield Button("Save", id="save", compact=True, variant="primary")
 
     def on_mount(self) -> None:
-        grid = self.query_one("#grid", DataTable)
-        rows = grid_colors()
-        grid.add_columns(*([""] * HUES))
-        for row in rows:
-            grid.add_row(*(Text("    ", style=Style(bgcolor=value)) for value in row))
-        self.target = "light" if not self.app.current_theme.dark else "dark"
-        self.refresh_fields()
-        grid.focus()
+        self.refresh_samples()
+        self.query_one(f"#input-{'dark' if self.app.current_theme.dark else 'light'}", HexInput).focus()
 
     def value(self, mode: str) -> str | None:
-        return colors.normalize(self.query_one(f"#input-{mode}", Input).value)
+        return colors.normalize(self.query_one(f"#input-{mode}", HexInput).value)
 
-    def refresh_fields(self) -> None:
+    def focused_mode(self) -> str | None:
+        focused = self.focused
+        return focused.id.removeprefix("input-") if isinstance(focused, HexInput) else None
+
+    def refresh_samples(self) -> None:
         for mode in colors.MODES:
             value = self.value(mode)
             sample = Text(SAMPLE, style=f"{value} on {BACKGROUND[mode]}") if value else Text(" not a #RRGGBB color ")
             self.query_one(f"#sample-{mode}", Static).update(Text(" ").append(sample))
-            self.query_one(f"#target-{mode}", Static).update(" <-" if mode == self.target else "")
 
     @on(Input.Changed)
-    def input_changed(self) -> None:
-        self.refresh_fields()
+    def input_changed(self, event: Input.Changed) -> None:
+        self.refresh_samples()
+        if event.input is self.focused:
+            self.query_one(Swatches).show(self.value(self.focused_mode()))
 
     def on_descendant_focus(self, event) -> None:
-        if isinstance(event.widget, Input):
-            self.target = event.widget.id.removeprefix("input-")
-            self.refresh_fields()
+        if isinstance(event.widget, HexInput):
+            self.query_one(Swatches).show(self.value(self.focused_mode()))
+
+    def grid_picked(self, value: str) -> None:
+        mode = self.focused_mode() or ("dark" if self.app.current_theme.dark else "light")
+        field = self.query_one(f"#input-{mode}", HexInput)
+        field.value = value
+        field.focus()
 
     @on(Input.Submitted)
     def input_submitted(self, event: Input.Submitted) -> None:
         event.stop()  # Input.Submitted bubbles to the App otherwise
-        self.query_one("#grid", DataTable).focus()
-
-    @on(DataTable.CellSelected)
-    def cell_selected(self, event: DataTable.CellSelected) -> None:
-        row, column = event.coordinate
-        self.query_one(f"#input-{self.target}", Input).value = grid_colors()[row][column]
 
     @on(Button.Pressed, "#default")
     def default(self) -> None:
         for mode in colors.MODES:
-            self.query_one(f"#input-{mode}", Input).value = colors.default(self.role, mode)
+            self.query_one(f"#input-{mode}", HexInput).value = colors.default(self.role, mode)
 
     @on(Button.Pressed, "#cancel")
     def action_cancel(self) -> None:
