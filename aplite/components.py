@@ -9,6 +9,7 @@ from __future__ import annotations
 import dataclasses
 import functools
 import inspect
+import logging
 import os
 import subprocess
 import sys
@@ -126,6 +127,7 @@ def overrides() -> dict[typing.Callable | str, Override]:
                                   pauses=True),
         open_host_yaml: Override(run=_settings_editor),  # upstream's starts a desktop editor in the background
         "OptionsCreator": Override(run=_options_creator),  # upstream's is kivy
+        "SNIClient": Override(run=_sni_client),
         export_datapackage: Override(run=_export_datapackage, pauses=True),
         generate_yamls: Override(run=_generate_templates, pauses=True),
     }
@@ -249,10 +251,44 @@ def _run_gui_script(component: Component, *args: str) -> None:
 
 def _run_client_script(component: Component, *args: str) -> None:
     """Client scripts (SNIClient, ...): upstream starts them as a new process, which wouldn't have aplite's patches."""
+    _run_script(_script(component), *args)
+
+
+def _run_script(script: str, *args: str) -> None:
     import runpy
-    script = _script(component)
     sys.argv = [script, *args]
     runpy.run_path(script, run_name="__main__")
+
+
+def _sni_client(*args: str) -> None:
+    _use_bundled_sni()
+    _run_script(Utils.local_path("SNIClient.py"), *args)
+
+
+def _use_bundled_sni() -> None:
+    """aplite's builds bundle SNI in app/SNI (host.yaml's default sni_path "SNI"). When sni_path points elsewhere
+    without SNI, use the bundled one: a wrong folder made SNIClient give up, a missing one opened the folder picker.
+    Only for this run; set as the relative "SNI" in case the settings get saved (an AppImage's absolute path changes
+    every run)."""
+    import settings
+    options = settings.get_settings().sni_options
+    configured = object.__getattribute__(options, "sni_path")  # raw: reading it normally opens the picker if missing
+    if _sni_in(configured) or not _sni_in("SNI"):
+        return
+    options.sni_path = type(configured)("SNI")
+    logging.getLogger("SNES").info(f"No SNI found at host.yaml's sni_path ({configured}); using the bundled one.")
+
+
+def _sni_in(path: str) -> bool:
+    """Whether SNIClient.launch_sni would find SNI there (same lookup)."""
+    if not os.path.isdir(path):
+        path = Utils.local_path(path)
+    if os.path.isfile(path):
+        return True
+    if not os.path.isdir(path):
+        return False
+    names = (entry.name.lower() for entry in os.scandir(path) if entry.is_file())
+    return any(name == "sni" or name.startswith("sni.") and not name.endswith(".proto") for name in names)
 
 
 def _accepts_args(func: typing.Callable) -> bool:

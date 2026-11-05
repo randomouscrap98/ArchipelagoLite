@@ -13,6 +13,7 @@ REPO=$(cd "$(dirname "$0")/.." && pwd)
 PYVER=3.13
 RUNTIME_URL=${APLITE_RUNTIME_URL:-https://github.com/AppImage/type2-runtime/releases/download/continuous/runtime-x86_64}
 MKSQUASHFS=${MKSQUASHFS:-mksquashfs}
+SNI_VERSION=v0.0.100  # same as upstream's setup.py (SNI_VERSION)
 BUILD="$REPO/build/aplite-dist"
 DIST="$REPO/dist"
 EXCLUDE='^(\.github|\.run|test|deploy|typings)/|^\.'  # git-tracked paths left out of the package
@@ -78,9 +79,35 @@ python_tree() {
     host_python -m compileall -q -j0 "$site/.." "$dest/app" >/dev/null
 }
 
+# sni DEST ASSET: SNI (SNES clients' bridge to emulators/hardware; host.yaml sni_path "SNI" finds it) in DEST/app/SNI,
+# as upstream's builds bundle it. Downloads are kept in build/sni-dl.
+sni() {
+    archive="$REPO/build/sni-dl/sni-$SNI_VERSION-$2"
+    mkdir -p "$REPO/build/sni-dl"
+    if [ ! -f "$archive" ]; then
+        curl -fsSL -o "$archive.part" "https://github.com/alttpo/sni/releases/download/$SNI_VERSION/sni-$SNI_VERSION-$2"
+        mv "$archive.part" "$archive"
+    fi
+    host_python - "$archive" "$1/app/SNI" <<'EOF'
+import os, shutil, sys, tarfile, tempfile, zipfile
+archive, dest = sys.argv[1:]
+with tempfile.TemporaryDirectory() as tmp:
+    if archive.endswith(".zip"):
+        with zipfile.ZipFile(archive) as z:
+            z.extractall(tmp)
+    else:
+        with tarfile.open(archive) as t:
+            t.extractall(tmp, filter="tar")
+    entries = os.listdir(tmp)
+    only = os.path.join(tmp, entries[0]) if len(entries) == 1 else ""
+    shutil.copytree(only if os.path.isdir(only) else tmp, dest)  # the Linux tarball has a top folder, the zip not
+EOF
+}
+
 # Linux: AppImage + tar.gz
 APPDIR="$BUILD/linux/ArchipelagoLite"
 python_tree "$APPDIR" "cpython-$PYVER-linux-x86_64-gnu" "lib/python$PYVER/site-packages" x86_64-manylinux_2_28
+sni "$APPDIR" manylinux_2_28-amd64.tar.xz
 lib="$APPDIR/python/lib/python$PYVER"
 rm -rf "$APPDIR/python/include" "$APPDIR/python/share" "$lib/idlelib" "$lib/turtledemo" "$lib/ensurepip" \
     "$lib"/config-$PYVER-*
@@ -113,6 +140,7 @@ fi
 # Windows: zip
 WINDIR="$BUILD/windows/ArchipelagoLite"
 python_tree "$WINDIR" "cpython-$PYVER-windows-x86_64-none" Lib/site-packages x86_64-pc-windows-msvc
+sni "$WINDIR" windows-amd64.zip
 rm -rf "$WINDIR/python/include" "$WINDIR/python/libs" "$WINDIR/python/Lib/idlelib" "$WINDIR/python/Lib/turtledemo" \
     "$WINDIR/python/Lib/ensurepip"
 # CRLF: cmd misreads labels in LF-only batch files
