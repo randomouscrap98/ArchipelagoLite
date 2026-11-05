@@ -34,11 +34,12 @@ class Role(typing.NamedTuple):
 # defaults = what Textual showed for upstream's ANSI colors (Monokai dark, Alabaster light); light "white" is
 # Alabaster's background, so unspecified hints get its foreground instead
 ROLES: dict[str, Role] = {
-    "item_progression": Role("Progression item", "items that unlock progress", "magenta", "#F4005F", "#7A3E9D"),
+    "item_progression": Role("Progression item", "items considered by logic that unlock progress", "magenta",
+                             "#F4005F", "#7A3E9D"),
     "item_useful": Role("Useful item", "helpful but not required items", "blue", "#9D65FF", "#325CC0"),
-    "item_trap": Role("Trap item", "traps", "red", "#F4005F", "#AA3731"),
+    "item_trap": Role("Trap item", "harms a player", "red", "#F4005F", "#AA3731"),
     "item_filler": Role("Filler item", "everything else", "cyan", "#58D1EB", "#0083B2"),
-    "location": Role("Location", "location names", "green", "#98E024", "#448C27"),
+    "location": Role("Location", "a check", "green", "#98E024", "#448C27"),
     "entrance": Role("Entrance", "entrance names in hints", "blue", "#9D65FF", "#325CC0"),
     "player_self": Role("Your name", "you (and groups you're in)", "magenta", "#F4005F", "#7A3E9D"),
     "player_other": Role("Other player", "everyone else", "yellow", "#FD971F", "#CB9000"),
