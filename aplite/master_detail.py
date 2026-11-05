@@ -264,6 +264,7 @@ class MasterDetailScreen(Screen):
             if self.editor_key is not None:
                 await self.build_editor()
                 self.call_after_refresh(self.fit_editor)
+            self.refresh_bindings()  # Browse shows in the footer only for path editors (check_action)
 
     def action_step(self, delta: int) -> None:
         if self.current is None:
@@ -487,14 +488,15 @@ class MasterDetailScreen(Screen):
         self.update_exists()
         self.back_to_rows()
 
+    def check_action(self, action: str, parameters: tuple) -> bool | None:
+        return bool(self.query("#path")) if action == "browse" else True
+
     def action_browse(self) -> None:
         if not self.query("#path"):
             return
         key = self.editor_key
         path = self.resolved_path(key)
-        start = os.path.dirname(path) if path else ""
-        if not os.path.isdir(start):
-            start = os.path.expanduser("~")
+        start = os.path.dirname(path) if path else None  # the path's folder; else the last one browsed, else home
 
         def chosen(picked: Path | None) -> None:
             if picked is not None:
@@ -502,8 +504,8 @@ class MasterDetailScreen(Screen):
                 self.set_value(key, str(picked))
                 self.update_exists()
 
-        self.app.push_screen(FilePicker(f"Choose {key}", [], self.BROWSE_PREF, start, folders=self.picks_folder(key),
-                                        show_all=True), chosen)
+        self.app.push_screen(FilePicker(f"Choose {key}", [], self.BROWSE_PREF, os.path.expanduser("~"),
+                                        folders=self.picks_folder(key), show_all=True, start=start), chosen)
 
     def can_leave(self, step: str) -> bool:
         """Asked by AppliteApp on ctrl+q / ctrl+l."""

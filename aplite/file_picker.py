@@ -13,8 +13,11 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical
 from textual.message import Message
+from textual.reactive import reactive
 from textual.screen import Screen
 from textual.widgets import DirectoryTree, Footer, Input, Static
+
+from rich.text import Text
 
 from aplite import prefs
 
@@ -26,8 +29,9 @@ def start_folder(pref_key: str, default_dir: str, start: str | None = None) -> P
 
 
 class FilteredTree(DirectoryTree):
-    """Tree keys (research/keyboard.md): Right opens a folder / goes into it, Left closes it / goes up. Posts
-    FolderChanged when it shows another folder."""
+    """Tree keys (research/keyboard.md): Enter (or a click on its name) shows a folder instead, Space / Right expand
+    it in place (Right again goes into it), Left closes it / goes up. Posts FolderChanged when it shows another
+    folder."""
     BINDINGS = [Binding("backspace", "parent", "Parent folder"), Binding("right", "open_node", show=False),
                 Binding("left", "close_node", show=False)]
 
@@ -38,6 +42,8 @@ class FilteredTree(DirectoryTree):
 
     def __init__(self, path: Path, suffixes: typing.Sequence[str], show_all: bool = False) -> None:
         super().__init__(path)
+        self.auto_expand = False  # Enter shows the folder (on_directory_tree_directory_selected); Space expands
+        self.show_root = False  # ".." is the top line; screens show the folder (FilePicker #folder, border title)
         self.suffixes = tuple(suffixes)
         self.show_all = show_all
 
@@ -62,6 +68,8 @@ class FilteredTree(DirectoryTree):
         super()._populate_node(node, content)
         if not node.is_root:
             self.call_after_refresh(self.reveal, node)
+        elif len(node.children) > 1 and node.children[0].data.path.name == "..":
+            self.call_after_refresh(self.move_cursor, node.children[1])  # Enter right away shouldn't go up
 
     def on_tree_node_expanded(self, event) -> None:
         if event.node.children and not event.node.is_root:  # expanded again: already filled
@@ -116,9 +124,11 @@ class FilteredTree(DirectoryTree):
         self.reload()
 
     def on_directory_tree_directory_selected(self, event: DirectoryTree.DirectorySelected) -> None:
+        event.stop()
         if event.path.name == "..":
-            event.stop()
             self.action_parent()
+        else:
+            self.go_to(event.path.resolve())
 
 
 def dropped_path(text: str) -> Path | None:
@@ -204,6 +214,18 @@ class PathInput(Input):
         self.cursor_position = len(value)
 
 
+class FolderLabel(Static):
+    """The folder a FilteredTree shows, bold, cut from the left to fit (the end is what changes)."""
+    folder = reactive("")
+
+    def render(self) -> Text:
+        width = self.content_size.width
+        text = self.folder
+        if width and len(text) > width:
+            text = "…" + text[-(width - 1):]
+        return Text(text, style="bold")
+
+
 class FileBrowser(Vertical):
     """A FilteredTree over a PathInput showing the highlighted entry's path. Enter on a file, a typed or dropped path
     (a folder only with `pick_folders`; otherwise the tree shows it) post Opened: the screen decides what that does
@@ -225,8 +247,16 @@ class FileBrowser(Vertical):
 
     def compose(self) -> ComposeResult:
         tree = FilteredTree(self.start, self.suffixes, self.show_all)
-        yield tree
+        with Vertical(classes="tree-box"):  # one box, so the folder line sits with the list (screens style it)
+            yield FolderLabel()
+            yield tree
         yield PathInput(placeholder=self.placeholder, shows=tree.shows)
+
+    def on_mount(self) -> None:
+        self.query_one(FolderLabel).folder = str(self.tree.folder())
+
+    def on_filtered_tree_folder_changed(self, event: FilteredTree.FolderChanged) -> None:
+        self.query_one(FolderLabel).folder = str(event.path.resolve())  # not stopped: screens follow it too
 
     @property
     def tree(self) -> FilteredTree:
@@ -271,7 +301,7 @@ class FileBrowser(Vertical):
 class FilePicker(Screen[Path | None]):
     CSS = """
     #folder { height: 1; padding: 0 1; background: $panel; }
-    FilteredTree { height: 1fr; }
+    .tree-box, FilteredTree { height: 1fr; }
     """
     BINDINGS = [Binding("escape", "back", "Back"), Binding("ctrl+t", "toggle_all", "Show all files"),
                 Binding("ctrl+l", "use_folder", "Use this folder")]
@@ -312,7 +342,7 @@ class FilePicker(Screen[Path | None]):
     def update_folder(self) -> None:
         tree = self.query_one(FilteredTree)
         shown = "all files" if tree.show_all or not self.suffixes else ", ".join(self.suffixes)
-        self.query_one("#folder", Static).update(f"{self.title_text}: {tree.folder()}  ({shown})")
+        self.query_one("#folder", Static).update(f"{self.title_text}  ({shown})")
 
     def on_filtered_tree_folder_changed(self) -> None:
         self.update_folder()

@@ -47,7 +47,7 @@ class ServerSettingsScreen(MasterDetailScreen, ModalScreen):
     """
     BINDINGS = [Binding("escape", "back_to_rows", "Back"),  # shown (clickable): editor -> rows -> Self-host
                 Binding("ctrl+s", "save", "Save"), Binding("ctrl+r", "reset", "Reset setting"),
-                Binding("ctrl+b", "browse", "Browse", show=False)]
+                Binding("ctrl+b", "browse", "Browse")]
     BROWSE_PREF = "selfhost_browse_dir"
     STRIP_TEXT = True
     APPLY_NOTE = "Changes apply when the server (re)starts."

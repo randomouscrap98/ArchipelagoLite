@@ -366,8 +366,9 @@ class GenerateApp(AppliteApp):
     FileBrowser { height: 1fr; }
     #right { width: 1fr; }
     #yamls { height: 1fr; }
-    FilteredTree { height: 1fr; border: tall $border-blurred; }  /* same box as the lists, so focus shows */
-    FilteredTree:focus { border: tall $border; }
+    .tree-box { height: 1fr; border: tall $border-blurred; }  /* same box as the lists, so focus shows */
+    .tree-box:focus-within { border: tall $border; }
+    FilteredTree { height: 1fr; }
     .heading { padding: 0 1; }
     #generate { width: 100%; }
     #log { height: 10; border: tall $border-blurred; }
