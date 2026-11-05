@@ -17,7 +17,7 @@ from textual.widgets.input import Selection
 from textual.widgets.tabbed_content import ContentTab
 from textual.widgets import Button, DataTable, Footer, Input, RichLog, Static, TabbedContent, TabPane
 
-from aplite import glyphs, prompts
+from aplite import glyphs, prompts, tracker
 from aplite.nav import AppliteApp, on_app_thread, terminal_handlers
 
 if typing.TYPE_CHECKING:
@@ -168,7 +168,7 @@ class ClientApp(AppliteApp):
     """
     # alt+digit is unreliable (textual reads ESC 3 as the pound key), so ctrl letters the Input doesn't use
     BINDINGS = [("ctrl+n", "switch_tab(1)", "Next tab"), ("ctrl+b", "switch_tab(-1)", "Prev tab"),
-                ("ctrl+t", "focus_address", "Address")]
+                ("ctrl+t", "focus_address", "Address"), Binding("ctrl+f", "focus_tracker", "Filter tracker")]
 
     def __init__(self, ctx: CommonContext) -> None:
         super().__init__()
@@ -188,6 +188,9 @@ class ClientApp(AppliteApp):
                 yield RichLog(id="log-archipelago", wrap=True)
             with TabPane("All", id="tab-all"):
                 yield RichLog(id="log-all", wrap=True)
+            if tracker.supported(self.ctx):
+                with TabPane("Tracker", id="tab-tracker"):
+                    yield tracker.TrackerPane(self.ctx)
             with TabPane("Hints", id="tab-hints"):
                 yield DataTable(id="hints", cursor_type="row", zebra_stripes=True)
         yield CommandInput(placeholder="Command or chat. /help and !help list commands; Tab completes.",
@@ -231,6 +234,15 @@ class ClientApp(AppliteApp):
         self.query_one("#log-all", RichLog).write(line)
         self.query_one("#log-archipelago", RichLog).write(line)
 
+    def check_action(self, action: str, parameters: tuple) -> bool | None:
+        if action == "focus_tracker" and not tracker.supported(self.ctx):
+            return False
+        return super().check_action(action, parameters)
+
+    def action_focus_tracker(self) -> None:
+        self.query_one(TabbedContent).active = "tab-tracker"
+        self.query_one("#tracker-filter").focus()
+
     def action_switch_tab(self, step: int) -> None:
         tabs = self.query_one(TabbedContent)
         ids = [ContentTab.sans_prefix(tab.id) for tab in tabs.query(ContentTab)]  # tab bar order, not DOM order
@@ -255,6 +267,8 @@ class ClientApp(AppliteApp):
             status.append(f"  │  Hint points: {ctx.hint_points}")
         self.query_one("#status", Static).update(status)
         self.refresh_hints()
+        for pane in self.query(tracker.TrackerPane):
+            pane.refresh_lines()
 
     def refresh_hints(self) -> None:
         ctx = self.ctx
