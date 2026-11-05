@@ -98,7 +98,8 @@ class GenerateModal(ModalScreen[None]):
     GenerateModal { align: center middle; }
     #box { width: 90%; height: 90%; padding: 0 1; border: thick $primary; background: $surface; }
     #status { padding: 0 1; }
-    #gen-log { height: 1fr; }
+    #gen-log { height: 1fr; border: tall $border-blurred; }
+    #gen-log:focus { border: tall $border; }
     ProgressBar { padding: 0 1; }
     #buttons { height: auto; align-horizontal: right; }
     """

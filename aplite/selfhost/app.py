@@ -14,14 +14,14 @@ from pathlib import Path
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen, Screen
 from textual.widgets import Button, Footer, Input, Label, OptionList, RichLog, Static, Tab, Tabs
 from textual.widgets.option_list import Option as ListOption
 
 import Utils
 from aplite import glyphs, selfhost
-from aplite.master_detail import MasterDetailScreen, Rows, detail_pane, heading
+from aplite.master_detail import MasterDetailScreen, Rows, TextScroll, detail_pane, heading
 from aplite.nav import AppliteApp
 
 LOG_START = 64 * 1024  # bytes of an existing log shown when attaching
@@ -165,7 +165,8 @@ class GamesScreen(ModalScreen[typing.Optional[str]]):
     GamesScreen { align: center middle; }
     #games-box { width: 90%; height: 80%; border: thick $primary; background: $surface; border-title-style: bold; }
     #games-list { width: 1fr; height: 1fr; text-wrap: nowrap; text-overflow: ellipsis; }
-    #games-detail { width: 1fr; height: 1fr; padding: 0 1; }
+    #games-detail { width: 1fr; height: 1fr; padding: 0 1; border: tall $border-blurred; }  /* like the list */
+    #games-detail:focus { border: tall $border; }
     #games-buttons { height: auto; align-horizontal: right; }
     #games-buttons Button { margin-left: 1; }
     """
@@ -183,7 +184,7 @@ class GamesScreen(ModalScreen[typing.Optional[str]]):
         with Vertical(id="games-box"):
             with Horizontal():
                 yield GamesList(id="games-list")
-                with VerticalScroll(id="games-detail"):
+                with TextScroll(id="games-detail"):
                     yield Static(id="games-text")
             with Horizontal(id="games-buttons"):
                 yield Button("Show", id="games-show")

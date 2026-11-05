@@ -120,6 +120,7 @@ class WebOptionsApp(AppliteApp):
     CSS = """
     #link { padding: 1 2; height: auto; }
     RichLog { height: 1fr; border-top: solid $panel; }
+    RichLog:focus { border-top: solid $border; }
     """
     BINDINGS = [Binding("ctrl+o", "open_browser", "Open browser")]
 

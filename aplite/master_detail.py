@@ -33,8 +33,6 @@ from aplite.nav import AppliteApp
 if typing.TYPE_CHECKING:
     from pathlib import Path
 
-NARROW = 140
-"""Below this many columns, opening a game/section hides the side list (Ctrl+G brings it back)."""
 EDITOR_DELAY = 0.06
 """Seconds the row highlight must rest before its editor is built, so holding an arrow key only scrolls."""
 CONFIRM_SECONDS = 6
@@ -64,6 +62,7 @@ CSS = f"""
 #editor > Label {{ padding: 0 1; }}
 #editor > .heading-end {{ padding: 0 1; }}
 #doc {{ height: 1fr; border-top: solid $panel; padding: 0 1; }}
+#doc:focus {{ border-top: solid $border; }}
 #error {{ color: $error; }}
 """
 
@@ -102,9 +101,16 @@ def side_pane(placeholder: str, *options: ListOption) -> Vertical:
                     OptionList(*options, id="side-list"), id="side")
 
 
+class TextScroll(VerticalScroll):
+    """Scrolling text that Tab only stops at when there's something to scroll (focus must show; see its CSS)."""
+
+    def allow_focus(self) -> bool:
+        return self.max_scroll_y > 0
+
+
 def detail_pane() -> Vertical:
     """#detail: the highlighted row's editor above its description."""
-    return Vertical(Vertical(id="editor"), VerticalScroll(Static(id="doc-text"), id="doc"), id="detail")
+    return Vertical(Vertical(id="editor"), TextScroll(Static(id="doc-text"), id="doc"), id="detail")
 
 
 def heading(name: str, details: str, end: bool = True) -> list[Label]:
@@ -157,6 +163,8 @@ class EditorApp(AppliteApp):
 class MasterDetailScreen(Screen):
     BINDINGS = [Binding("escape", "back_to_rows", show=False)]
     CSS = CSS
+    NARROW = 140
+    """Below this many columns, opening a game/section hides the side list (Ctrl+G brings it back)."""
     BROWSE_PREF = "settings_browse_dir"
     """Pref remembering the folder Ctrl+B (browse for a path) was last in."""
     STRIP_TEXT = False
@@ -286,8 +294,16 @@ class MasterDetailScreen(Screen):
             (preferred or focusable)[0].focus()
 
     def action_back_to_rows(self) -> None:
-        """Esc in the editor; elsewhere it closes a closable screen."""
+        """Esc in the editor; on the rows it goes to the side list (shown if hidden); elsewhere it closes a closable
+        screen."""
         focused = self.focused
+        if focused is not None and focused.id == "rows" and self.query("#side"):
+            side = self.query_one("#side")
+            if not side.display:
+                side.display = True
+                self.call_after_refresh(self.refresh_rows)
+            self.query_one("#side-filter", Input).focus()
+            return
         if focused is None or not any(ancestor.id == "editor" for ancestor in focused.ancestors):
             if not self.closable:
                 raise SkipAction()
@@ -340,7 +356,7 @@ class MasterDetailScreen(Screen):
 
     def collapse_side_if_narrow(self) -> None:
         side = self.query_one("#side")
-        if self.size.width < NARROW and side.display:
+        if self.size.width < self.NARROW and side.display:
             side.display = False
             self.call_after_refresh(self.refresh_rows)  # the rows just got wider
 
