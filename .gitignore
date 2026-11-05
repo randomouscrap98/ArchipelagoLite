@@ -1,6 +1,7 @@
 .idea
 .vscode
 ignore/
+minecraft_dig_versions.json
 
 *_Spoiler.txt
 *.bmbp

@@ -12,6 +12,8 @@ import inspect
 import os
 import subprocess
 import sys
+import threading
+import time
 import typing
 
 import Utils
@@ -210,7 +212,15 @@ def _run_func(component: Component, *args: str) -> None:
     import Launcher
     # some clients parse sys.argv themselves and/or take no func args (e.g. civ6, kh1)
     sys.argv = [sys.argv[0], *args]
+    before = set(threading.enumerate())
+    started = time.monotonic()
     Launcher.run_component(component, *(args if _accepts_args(component.func) else ()))
+    # Some funcs only start the real work in a thread and return (e.g. Minecraft Dig's run_client_threaded, made for
+    # upstream's GUI launcher). Wait for it, or aplite moves on while that thread still uses the terminal. Only on a
+    # quick return: a func that ran for real may leave unrelated threads behind (executors, servers).
+    if time.monotonic() - started < 1:
+        for thread in set(threading.enumerate()) - before:
+            thread.join()
 
 
 def _script(component: Component) -> str:
