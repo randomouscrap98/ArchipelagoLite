@@ -372,8 +372,29 @@ async def console_loop(ctx: CommonContext) -> None:
     finally:
         watcher.cancel()
         log_buffer.detach()
+        await _release_input_requests(ctx)
         ctx.exit_event.set()
         setattr(ctx, RUNNING, False)
+
+
+async def _release_input_requests(ctx: CommonContext) -> None:
+    """Upstream's shutdown awaits the server task before answering pending input requests, so quitting while the
+    client asks for a slot name or password hung forever. Close the connection first (so an answer isn't sent as a
+    login), then answer with None until the server task ends: it may ask again (password, then slot name)."""
+    if not ctx.input_requests:
+        return
+    if ctx.server and not ctx.server.socket.closed:
+        await ctx.server.socket.close()
+    deadline = asyncio.get_running_loop().time() + RELEASE_TIMEOUT
+    while ctx.server_task and not ctx.server_task.done() and asyncio.get_running_loop().time() < deadline:
+        while ctx.input_requests > 0:
+            ctx.input_queue.put_nowait(None)
+            ctx.input_requests -= 1
+        await asyncio.sleep(0.05)
+
+
+RELEASE_TIMEOUT = 5.0
+"""Seconds to keep answering a quitting client's input requests before leaving it to upstream's shutdown."""
 
 
 FALLBACK_DELAY = 1.0

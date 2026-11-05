@@ -5,6 +5,7 @@ Import order matters: patches must land before CommonClient/clients import the p
 Worlds are loaded by load(), which the launcher runs in the background so it can show immediately.
 """
 import atexit
+import logging
 import os
 import signal
 import sys
@@ -60,7 +61,11 @@ def load() -> list:
     (the launcher runs it in a thread; direct launch calls it up front)."""
     global _loaded
     if not _loaded:
+        level = logging.getLogger().level
         import CommonClient  # loads all worlds
+        # NetUtils' first `import _speedups` without a compiled one has pyximport build it, and setuptools sets the
+        # root logger to WARNING: every INFO line (chat, prompts, /help) would vanish. Upstream works around it too.
+        logging.getLogger().setLevel(level)
         CommonClient.console_loop = tui.console_loop  # before clients do `from CommonClient import console_loop`
         tui.install_fallback()
         import worlds.LauncherComponents as LauncherComponents
