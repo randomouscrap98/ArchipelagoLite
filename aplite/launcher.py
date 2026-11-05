@@ -256,7 +256,7 @@ class LauncherApp(AppliteApp):
             self.favorites.remove(component.display_name)
         else:
             self.favorites.append(component.display_name)
-        Utils.persistent_store("launcher", "favorites", self.favorites)
+        Utils.persistent_store("launcher", "favorites", list(self.favorites))  # copy: the store caches it
         self.rebuild()
 
 
