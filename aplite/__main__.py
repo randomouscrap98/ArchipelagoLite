@@ -48,7 +48,7 @@ import Utils
 
 Utils.gui_enabled = False  # before CommonClient does `from Utils import gui_enabled`
 
-from aplite import bytecode_cache, components, launcher, nav, prompts, tui
+from aplite import bytecode_cache, client_fixes, components, launcher, nav, prompts, tui
 
 bytecode_cache.install()  # before any .apworld is imported
 prompts.install()  # terminal file prompts; before worlds load (LauncherComponents imports open_filename by name)
@@ -68,6 +68,7 @@ def load() -> list:
         logging.getLogger().setLevel(level)
         CommonClient.console_loop = tui.console_loop  # before clients do `from CommonClient import console_loop`
         tui.install_fallback()
+        client_fixes.install()
         import worlds.LauncherComponents as LauncherComponents
         LauncherComponents.run_in_process = True  # core hook: clients need this terminal's stdin
         LauncherComponents.components.extend(components.extra_components())
