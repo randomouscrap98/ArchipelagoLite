@@ -21,8 +21,8 @@ HUES = 12
 LIGHTNESS = (0.35, 0.5, 0.65, 0.8)
 
 
-def swatch(value: str, custom: bool = False) -> Text:
-    return Text("   ", style=Style(bgcolor=value)).append(" " + value + ("*" if custom else " "))
+def swatch(value: str, text_color: str, custom: bool = False) -> Text:
+    return Text(f" {value}{'*' if custom else ' '}", style=Style(color=text_color, bgcolor=value))
 
 
 def marked(*parts: str | tuple[str, str]) -> Text:
@@ -70,14 +70,19 @@ class ThemeExplorer(Screen):
     CSS = """
     ThemeExplorer #info { padding: 0 1; height: auto; }
     ThemeExplorer DataTable { height: 1fr; }
-    ThemeExplorer #preview { height: auto; padding: 1 1 0 1; border-top: solid $panel; }
+    /* Textual's unfocused highlight even when focused: colored role names stay readable on it */
+    ThemeExplorer DataTable:focus > .datatable--cursor { background: $block-cursor-blurred-background;
+        color: $block-cursor-blurred-foreground; }
+    ThemeExplorer #preview { height: auto; padding: 1 2; border-top: solid $panel; }
     """
     BINDINGS = [Binding("escape", "app.pop_screen", "Back"), Binding("r", "reset", "Reset role"),
                 Binding("R", "reset_all", "Reset all")]
 
     def compose(self) -> ComposeResult:
         yield Static(id="info")
-        yield DataTable(cursor_type="row", zebra_stripes=True)
+        # the highlight leaves cells' own colors alone (swatches, role names)
+        yield DataTable(cursor_type="row", zebra_stripes=True, cursor_foreground_priority="renderable",
+                        cursor_background_priority="renderable")
         yield Static(id="preview")
         yield Footer()
 
@@ -93,12 +98,19 @@ class ThemeExplorer(Screen):
             f"{'dark' if theme.dark else 'light'} colors"
         self.query_one("#info", Static).update(
             f"Client colors. Theme: {theme.name}, using {mode}. Enter edits, * = customized. Themes: Ctrl+P.")
+        # swatch text: dark on the dark-theme colors, light on the light-theme ones, from the current theme
+        variables = app.get_css_variables()
+        dark_text, light_text = variables["background"], variables["foreground"]
+        if not theme.dark:
+            dark_text, light_text = light_text, dark_text
+        text_color = {"dark": dark_text, "light": light_text}
         table = self.query_one(DataTable)
         row = table.cursor_row
         table.clear()
         for name, role in colors.ROLES.items():
             table.add_row(Text(role.label, style=colors.style(name)),
-                          *(swatch(colors.color(name, mode), colors.is_custom(name, mode)) for mode in colors.MODES),
+                          *(swatch(colors.color(name, mode), text_color[mode], colors.is_custom(name, mode))
+                            for mode in colors.MODES),
                           role.used_for, key=name)
         table.move_cursor(row=row, animate=False)
         self.query_one("#preview", Static).update(preview())
