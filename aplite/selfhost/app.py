@@ -220,6 +220,14 @@ class SettingsScreen(MasterDetailScreen, ModalScreen):
 APPLY_NOTE = "Changes apply when the server (re)starts."
 
 
+class GamesList(OptionList):
+    """A click only highlights a game; Enter (OptionSelected) shows it."""
+    async def _on_click(self, event) -> None:
+        option = event.style.meta.get("option")
+        if option is not None and not self.get_option_at_index(option).disabled:
+            self.highlighted = option
+
+
 class GamesScreen(ModalScreen[typing.Optional[str]]):
     """Every loaded game (newest first) with its details; activate / deactivate / delete them here. Dismisses with
     an active game's room id to show it on the main screen (Show), else None."""
@@ -231,7 +239,8 @@ class GamesScreen(ModalScreen[typing.Optional[str]]):
     #games-buttons { height: auto; align-horizontal: right; }
     #games-buttons Button { margin-left: 1; }
     """
-    BINDINGS = [Binding("escape", "close", "Back"), Binding("delete", "delete", "Delete game")]
+    BINDINGS = [Binding("enter", "show", "Show"), Binding("space", "toggle", "Activate/deactivate"),
+                Binding("delete", "delete", "Delete"), Binding("escape", "close", "Back")]
 
     def __init__(self, running: bool) -> None:
         super().__init__()
@@ -243,7 +252,7 @@ class GamesScreen(ModalScreen[typing.Optional[str]]):
     def compose(self) -> ComposeResult:
         with Vertical(id="games-box"):
             with Horizontal():
-                yield OptionList(id="games-list")
+                yield GamesList(id="games-list")
                 with VerticalScroll(id="games-detail"):
                     yield Static(id="games-text")
             with Horizontal(id="games-buttons"):
@@ -312,9 +321,10 @@ class GamesScreen(ModalScreen[typing.Optional[str]]):
         self.query_one("#games-text", Static).update(text)
 
     def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
-        event.stop()  # Enter / click only pick the game; the buttons act on it
+        event.stop()
+        self.action_show()
 
-    def show_game(self) -> None:
+    def action_show(self) -> None:
         info = self.selected()
         if info is None:
             return
@@ -325,10 +335,10 @@ class GamesScreen(ModalScreen[typing.Optional[str]]):
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         event.stop()
-        {"games-show": self.show_game, "games-toggle": self.toggle, "games-delete": self.action_delete,
+        {"games-show": self.action_show, "games-toggle": self.action_toggle, "games-delete": self.action_delete,
          "games-back": self.action_close}[event.button.id]()
 
-    def toggle(self) -> None:
+    def action_toggle(self) -> None:
         info = self.selected()
         if info is None:
             return
