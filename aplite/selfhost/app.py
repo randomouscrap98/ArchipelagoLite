@@ -12,7 +12,6 @@ import typing
 from pathlib import Path
 
 from rich.text import Text
-from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
@@ -22,11 +21,9 @@ from textual.widgets.option_list import Option as ListOption
 
 import Utils
 from aplite import glyphs, selfhost
-from aplite.file_picker import FilePicker, PathInput
-from aplite.master_detail import MasterDetailScreen, Rows, editor_event
+from aplite.master_detail import MasterDetailScreen, Rows, detail_pane, heading
 from aplite.nav import AppliteApp
 
-SUFFIXES = (".zip", ".archipelago")
 LOG_START = 64 * 1024  # bytes of an existing log shown when attaching
 
 
@@ -39,14 +36,11 @@ def ago(when: datetime.datetime) -> str:
     return f"{seconds // 3600} h {seconds % 3600 // 60} min ago"
 
 
-PATH_KEYS = {"cert": False, "key": False}  # path settings: folder?
-
-
-class SettingsScreen(MasterDetailScreen, ModalScreen):
+class ServerSettingsScreen(MasterDetailScreen, ModalScreen):
     """selfhost/config.yaml in the editors' layout (rows + editor + description), in a box over the dimmed Self-host
     screen: Esc on the rows (or the footer's Back) closes it."""
     CSS = MasterDetailScreen.CSS + """
-    SettingsScreen { align: center middle; background: $background 60%; }  /* dims Self-host, still visible */
+    ServerSettingsScreen { align: center middle; background: $background 60%; }  /* dims Self-host, still visible */
     #settings-box { width: 90%; height: auto; max-height: 90%; border: thick $primary; background: $surface;
                     border-title-style: bold; }
     #settings-box > Horizontal { height: auto; }  /* fixed to the rows' height in on_mount: long help scrolls */
@@ -54,23 +48,22 @@ class SettingsScreen(MasterDetailScreen, ModalScreen):
     BINDINGS = [Binding("escape", "back_to_rows", "Back"),  # shown (clickable): editor -> rows -> Self-host
                 Binding("ctrl+s", "save", "Save"), Binding("ctrl+r", "reset", "Reset setting"),
                 Binding("ctrl+b", "browse", "Browse", show=False)]
+    BROWSE_PREF = "selfhost_browse_dir"
+    STRIP_TEXT = True
+    APPLY_NOTE = "Changes apply when the server (re)starts."
 
     def __init__(self, saved: typing.Callable[[dict[str, typing.Any]], None]) -> None:
         super().__init__(closable=True)
         self.saved = saved
         self.config = selfhost.load_config()
-        self.values = {key: self.config[key] for key in selfhost.DESCRIPTIONS}
-        self.dirty = False
-        self.name_width = max(map(len, selfhost.DESCRIPTIONS))
+        self.values = {key: self.config[key] for key in selfhost.editable_settings()}
+        self.name_width = max(map(len, self.values))
 
     def compose(self) -> ComposeResult:
         with Vertical(id="settings-box"):
             with Horizontal():
                 yield Rows(id="rows")
-                with Vertical(id="detail"):
-                    yield Vertical(id="editor")
-                    with VerticalScroll(id="doc"):
-                        yield Static(id="doc-text")
+                yield detail_pane()
         yield Footer()
 
     def on_mount(self) -> None:
@@ -88,7 +81,7 @@ class SettingsScreen(MasterDetailScreen, ModalScreen):
 
     def row(self, key: str) -> Text:
         value = self.values[key]
-        return self.fitted_row(key, str(value) if value != "" else "(not set)", value != selfhost.DEFAULTS[key])
+        return self.fitted_row(key, str(value) if value != "" else "(not set)", value != self.default_of(key))
 
     def stepped(self, key: str, delta: int) -> typing.Any:
         value = self.values[key]
@@ -100,6 +93,9 @@ class SettingsScreen(MasterDetailScreen, ModalScreen):
         self.query_one("#int", Input).value = str(self.values[key])
         return True
 
+    def default_of(self, key: str) -> typing.Any:
+        return selfhost.SETTINGS[key].default
+
     def set_value(self, key: str, value: typing.Any) -> None:
         if self.values[key] != value:
             self.values[key] = value
@@ -110,14 +106,11 @@ class SettingsScreen(MasterDetailScreen, ModalScreen):
 
     async def build_editor(self) -> None:
         key = self.editor_key
-        value, default = self.values[key], selfhost.DEFAULTS[key]
-        widgets: list = [Label(Text(key, style="bold")),
-                         Label(Text(f"default: {default if default != '' else '(not set)'}", style="dim"),
-                               classes="heading-end")]
-        if key in PATH_KEYS:
-            widgets.append(PathInput(str(value), id="path",
-                                     placeholder="Path. Enter sets, Ctrl+Space completes, Ctrl+B browses"))
-            widgets.append(Label("", id="exists"))
+        setting = selfhost.SETTINGS[key]
+        value, default = self.values[key], setting.default
+        widgets: list = heading(key, f"default: {default if default != '' else '(not set)'}")
+        if setting.path:
+            widgets += self.path_editor(str(value))
         elif isinstance(default, int):
             widgets.append(Input(str(value), type="integer", id="int", placeholder="Number (Enter to set)"))
         else:
@@ -125,84 +118,24 @@ class SettingsScreen(MasterDetailScreen, ModalScreen):
         widgets.append(Label("", id="error"))
         await self.mount_editor(widgets)
         self.update_exists()
-        self.query_one("#doc-text", Static).update(Text(selfhost.DESCRIPTIONS[key] + "\n\n" + APPLY_NOTE))
-        self.query_one("#doc", VerticalScroll).scroll_home(animate=False)
+        self.show_doc(setting.description + "\n\n" + self.APPLY_NOTE)
 
-    def update_exists(self) -> None:
-        if not self.query("#exists"):
-            return
-        value = self.values[self.editor_key]
-        if not value:
-            text = Text("not set", style="dim")
-        elif os.path.exists(os.path.expanduser(value)):
-            text = Text(f"{glyphs.symbol('exists')} exists", style="green")
-        else:
-            text = Text("x doesn't exist", style="red")
-        self.query_one("#exists", Label).update(text)
-
-    @on(Input.Submitted, "#path")
-    @editor_event
-    def path_submitted(self, event: Input.Submitted) -> None:
-        event.stop()
-        value = event.value.strip()
-        self.set_value(self.editor_key, os.path.expanduser(value) if value else "")
-        self.update_exists()
-        self.back_to_rows()
-
-    def action_browse(self) -> None:
-        if not self.query("#path"):
-            return
-        key = self.editor_key
-        value = os.path.expanduser(self.values[key])
-        start = value if os.path.isdir(value) else os.path.dirname(value) if value else os.path.expanduser("~")
-
-        def chosen(path: Path | None) -> None:
-            if path is not None:
-                self.query_one("#path", PathInput).value = str(path)
-                self.set_value(key, str(path))
-                self.update_exists()
-
-        self.app.push_screen(FilePicker(f"Choose {key}", [], "selfhost_browse_dir",
-                                        start if os.path.isdir(start) else os.path.expanduser("~"),
-                                        folders=PATH_KEYS[key], show_all=True), chosen)
-
-    @on(Input.Submitted, "#int")
-    @editor_event
-    def int_submitted(self, event: Input.Submitted) -> None:
-        event.stop()
-        try:
-            self.set_value(self.editor_key, int(event.value))
-        except ValueError:
-            self.error("Not a number.")
-            return
-        self.error("")
-        self.back_to_rows()
-
-    @on(Input.Submitted, "#str")
-    @editor_event
-    def str_submitted(self, event: Input.Submitted) -> None:
-        event.stop()
-        self.set_value(self.editor_key, event.value.strip())
-        self.back_to_rows()
-
-    async def action_reset(self) -> None:
-        if self.editor_key:
-            self.set_value(self.editor_key, selfhost.DEFAULTS[self.editor_key])
-            await self._build_editor_now()
+    def resolved_path(self, key: str) -> str:
+        return os.path.abspath(os.path.expanduser(self.values[key])) if self.values[key] else ""
 
     def action_save(self) -> None:
         if not self.dirty:
             self.notify("No changes to save")
             return
         values = self.values
-        problem = next((f"{key} file not found: {values[key]}" for key in ("cert", "key")
-                        if values[key] and not os.path.isfile(values[key])), None)
-        if bool(values["cert"]) != bool(values["key"]):
-            problem = "Set both cert and key (or neither)."
         active = len(selfhost.active())
         if values["room_count"] < max(1, active):
-            problem = (f"room_count can't be below 1 or the {active} active game(s): deactivate some in Games "
-                       "first.")
+            problem = f"room_count can't be below 1 or the {active} active game(s): deactivate some in Games first."
+        elif bool(values["cert"]) != bool(values["key"]):
+            problem = "Set both cert and key (or neither)."
+        else:
+            problem = next((f"{key} file not found: {values[key]}" for key in ("cert", "key")
+                            if values[key] and not os.path.isfile(values[key])), None)
         if problem:
             self.notify(problem, severity="error", timeout=8)
             return
@@ -215,9 +148,6 @@ class SettingsScreen(MasterDetailScreen, ModalScreen):
         self.config, self.dirty = config, False
         self.refresh_rows()
         self.saved(config)
-
-
-APPLY_NOTE = "Changes apply when the server (re)starts."
 
 
 class GamesList(OptionList):
@@ -285,7 +215,8 @@ class GamesScreen(ModalScreen[typing.Optional[str]]):
 
     @staticmethod
     def label(info: selfhost.Info, active: bool) -> Text:
-        return Text.assemble(("● " if active else "○ ", "green" if active else "dim"), (info["name"], "bold"),
+        return Text.assemble((f"{glyphs.symbol('on' if active else 'off')} ", "green" if active else "dim"),
+                             (info["name"], "bold"),
                              f"  {len(info['players'])} players  {info['loaded'][:16]}")
 
     def selected(self) -> selfhost.Info | None:
@@ -451,13 +382,13 @@ class SelfHostScreen(Screen):
         elif running:
             url = selfhost.base_url(config, self.status)
             server.update(Text.assemble(
-                ("● Running ", "bold green"), (url, f"underline link {url}"),
+                (f"{glyphs.symbol('on')} Running ", "bold green"), (url, f"underline link {url}"),
                 f"  (listening on {self.status['bind']}:{self.status['port']})\n",
                 ("Keeps running after you leave; stop it here.", "dim")))
         elif self.status:
             server.update(Text("Starting…", style="yellow"))
         else:
-            server.update(Text.assemble(("○ Stopped", "bold"), ("  Ctrl+R starts it.", "dim")))
+            server.update(Text.assemble((f"{glyphs.symbol('off')} Stopped", "bold"), ("  Ctrl+R starts it.", "dim")))
         self.query_one("#room", Static).update(self.room_text(config, running))
         self.query_one("#room-bar").display = self.info is not None
         if self.info:
@@ -518,7 +449,7 @@ class SelfHostScreen(Screen):
         players = ", ".join(f"{name} ({game})" for _, name, game in info["players"])
         text = Text(f"{len(info['players'])} players: {players}\n")
         state = selfhost.room_state(info)
-        address = config["public_address"] or (self.status or {}).get("host_address") or "localhost"
+        address = selfhost.public_address(config, self.status)
         if not running:
             text.append("Game server: not running (the website server is stopped)\n", style="dim")
         elif state is None:
@@ -593,15 +524,14 @@ class SelfHostScreen(Screen):
         if self.status:
             self.in_background("Stopping…", lambda: None if selfhost.stop_server() else "The server didn't stop.")
         else:
-            self.in_background("Starting (loading worlds)…", start)
+            self.in_background("Starting (loading worlds)…", start_and_wait)
 
     def action_new_game(self) -> None:
         if self.busy:
             return
-        from aplite.file_picker import FilePicker
-        from aplite.webhost import output_folder
-        picker = FilePicker("Self-host: pick a generated game", SUFFIXES, "host_dir", output_folder())
-        self.app.push_screen(picker, lambda path: path and self.new_game(str(path)))
+        from aplite.webhost import game_picker
+        self.app.push_screen(game_picker("Self-host: pick a generated game"),
+                             lambda path: path and self.new_game(str(path)))
 
     def new_game(self, path: str) -> None:
         """Loads a game (kept in the DB from now on) and activates it if a room is free."""
@@ -614,7 +544,7 @@ class SelfHostScreen(Screen):
             if selfhost.server_status():
                 return f"Added {info['name']}."
             self.app.call_from_thread(setattr, self, "busy", "Starting the server (loading worlds)…")
-            return " ".join(filter(None, [f"Added {info['name']}.", start()]))
+            return " ".join(filter(None, [f"Added {info['name']}.", start_and_wait()]))
         self.in_background(f"Loading {Path(path).name}…", work)
 
     def action_games(self) -> None:
@@ -627,7 +557,7 @@ class SelfHostScreen(Screen):
             selfhost.set_timeouts(int(config["room_timeout"]))
             self.notify("Saved." + (" Restart the server (stop, then start) to apply." if self.status else ""),
                         timeout=8)
-        self.app.push_screen(SettingsScreen(saved))
+        self.app.push_screen(ServerSettingsScreen(saved))
 
     def action_open_room(self) -> None:
         if not (self.info and self.status):
@@ -673,7 +603,8 @@ def tab_id(room: str) -> str:
     return "room-" + room.replace("-", "")
 
 
-def start() -> str | None:
+def start_and_wait() -> str | None:
+    """For in_background: starts the server, raises if it doesn't come up."""
     selfhost.start_server()
     if selfhost.wait_for_server():
         return None

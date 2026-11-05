@@ -4,7 +4,6 @@ from __future__ import annotations
 import dataclasses
 import json
 import logging
-import os
 import typing
 
 from rich.padding import Padding
@@ -16,8 +15,8 @@ from textual.widgets import Footer, Input, OptionList, Static
 from textual.widgets.option_list import Option
 
 import Utils
-from aplite import glyphs
-from aplite.combo import FilterInput
+from aplite import glyphs, write_atomic
+from aplite.combo import FilterInput, first_enabled
 from aplite.version import version
 from aplite.nav import AppliteApp
 from aplite.components import override_for, returns_to_launcher, runnable
@@ -57,12 +56,8 @@ def load_cache() -> list[Cached]:
 def save_cache(components: Components) -> None:
     entries = [dataclasses.asdict(Cached(c.display_name, c.description or "", c.type.name, runnable(c)))
                for c in components]
-    tmp = f"{cache_file()}.{os.getpid()}.tmp"  # per process: several aplites may start at once
     try:
-        os.makedirs(os.path.dirname(cache_file()), exist_ok=True)
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(entries, f)
-        os.replace(tmp, cache_file())
+        write_atomic(cache_file(), json.dumps(entries))
     except OSError as e:
         logging.debug(f"Could not write launcher cache: {e}")
 
@@ -211,8 +206,7 @@ class LauncherApp(AppliteApp):
     def on_option_list_option_highlighted(self, event: OptionList.OptionHighlighted) -> None:
         """On the first entry, scroll to the very top so its group header shows too."""
         options = event.option_list
-        first = next((i for i, option in enumerate(options.options) if not option.disabled), None)
-        if event.option_index == first:
+        if event.option_index == first_enabled(options):
             options.call_after_refresh(options.scroll_home, animate=False)
 
     def on_input_changed(self) -> None:

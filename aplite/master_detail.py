@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import functools
+import os
 import typing
 
 import yaml
@@ -19,10 +20,18 @@ from rich.text import Text
 from textual import on
 from textual.actions import SkipAction
 from textual.binding import Binding
+from textual.containers import Vertical, VerticalScroll
 from textual.screen import Screen
-from textual.widgets import Input, Label, OptionList, SelectionList
+from textual.widgets import Input, Label, OptionList, SelectionList, Static, TextArea
+from textual.widgets.option_list import Option as ListOption
 
+from aplite import glyphs
+from aplite.combo import FilterInput, first_enabled, highlight_first
+from aplite.file_picker import FilePicker, PathInput
 from aplite.nav import AppliteApp
+
+if typing.TYPE_CHECKING:
+    from pathlib import Path
 
 NARROW = 140
 """Below this many columns, opening a game/section hides the side list (Ctrl+G brings it back)."""
@@ -41,6 +50,8 @@ EDITOR_SHARE = 0.6
 """Part of the detail column the editor may take (the rest shows the docs)."""
 MAX_LIST_HEIGHT = 20
 """Most rows an editor list shows before scrolling."""
+NOT_A_NUMBER = "Not a number."
+PATH_PLACEHOLDER = "Path. Enter sets, Ctrl+Space completes, Ctrl+B browses"
 
 CSS = f"""
 #side {{ width: {SIDE_WIDTH}; }}
@@ -76,6 +87,34 @@ def to_yaml(value: typing.Any) -> str:
     if value in (None, ""):
         return ""
     return yaml.safe_dump(value, sort_keys=False, allow_unicode=True).replace("...\n", "")
+
+
+def cycle(values: list, current: typing.Any, delta: int) -> typing.Any:
+    """The next (delta > 0) or previous entry of `values` after `current`; from a value not in the list, the first or
+    last one."""
+    index = values.index(current) if current in values else (-1 if delta > 0 else 0)
+    return values[(index + (1 if delta > 0 else -1)) % len(values)]
+
+
+def side_pane(placeholder: str, *options: ListOption) -> Vertical:
+    """#side: the filter and the list of games / sections (see MasterDetailScreen.side_entries)."""
+    return Vertical(FilterInput(placeholder=placeholder, id="side-filter", target="#side-list"),
+                    OptionList(*options, id="side-list"), id="side")
+
+
+def detail_pane() -> Vertical:
+    """#detail: the highlighted row's editor above its description."""
+    return Vertical(Vertical(id="editor"), VerticalScroll(Static(id="doc-text"), id="doc"), id="detail")
+
+
+def heading(name: str, details: str, end: bool = True) -> list[Label]:
+    """The editor's first lines: the row's name and a dim line (type, default...). `end`: the last heading line."""
+    return [Label(Text(name, style="bold")),
+            Label(Text(details, style="dim"), classes="heading-end" if end else "")]
+
+
+def yaml_editor(value: typing.Any, hint: str) -> list:
+    return [Label(Text(hint, style="dim")), TextArea(to_yaml(value), id="yaml")]
 
 
 def editor_event(handler: typing.Callable) -> typing.Callable:
@@ -118,6 +157,14 @@ class EditorApp(AppliteApp):
 class MasterDetailScreen(Screen):
     BINDINGS = [Binding("escape", "back_to_rows", show=False)]
     CSS = CSS
+    BROWSE_PREF = "settings_browse_dir"
+    """Pref remembering the folder Ctrl+B (browse for a path) was last in."""
+    STRIP_TEXT = False
+    """Strip spaces from text values (#str)."""
+    MISSING_NOTE = ""
+    """Added to "doesn't exist" for a path row."""
+    dirty: bool = False
+    """Unsaved changes."""
 
     def __init__(self, closable: bool = False) -> None:
         super().__init__()
@@ -152,6 +199,18 @@ class MasterDetailScreen(Screen):
     def update_editor(self, key: str) -> bool:
         """Show a stepped value in the editor already built for `key`, without rebuilding it; False: rebuild."""
         return False
+
+    def default_of(self, key: str) -> typing.Any:
+        """The value Ctrl+R resets a row to."""
+        raise NotImplementedError
+
+    def side_entries(self, search: str) -> list[ListOption]:
+        """The side list's entries matching the filter text (casefolded); their ids go to open_side."""
+        raise NotImplementedError
+
+    def open_side(self, key: str) -> None:
+        """Show a side list entry (game, section) and move to its rows."""
+        raise NotImplementedError
 
     def fitted_row(self, name: str, value: str, changed: bool, note: Text | None = None) -> Text:
         """One line fitted to #rows by hand (OptionList wraps long prompts): name column, then the value."""
@@ -248,11 +307,36 @@ class MasterDetailScreen(Screen):
         options = self.query_one("#rows", OptionList)
         options.clear_options()
         options.add_options(rows)
-        first = next((i for i, option in enumerate(options.options) if not option.disabled), None)
-        if first is not None:
-            options.highlighted = first
+        if first_enabled(options) is not None:
+            highlight_first(options)
+
+    async def action_reset(self) -> None:
+        if self.editor_key is not None:
+            self.set_value(self.editor_key, self.default_of(self.editor_key))
+            await self._build_editor_now()
 
     # side list
+
+    def fill_side(self) -> None:
+        search = self.query_one("#side-filter", Input).value.strip().casefold()
+        side = self.query_one("#side-list", OptionList)
+        side.clear_options()
+        side.add_options(self.side_entries(search))
+        highlight_first(side)
+
+    @on(Input.Changed, "#side-filter")
+    def _side_filter_changed(self) -> None:
+        self.fill_side()
+
+    @on(Input.Submitted, "#side-filter")
+    def _side_filter_submitted(self) -> None:
+        option = self.query_one("#side-list", OptionList).highlighted_option
+        if option:
+            self.open_side(option.id)
+
+    @on(OptionList.OptionSelected, "#side-list")
+    def _side_selected(self, event: OptionList.OptionSelected) -> None:
+        self.open_side(event.option.id)
 
     def collapse_side_if_narrow(self) -> None:
         side = self.query_one("#side")
@@ -301,6 +385,10 @@ class MasterDetailScreen(Screen):
             widget.styles.max_height = height
             widget.styles.visibility = "visible"  # hidden until fitted the first time: unfitted, it showed cut off
 
+    def show_doc(self, text: str) -> None:
+        self.query_one("#doc-text", Static).update(Text(text))
+        self.query_one("#doc", VerticalScroll).scroll_home(animate=False)
+
     def error(self, message: str) -> None:
         # query, not query_one: an editor widget's event (Select.Changed on mount) can arrive before #error is mounted
         for label in self.query("#error").results(Label):
@@ -326,7 +414,80 @@ class MasterDetailScreen(Screen):
         self.set_timer(CONFIRM_SECONDS, lambda: self._armed.discard(action))
         return False
 
-    dirty: bool  # unsaved changes
+    # simple editors (#int, #str) and paths (#path with an #exists line, Ctrl+B browses)
+
+    @on(Input.Submitted, "#int")
+    @editor_event
+    def _int_submitted(self, event: Input.Submitted) -> None:
+        event.stop()
+        try:
+            number = int(event.value)
+        except ValueError:
+            self.error(NOT_A_NUMBER)
+            return
+        self.set_value(self.editor_key, number)
+        self.error("")
+        self.back_to_rows()
+
+    @on(Input.Submitted, "#str")
+    @editor_event
+    def _str_submitted(self, event: Input.Submitted) -> None:
+        event.stop()
+        self.set_value(self.editor_key, event.value.strip() if self.STRIP_TEXT else event.value)
+        self.back_to_rows()
+
+    @staticmethod
+    def path_editor(value: str) -> list:
+        return [PathInput(value, id="path", placeholder=PATH_PLACEHOLDER), Label("", id="exists")]
+
+    def resolved_path(self, key: str) -> str:
+        """A path row's value as an absolute path ("" when not set)."""
+        raise NotImplementedError
+
+    def path_note(self, key: str) -> str:
+        """Added to "not set"."""
+        return ""
+
+    def picks_folder(self, key: str) -> bool:
+        return False
+
+    def update_exists(self) -> None:
+        if not self.query("#exists"):
+            return
+        path = self.resolved_path(self.editor_key)
+        if not path:
+            text = Text("not set" + self.path_note(self.editor_key), style="dim")
+        elif os.path.exists(path):
+            text = Text(f"{glyphs.symbol('exists')} exists", style="green")
+        else:
+            text = Text("x doesn't exist" + self.MISSING_NOTE, style="red")
+        self.query_one("#exists", Label).update(text)
+
+    @on(Input.Submitted, "#path")
+    @editor_event
+    def _path_submitted(self, event: Input.Submitted) -> None:
+        event.stop()
+        self.set_value(self.editor_key, os.path.expanduser(event.value.strip()))
+        self.update_exists()
+        self.back_to_rows()
+
+    def action_browse(self) -> None:
+        if not self.query("#path"):
+            return
+        key = self.editor_key
+        path = self.resolved_path(key)
+        start = os.path.dirname(path) if path else ""
+        if not os.path.isdir(start):
+            start = os.path.expanduser("~")
+
+        def chosen(picked: Path | None) -> None:
+            if picked is not None:
+                self.query_one("#path", PathInput).value = str(picked)
+                self.set_value(key, str(picked))
+                self.update_exists()
+
+        self.app.push_screen(FilePicker(f"Choose {key}", [], self.BROWSE_PREF, start, folders=self.picks_folder(key),
+                                        show_all=True), chosen)
 
     def can_leave(self, step: str) -> bool:
         """Asked by AppliteApp on ctrl+q / ctrl+l."""

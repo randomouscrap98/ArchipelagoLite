@@ -36,8 +36,7 @@ if [ "${1:-}" = "--sync" ] || [ "$(cat "$STAMP" 2>/dev/null)" != "$stamp" ]; the
     # install its packages one by one so one unbuildable package doesn't take the rest down
     for r in "$REPO"/worlds/*/requirements.txt; do
         uv pip install --quiet --python "$PY" -r "$r" 2>/dev/null || {
-            grep -v -e 'hash=' -e '^[[:space:]]*#' "$r" | sed 's/[ \\]*$//' | while read -r req; do
-                [ -n "$req" ] || continue
+            "$PY" "$REPO/aplite/requirements.py" --each "$r" | while read -r req; do
                 uv pip install --quiet --python "$PY" "$req" 2>/dev/null || echo "aplite: WARNING: could not install $req ($r)" >&2
             done
         }

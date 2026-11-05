@@ -1,4 +1,5 @@
-"""aplite preferences, stored in aplite.yaml next to host.yaml."""
+"""aplite preferences, stored in aplite.yaml next to host.yaml. Keys: theme, glyphs, colors (colors.py), webhost_url, and
+the folder each file picker was last in (its pref_key, "..._dir")."""
 from __future__ import annotations
 
 import logging
@@ -8,13 +9,14 @@ import typing
 import yaml
 
 import Utils
+from aplite import OFFICIAL_SITE, write_atomic
 
 if typing.TYPE_CHECKING:
     from textual.app import App
 
 DEFAULTS: dict[str, typing.Any] = {
     "theme": "textual-dark",
-    "webhost_url": "https://archipelago.gg",  # Host on Archipelago uploads here (a self-hosted WebHost works too)
+    "webhost_url": OFFICIAL_SITE,  # Host on Archipelago uploads here (a self-hosted WebHost works too)
 }
 
 _prefs: dict[str, typing.Any] | None = None
@@ -47,8 +49,7 @@ def put(key: str, value: typing.Any) -> None:
         return
     prefs[key] = value
     try:
-        with open(path(), "w", encoding="utf-8") as f:
-            yaml.safe_dump(prefs, f, sort_keys=True)
+        write_atomic(path(), yaml.safe_dump(prefs, sort_keys=True))
     except OSError as e:
         logging.warning(f"Could not save {path()}: {e}")
 

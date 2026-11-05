@@ -97,6 +97,11 @@ def _patch_picked(component: Component, path) -> tuple[Component, tuple[str, ...
     return f"No client can open {path.name}"
 
 
+def _picked_file(component: Component, path) -> tuple[Component, tuple[str, ...]]:
+    """The component itself runs with the picked file."""
+    return component, (str(path),)
+
+
 def _apworld_picker() -> Screen:
     from aplite.file_picker import FilePicker
     return FilePicker("Install APWorld", [".apworld"], "apworld_dir", os.path.expanduser("~"))
@@ -120,11 +125,10 @@ def overrides() -> dict[typing.Callable | str, Override]:
         open_patch
     from aplite import webhost
     return {
-        webhost.run: Override(picker=webhost.picker, picked=lambda component, path: (component, (str(path),))),
+        webhost.run: Override(picker=webhost.picker, picked=_picked_file),
         open_patch: Override(run=_open_patch, picker=_patch_picker, picked=_patch_picked,
                              returns=True),  # the patch's client comes back to the launcher (user request)
-        install_apworld: Override(picker=_apworld_picker, picked=lambda component, path: (component, (str(path),)),
-                                  pauses=True),
+        install_apworld: Override(picker=_apworld_picker, picked=_picked_file, pauses=True),
         open_host_yaml: Override(run=_settings_editor),  # upstream's starts a desktop editor in the background
         "OptionsCreator": Override(run=_options_creator),  # upstream's is kivy
         "SNIClient": Override(run=_sni_client),

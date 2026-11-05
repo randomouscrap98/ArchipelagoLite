@@ -26,8 +26,8 @@ appimage=1
 command -v "$MKSQUASHFS" >/dev/null 2>&1 || { echo "build_dist: no mksquashfs, skipping the AppImage" >&2; appimage=0; }
 
 host_python() { uv run --quiet --no-project --python "$PYVER" python "$@"; }
-version=$(sed -n 's/^__version__ = "\(.*\)"/\1/p' "$REPO/Utils.py")
-aplite_version=$(PYTHONPATH="$REPO" host_python -c 'from aplite.version import version; print(version())')
+version=$(PYTHONPATH="$REPO" host_python -m aplite.version --upstream)
+aplite_version=$(PYTHONPATH="$REPO" host_python -m aplite.version)
 name="ArchipelagoLite_${aplite_version}"
 
 rm -rf "$BUILD"
@@ -63,8 +63,7 @@ python_tree() {
     # wheel are built from source: fine for pure Python ones, a compiled one would be built for this host instead
     for r in "$REPO"/worlds/*/requirements.txt; do
         install --only-binary :all: -r "$r" 2>/dev/null || {
-            grep -v -e 'hash=' -e '^[[:space:]]*#' "$r" | sed 's/[ \\]*$//' | while read -r req; do
-                [ -n "$req" ] || continue
+            host_python "$REPO/aplite/requirements.py" --each "$r" | while read -r req; do
                 install --only-binary :all: "$req" 2>/dev/null && continue
                 if install "$req" 2>/dev/null; then
                     echo "build_dist: note: built $req from source ($r)" >&2
@@ -143,29 +142,8 @@ python_tree "$WINDIR" "cpython-$PYVER-windows-x86_64-none" Lib/site-packages x86
 sni "$WINDIR" windows-amd64.zip
 rm -rf "$WINDIR/python/include" "$WINDIR/python/libs" "$WINDIR/python/Lib/idlelib" "$WINDIR/python/Lib/turtledemo" \
     "$WINDIR/python/Lib/ensurepip"
-# CRLF: cmd misreads labels in LF-only batch files
-awk '{ printf "%s\r\n", $0 }' > "$WINDIR/aplite.cmd" <<'EOF'
-@echo off
-rem Archipelago Lite with the bundled Python. Prefers Windows Terminal; set APLITE_NO_WT=1 to stay in this console.
-setlocal
-if not defined APLITE_NO_WT if not defined WT_SESSION (
-    where wt >nul 2>nul && (
-        rem "call" first: cmd /c strips the outer quotes of a line that starts with one
-        start "" wt -d . cmd /c call "%~f0" %*
-        exit /b 0
-    )
-)
-set "HERE=%~dp0"
-set SKIP_REQUIREMENTS_UPDATE=1
-set "PYTHONPATH=%HERE%app;%PYTHONPATH%"
-rem aplite exits with this code to be started again, fresh (coming back to the launcher)
-set APLITE_RELAUNCH=75
-"%HERE%python\python.exe" -m aplite %*
-:again
-if not "%ERRORLEVEL%"=="75" exit /b %ERRORLEVEL%
-"%HERE%python\python.exe" -m aplite
-goto again
-EOF
+# the Windows launcher (aplite/aplite.cmd), CRLF: cmd misreads labels in LF-only batch files
+awk '{ printf "%s\r\n", $0 }' "$REPO/aplite/aplite.cmd" > "$WINDIR/aplite.cmd"
 rm -f "$DIST/${name}_windows-x86_64.zip"
 host_python - "$BUILD/windows" "$DIST/${name}_windows-x86_64.zip" <<'EOF'
 import os, sys, zipfile

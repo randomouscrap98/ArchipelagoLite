@@ -25,7 +25,7 @@ import types
 import typing
 import uuid
 
-from aplite import selfhost
+from aplite import selfhost, site_pages, write_atomic
 
 if typing.TYPE_CHECKING:
     from flask import Flask
@@ -100,8 +100,7 @@ def restrict(app: Flask) -> None:
             abort(404)
         if any(isinstance(value, uuid.UUID) for value in (request.view_args or {}).values()):
             abort(404)  # pages about other seeds/rooms (or new rooms) don't exist here
-        # general site pages (header links: games, tutorials, ...) live on the real site
-        return redirect(f"https://archipelago.gg{request.full_path.rstrip('?')}")
+        return site_pages.to_official_site()  # general site pages (header links: games, tutorials, ...)
 
     def index():
         hosted = [info for room in selfhost.active() if (info := selfhost.game(room))]
@@ -175,15 +174,7 @@ def only_active(autolauncher: types.ModuleType) -> None:
     autolauncher.MultiworldInstance.start_room = start_room
 
 
-INDEX_PAGE = """
-{% extends 'pageWrapper.html' %}
-{% block head %}
-    <title>Games</title>
-    <link rel="stylesheet" type="text/css" href="{{ url_for('static', filename='styles/markdown.css') }}" />
-{% endblock %}
-{% block body %}
-    {% include 'header/grassHeader.html' %}
-    <div class="markdown" style="max-width: 60rem; margin: 1rem auto; padding: 1rem 2rem;">
+INDEX_PAGE = site_pages.page("Games", """
         <h1>Games hosted here</h1>
         {% if games %}
         <ul>
@@ -195,19 +186,9 @@ INDEX_PAGE = """
         {% else %}
         <p>No game is hosted here right now.</p>
         {% endif %}
-    </div>
-{% endblock %}
-"""
+""")
 
-NOT_HOSTED_PAGE = """
-{% extends 'pageWrapper.html' %}
-{% block head %}
-    <title>{{ name }} (not hosted)</title>
-    <link rel="stylesheet" type="text/css" href="{{ url_for('static', filename='styles/markdown.css') }}" />
-{% endblock %}
-{% block body %}
-    {% include 'header/grassHeader.html' %}
-    <div class="markdown" style="max-width: 60rem; margin: 1rem auto; padding: 1rem 2rem;">
+NOT_HOSTED_PAGE = site_pages.page("{{ name }} (not hosted)", """
         <h1>{{ name }}</h1>
         <p>This game isn't hosted right now, so you can't connect to it. Its trackers and downloads still work:
            <a href="{{ url_for('get_multiworld_tracker', tracker=room.tracker) }}">Multiworld Tracker</a>,
@@ -225,9 +206,7 @@ NOT_HOSTED_PAGE = """
             </tr>
             {% endfor %}
         </table>
-    </div>
-{% endblock %}
-"""
+""")
 
 
 def room_process(bind: str, *args: typing.Any) -> None:
@@ -261,10 +240,7 @@ def write_status(**status: typing.Any) -> None:
     import psutil
     process = psutil.Process()
     status = {"pid": process.pid, "created": process.create_time(), **status}
-    path = selfhost.root("server.json")
-    with open(path + ".tmp", "w", encoding="utf-8") as f:
-        json.dump(status, f)
-    os.replace(path + ".tmp", path)
+    write_atomic(selfhost.root("server.json"), json.dumps(status))
 
 
 def stop_rooms() -> None:
@@ -350,7 +326,7 @@ def load(path: str) -> None:
             "loaded": time.strftime("%Y-%m-%d %H:%M:%S"), "players": [list(p) for p in players],
         }
     selfhost.save_game(info)
-    print(f"room: {info['room']}")
+    print(f"{selfhost.LOADED_ROOM}{info['room']}")
 
 
 def main() -> None:

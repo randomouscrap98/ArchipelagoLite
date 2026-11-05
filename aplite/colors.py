@@ -16,7 +16,7 @@ from rich.segment import Segment
 from rich.style import Style
 from textual.filter import LineFilter
 
-from aplite import prefs
+from aplite import glyphs, prefs
 
 if typing.TYPE_CHECKING:
     from textual.app import App
@@ -82,13 +82,13 @@ def overrides() -> dict[str, dict[str, str]]:
     return {mode: dict(saved.get(mode) or {}) for mode in MODES}
 
 
-def color(role: str, mode: str) -> str:
-    saved = overrides()[mode].get(role)
-    return normalize(saved) if saved and normalize(saved) else getattr(ROLES[role], mode)
-
-
 def default(role: str, mode: str) -> str:
     return getattr(ROLES[role], mode)
+
+
+def color(role: str, mode: str) -> str:
+    saved = normalize(overrides()[mode].get(role) or "")
+    return saved or default(role, mode)
 
 
 def is_custom(role: str, mode: str) -> bool:
@@ -110,6 +110,19 @@ def reset_all() -> None:
     prefs.put("colors", {})
 
 
+def theme_mode(app: App) -> str:
+    """Which role colors the app's theme uses: "dark" or "light" (ANSI themes: see RoleFilter.mode)."""
+    return "dark" if app.current_theme.dark else "light"
+
+
+def hint_roles() -> dict[int, str]:
+    """Color role per hint status. Built on use: importing NetUtils takes ~150ms, which the launcher shouldn't pay."""
+    from NetUtils import HintStatus
+    return {HintStatus.HINT_FOUND: "hint_found", HintStatus.HINT_UNSPECIFIED: "hint_unspecified",
+            HintStatus.HINT_NO_PRIORITY: "hint_no_priority", HintStatus.HINT_AVOID: "hint_avoid",
+            HintStatus.HINT_PRIORITY: "hint_priority"}
+
+
 class RoleFilter(LineFilter):
     """Swaps role markers for the role's color for the app's current theme (see module docstring)."""
 
@@ -119,9 +132,7 @@ class RoleFilter(LineFilter):
         self._cache: dict[tuple[Style, str], Style] = {}
 
     def mode(self) -> str:
-        if self.app.native_ansi_color:
-            return "ansi"
-        return "dark" if self.app.current_theme.dark else "light"
+        return "ansi" if self.app.native_ansi_color else theme_mode(self.app)
 
     def clear(self) -> None:
         self._cache.clear()
@@ -158,20 +169,14 @@ def refresh(app: App) -> None:
     for f in app._filters:
         if isinstance(f, RoleFilter):
             f.clear()
-    for screen in app.screen_stack:
-        for widget in [screen, *screen.walk_children()]:
-            widget._styles_cache.clear()
-            widget.refresh()
+    glyphs.redraw_all(app)
 
 
 def make_parser(ctx):
     """The client's JSONtoTextParser with each role tagged by its marker color. Built here, not at import: NetUtils
     costs ~150ms and the launcher imports nav."""
-    from NetUtils import JSONtoTextParser, HintStatus, color_code
-
-    hint_roles = {HintStatus.HINT_FOUND: "hint_found", HintStatus.HINT_UNSPECIFIED: "hint_unspecified",
-                  HintStatus.HINT_NO_PRIORITY: "hint_no_priority", HintStatus.HINT_AVOID: "hint_avoid",
-                  HintStatus.HINT_PRIORITY: "hint_priority"}
+    from NetUtils import JSONtoTextParser, color_code
+    roles_by_status = hint_roles()
 
     class RoleParser(JSONtoTextParser):
         def _handle_color(self, node):
@@ -204,7 +209,7 @@ def make_parser(ctx):
             return super()._handle_entrance_name(node)
 
         def _handle_hint_status(self, node):
-            node["aplite_role"] = hint_roles.get(node["hint_status"])
+            node["aplite_role"] = roles_by_status.get(node["hint_status"])
             return super()._handle_hint_status(node)
 
     return RoleParser(ctx)

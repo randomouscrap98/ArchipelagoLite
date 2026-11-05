@@ -19,19 +19,13 @@ from rich.text import Text
 from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal, Vertical, VerticalScroll
-from textual.widgets import Checkbox, Footer, Input, Label, OptionList, Static, TextArea
+from textual.containers import Horizontal
+from textual.widgets import Checkbox, Footer, Input, Label, OptionList, TextArea
 from textual.widgets.option_list import Option as ListOption
 
 import settings
-from aplite import glyphs
-from aplite.combo import FilterInput, highlight_first
-from aplite.file_picker import FilePicker, PathInput
-from aplite.master_detail import SIDE_TEXT_WIDTH, EditorApp, MasterDetailScreen, Rows, describe, editor_event, fit, \
-    to_yaml
-
-if typing.TYPE_CHECKING:
-    from pathlib import Path
+from aplite.master_detail import SIDE_TEXT_WIDTH, EditorApp, MasterDetailScreen, Rows, cycle, describe, detail_pane, \
+    editor_event, fit, heading, side_pane, to_yaml, yaml_editor
 
 PATH_KINDS = frozenset({"file", "folder"})
 
@@ -58,12 +52,16 @@ def kind(hint: typing.Any) -> tuple[str, type | None]:
     return "yaml", cls
 
 
+def raw(group: settings.Group, name: str) -> typing.Any:
+    """A setting's value as stored: getattr would resolve (and validate) paths, "" resolves to the AP dir, and a
+    missing required path would prompt for it."""
+    return group.__dict__[name] if name in group.__dict__ else getattr(type(group), name, None)
+
+
 def plain(value: typing.Any) -> typing.Any:
     """Setting value -> builtin value for editing (IntEnum -> int, Path -> str, Group -> dict, list subclass -> list)."""
     if isinstance(value, settings.Group):
-        # raw values: getattr would resolve (and validate) paths, and "" resolves to the AP dir
-        return {k: plain(value.__dict__[k] if k in value.__dict__ else getattr(type(value), k, None))
-                for k in value}
+        return {k: plain(raw(value, k)) for k in value}
     value = settings._to_builtin(value)  # also list/dict subclasses (sc2 colors): YAML can only show builtins
     if isinstance(value, (list, tuple, set)):
         return [plain(item) for item in value]
@@ -105,11 +103,11 @@ class Section:
         self.title = key.replace("_", " ").title()
         self.doc = cleandoc(cls.__doc__) if cls.__doc__ else ""
         for name in group:
-            raw = group.__dict__[name] if name in group.__dict__ else getattr(cls, name, None)
-            editor, setting_cls = kind(hints.get(name, type(raw)))
-            doc_cls = setting_cls or (type(raw) if type(raw).__module__ != "builtins" else None)
+            value = raw(group, name)
+            editor, setting_cls = kind(hints.get(name, type(value)))
+            doc_cls = setting_cls or (type(value) if type(value).__module__ != "builtins" else None)
             self.settings[name] = Setting(
-                kind=editor, cls=setting_cls, value=plain(raw), default=plain(getattr(cls, name, None)),
+                kind=editor, cls=setting_cls, value=plain(value), default=plain(getattr(cls, name, None)),
                 doc=cleandoc(doc_cls.__doc__) if doc_cls is not None and doc_cls.__doc__ else "",
                 required=getattr(setting_cls, "required", False))
 
@@ -118,6 +116,7 @@ class SettingsScreen(MasterDetailScreen):
     BINDINGS = [Binding("ctrl+g", "toggle_side", "Sections"), Binding("ctrl+s", "save", "Save"),
                 Binding("ctrl+e", "external", "Edit in $EDITOR"), Binding("ctrl+r", "reset", "Reset setting"),
                 Binding("ctrl+b", "browse", "Browse", show=False)]
+    MISSING_NOTE = " (saving is still allowed)"
 
     def __init__(self) -> None:
         super().__init__()
@@ -131,14 +130,9 @@ class SettingsScreen(MasterDetailScreen):
 
     def compose(self) -> ComposeResult:
         with Horizontal():
-            with Vertical(id="side"):
-                yield FilterInput(placeholder="Filter sections", id="side-filter", target="#side-list")
-                yield OptionList(id="side-list")
+            yield side_pane("Filter sections")
             yield Rows(id="rows")
-            with Vertical(id="detail"):
-                yield Vertical(id="editor")
-                with VerticalScroll(id="doc"):
-                    yield Static(id="doc-text")
+            yield detail_pane()
         yield Footer()
 
     def on_mount(self) -> None:
@@ -154,37 +148,21 @@ class SettingsScreen(MasterDetailScreen):
         names += [name for name in settings._world_settings_name_cache if name not in names]
         self.sections = {}
         for name in names:
-            raw = current.__dict__.get(name, getattr(type(current), name, None))
-            if name in settings._world_settings_name_cache or isinstance(raw, settings.Group):
-                raw = getattr(current, name)  # upcasts an installed world's dict to its Group
-            self.sections[name] = Section(name, raw if raw is not None else {})
+            group = raw(current, name)
+            if name in settings._world_settings_name_cache or isinstance(group, settings.Group):
+                group = getattr(current, name)  # upcasts an installed world's dict to its Group
+            self.sections[name] = Section(name, group if group is not None else {})
         self.sub_title = current.filename or ""
-        self.fill_sections()
+        self.fill_side()
 
     # sections (side list)
 
-    def fill_sections(self) -> None:
-        search = self.query_one("#side-filter", Input).value.strip().casefold()
-        sections = self.query_one("#side-list", OptionList)
-        sections.clear_options()
-        sections.add_options([ListOption(Text(fit(s.title, SIDE_TEXT_WIDTH), style="" if s.editable else "dim"), id=key)
-                              for key, s in self.sections.items()
-                              if search in s.title.casefold() or search in key])
-        highlight_first(sections)
+    def side_entries(self, search: str) -> list[ListOption]:
+        return [ListOption(Text(fit(s.title, SIDE_TEXT_WIDTH), style="" if s.editable else "dim"), id=key)
+                for key, s in self.sections.items() if search in s.title.casefold() or search in key]
 
-    @on(Input.Changed, "#side-filter")
-    def filter_sections(self) -> None:
-        self.fill_sections()
-
-    @on(Input.Submitted, "#side-filter")
-    def pick_highlighted(self) -> None:
-        option = self.query_one("#side-list", OptionList).highlighted_option
-        if option:
-            self.select_section(option.id)
-
-    @on(OptionList.OptionSelected, "#side-list")
-    def section_selected(self, event: OptionList.OptionSelected) -> None:
-        self.select_section(event.option.id)
+    def open_side(self, key: str) -> None:
+        self.select_section(key)
 
     @on(OptionList.OptionHighlighted, "#side-list")
     def section_highlighted(self, event: OptionList.OptionHighlighted) -> None:
@@ -206,7 +184,7 @@ class SettingsScreen(MasterDetailScreen):
     def show_readonly(self) -> None:
         self.query_one("#editor").remove_children()
         text = to_yaml(self.section.group) or "{}"
-        self.query_one("#doc-text", Static).update(Text(self.section.doc + "\n\n" + text))
+        self.show_doc(self.section.doc + "\n\n" + text)
 
     # rows
 
@@ -226,9 +204,7 @@ class SettingsScreen(MasterDetailScreen):
         if setting.kind == "bool":
             return not setting.value
         if setting.kind == "enum":
-            values = [m.value for m in setting.cls]
-            index = values.index(setting.value) if setting.value in values else (-1 if delta > 0 else 0)
-            return values[(index + (1 if delta > 0 else -1)) % len(values)]
+            return cycle([m.value for m in setting.cls], setting.value, delta)
         if setting.kind == "int":
             return (setting.value if isinstance(setting.value, int) else 0) + delta
         return None
@@ -254,6 +230,9 @@ class SettingsScreen(MasterDetailScreen):
 
     # editor for the highlighted setting
 
+    def default_of(self, name: str) -> typing.Any:
+        return self.section.settings[name].default
+
     def setting(self) -> Setting:
         return self.section.settings[self.editor_key]
 
@@ -263,15 +242,12 @@ class SettingsScreen(MasterDetailScreen):
         setting = self.setting()
         value = setting.value
         type_name = setting.cls.__name__ if setting.cls else setting.kind
-        widgets: list = [Label(Text(self.editor_key, style="bold")),
-                         Label(Text(f"{type_name}  (default: {describe(setting.default)})", style="dim"),
-                               classes="" if setting.kind in PATH_KINDS else "heading-end")]
+        widgets: list = heading(self.editor_key, f"{type_name}  (default: {describe(setting.default)})",
+                                end=setting.kind not in PATH_KINDS)
         if setting.kind in PATH_KINDS:
             widgets.append(Label(Text("required" if setting.required else "optional", style="dim"),
                                  classes="heading-end"))
-            widgets.append(PathInput(str(value or ""), id="path",
-                                     placeholder="Path. Enter sets, Ctrl+Space completes, Ctrl+B browses"))
-            widgets.append(Label("", id="exists"))
+            widgets += self.path_editor(str(value or ""))
         elif setting.kind == "bool":
             widgets.append(Checkbox("Enabled", bool(value), id="bool"))
         elif setting.kind == "enum":
@@ -282,7 +258,7 @@ class SettingsScreen(MasterDetailScreen):
         elif setting.kind == "str":
             widgets.append(Input(str(value if value is not None else ""), id="str", placeholder="Text (Enter to set)"))
         else:
-            widgets += [Label(Text("Edit as YAML.", style="dim")), TextArea(to_yaml(value), id="yaml")]
+            widgets += yaml_editor(value, "Edit as YAML.")
         widgets.append(Label("", id="error"))
         await self.mount_editor(widgets)
         editor = self.query_one("#editor")
@@ -291,44 +267,17 @@ class SettingsScreen(MasterDetailScreen):
             if value in values:
                 editor.query_one("#enum", OptionList).highlighted = values.index(value)
         self.update_exists()
-        self.query_one("#doc-text", Static).update(Text(setting.doc or "No description."))
-        self.query_one("#doc", VerticalScroll).scroll_home(animate=False)
+        self.show_doc(setting.doc or "No description.")
 
-    def update_exists(self) -> None:
-        if not self.query("#exists"):
-            return
-        setting = self.setting()
-        if not setting.value:
-            text = Text("not set" + (" (will be asked for when needed)" if setting.required else ""), style="dim")
-        elif setting.path_exists():
-            text = Text(f"{glyphs.symbol('exists')} exists", style="green")
-        else:
-            text = Text("x doesn't exist (saving is still allowed)", style="red")
-        self.query_one("#exists", Label).update(text)
+    def resolved_path(self, name: str) -> str:
+        setting = self.section.settings[name]
+        return str(setting.cls(setting.value).resolve()) if setting.value else ""
 
-    @on(Input.Submitted, "#path")
-    @editor_event
-    def path_submitted(self, event: Input.Submitted) -> None:
-        event.stop()
-        self.set_value(self.editor_key, os.path.expanduser(event.value.strip()))
-        self.update_exists()
-        self.back_to_rows()
+    def path_note(self, name: str) -> str:
+        return " (will be asked for when needed)" if self.section.settings[name].required else ""
 
-    def action_browse(self) -> None:
-        if not self.query("#path"):
-            return
-        setting = self.setting()
-        start = os.path.dirname(setting.cls(setting.value).resolve()) if setting.value else os.path.expanduser("~")
-
-        def chosen(path: Path | None) -> None:
-            if path is not None:
-                self.query_one("#path", PathInput).value = str(path)
-                self.set_value(self.editor_key, str(path))
-                self.update_exists()
-
-        self.app.push_screen(FilePicker(f"Choose {self.editor_key}", [], "settings_browse_dir",
-                                    start if os.path.isdir(start) else os.path.expanduser("~"),
-                                    folders=setting.kind == "folder", show_all=True), chosen)
+    def picks_folder(self, name: str) -> bool:
+        return self.section.settings[name].kind == "folder"
 
     @on(Checkbox.Changed, "#bool")
     @editor_event
@@ -341,33 +290,12 @@ class SettingsScreen(MasterDetailScreen):
         self.set_value(self.editor_key, list(self.setting().cls)[event.option_index].value)
         self.back_to_rows()
 
-    @on(Input.Submitted, "#int")
-    @editor_event
-    def int_submitted(self, event: Input.Submitted) -> None:
-        try:
-            self.set_value(self.editor_key, int(event.value))
-            self.error("")
-            self.back_to_rows()
-        except ValueError:
-            self.error("Not a number.")
-
-    @on(Input.Submitted, "#str")
-    @editor_event
-    def str_submitted(self, event: Input.Submitted) -> None:
-        self.set_value(self.editor_key, event.value)
-        self.back_to_rows()
-
     @on(TextArea.Changed, "#yaml")
     @editor_event
     def yaml_changed(self, event: TextArea.Changed) -> None:
         ok, value = self.parse_yaml(event.text_area.text)
         if ok:
             self.set_value(self.editor_key, value)
-
-    async def action_reset(self) -> None:
-        if self.editor_key and self.section and self.section.editable:
-            self.set_value(self.editor_key, self.setting().default)
-            await self._build_editor_now()
 
     # save / external editor / quit
 

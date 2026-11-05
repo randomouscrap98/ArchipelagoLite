@@ -22,6 +22,7 @@ from aplite import prefs
 from aplite.nav import AppliteApp
 
 SUFFIXES = (".zip", ".archipelago")
+"""Generated games (Generate's output zip, or a bare multidata)."""
 TIMEOUT = (15, 600)
 """Seconds to connect, and to wait for the site's answer (it reads the whole multidata before replying)."""
 
@@ -132,10 +133,14 @@ def output_folder() -> str:
     return folder if os.path.isdir(folder) else Utils.user_path()
 
 
-def picker() -> Screen:
+def game_picker(title: str) -> Screen:
+    """A file picker for generated games, starting in the output folder (also Self-host's)."""
     from aplite.file_picker import FilePicker
-    return FilePicker("Host on Archipelago: pick a generated game", SUFFIXES, "host_dir", output_folder(),
-                      start=output_folder())
+    return FilePicker(title, SUFFIXES, "host_dir", output_folder(), start=output_folder())
+
+
+def picker() -> Screen:
+    return game_picker("Host on Archipelago: pick a generated game")
 
 
 def run(*args: str) -> None:

@@ -7,6 +7,17 @@ import os
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 """The Archipelago checkout aplite lives in."""
+OFFICIAL_SITE = "https://archipelago.gg"
+
+
+def write_atomic(path: str, data: str | bytes) -> None:
+    """Write a whole file so readers (other aplite processes, the self-host server) never see half of it. Creates the
+    folder; raises OSError."""
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    tmp = f"{path}.{os.getpid()}.tmp"  # per process: several may write at once
+    with open(tmp, "wb") as f:
+        f.write(data.encode("utf-8") if isinstance(data, str) else data)
+    os.replace(tmp, path)
 
 
 def child_env() -> dict[str, str]:

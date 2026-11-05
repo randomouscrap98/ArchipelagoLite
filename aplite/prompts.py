@@ -76,15 +76,16 @@ RELAY_MARK = "\x1eaplite-ask "
 
 def _relay(title: str, folder: bool, suffixes: tuple[str, ...], suggest: str) -> str | None:
     import json
-    sys.stdout.write(RELAY_MARK + json.dumps([title, folder, suggest, suffixes]) + "\n")
+    sys.stdout.write(RELAY_MARK + json.dumps([title, folder, suffixes, suggest]) + "\n")
     sys.stdout.flush()
     return sys.stdin.readline().strip() or None
 
 
-def relay_request(line: str) -> tuple[str, bool, str, list[str]]:
+def relay_request(line: str) -> tuple[str, bool, tuple[str, ...], str]:
+    """A relayed prompt's (title, folder, suffixes, suggest), as ask() takes them."""
     import json
-    title, folder, suggest, suffixes = json.loads(line)
-    return title, folder, suggest, suffixes
+    title, folder, suffixes, suggest = json.loads(line)
+    return title, folder, tuple(suffixes), suggest
 
 
 def _ask(title: str, folder: bool, suffixes: tuple[str, ...], suggest: str) -> str | None:

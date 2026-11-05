@@ -1,4 +1,5 @@
-"""File picker screen: dismisses with the chosen path, or None to go back. Remembers the folder in a pref."""
+"""File picker screen: dismisses with the chosen path, or None to go back. Remembers the folder in a pref. Its file tree
++ path input (FileBrowser) is also Generate GUI's."""
 from __future__ import annotations
 
 import os
@@ -10,16 +11,30 @@ from pathlib import Path
 from textual import events
 from textual.app import ComposeResult
 from textual.binding import Binding
+from textual.containers import Vertical
+from textual.message import Message
 from textual.screen import Screen
 from textual.widgets import DirectoryTree, Footer, Input, Static
 
 from aplite import prefs
 
 
+def start_folder(pref_key: str, default_dir: str, start: str | None = None) -> Path:
+    """Where a file tree opens: `start` if given, else the folder saved under `pref_key`, else `default_dir`."""
+    last = prefs.get(pref_key)
+    return Path(start if start and os.path.isdir(start) else last if last and os.path.isdir(last) else default_dir)
+
+
 class FilteredTree(DirectoryTree):
-    """Tree keys (research/keyboard.md): Right opens a folder / goes into it, Left closes it / goes up."""
+    """Tree keys (research/keyboard.md): Right opens a folder / goes into it, Left closes it / goes up. Posts
+    FolderChanged when it shows another folder."""
     BINDINGS = [Binding("backspace", "parent", "Parent folder"), Binding("right", "open_node", show=False),
                 Binding("left", "close_node", show=False)]
+
+    class FolderChanged(Message):
+        def __init__(self, path: Path) -> None:
+            super().__init__()
+            self.path = path
 
     def __init__(self, path: Path, suffixes: typing.Sequence[str], show_all: bool = False) -> None:
         super().__init__(path)
@@ -86,9 +101,24 @@ class FilteredTree(DirectoryTree):
         else:
             self.action_parent()
 
+    def folder(self) -> Path:
+        return Path(self.path).resolve()
+
+    def go_to(self, folder: Path) -> None:
+        self.path = folder
+        self.post_message(self.FolderChanged(folder))
+
     def action_parent(self) -> None:
-        self.path = Path(self.path).resolve().parent
-        self.screen.update_folder()
+        self.go_to(self.folder().parent)
+
+    def toggle_all(self) -> None:
+        self.show_all = not self.show_all
+        self.reload()
+
+    def on_directory_tree_directory_selected(self, event: DirectoryTree.DirectorySelected) -> None:
+        if event.path.name == "..":
+            event.stop()
+            self.action_parent()
 
 
 def dropped_path(text: str) -> Path | None:
@@ -116,8 +146,14 @@ def _not_hidden(path: Path) -> bool:
 
 class PathInput(Input):
     """Ctrl+Space completes the path like a shell: as far as the matches agree, then further presses cycle through them
-    in place. Tab moves focus as usual (research/keyboard.md). Terminals send Ctrl+Space as NUL (ctrl+@)."""
+    in place. Tab moves focus as usual (research/keyboard.md). Terminals send Ctrl+Space as NUL (ctrl+@). A file
+    dropped on it replaces the value and posts Dropped."""
     BINDINGS = [Binding("ctrl+space,ctrl+@", "complete", "Complete path", show=False)]
+
+    class Dropped(Message):
+        def __init__(self, path: Path) -> None:
+            super().__init__()
+            self.path = path
 
     def __init__(self, *args, shows: typing.Callable[[Path], bool] = _not_hidden, **kwargs) -> None:
         """`shows` decides which entries completion offers."""
@@ -126,7 +162,7 @@ class PathInput(Input):
         self.cycle: list[str] = []  # completions Ctrl+Space is cycling through; reset once the value is edited otherwise
 
     def _on_paste(self, event: events.Paste) -> None:
-        """A dropped file replaces the value (cleaned up); in a FilePicker it opens right away."""
+        """A dropped file replaces the value (cleaned up)."""
         path = dropped_path(event.text)
         if path is None:
             super()._on_paste(event)
@@ -134,8 +170,7 @@ class PathInput(Input):
         event.stop()
         self.value = str(path)
         self.cursor_position = len(self.value)
-        if isinstance(self.screen, FilePicker):
-            self.screen.open(path)
+        self.post_message(self.Dropped(path))
 
     def action_complete(self) -> None:
         if self.value in self.cycle:  # cycling: next match
@@ -169,6 +204,70 @@ class PathInput(Input):
         self.cursor_position = len(value)
 
 
+class FileBrowser(Vertical):
+    """A FilteredTree over a PathInput showing the highlighted entry's path. Enter on a file, a typed or dropped path
+    (a folder only with `pick_folders`; otherwise the tree shows it) post Opened: the screen decides what that does
+    (the path may not exist)."""
+
+    class Opened(Message):
+        def __init__(self, path: Path) -> None:
+            super().__init__()
+            self.path = path
+
+    def __init__(self, start: Path, suffixes: typing.Sequence[str], placeholder: str, show_all: bool = False,
+                 pick_folders: bool = False, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.start = start
+        self.suffixes = suffixes
+        self.placeholder = placeholder
+        self.show_all = show_all
+        self.pick_folders = pick_folders
+
+    def compose(self) -> ComposeResult:
+        tree = FilteredTree(self.start, self.suffixes, self.show_all)
+        yield tree
+        yield PathInput(placeholder=self.placeholder, shows=tree.shows)
+
+    @property
+    def tree(self) -> FilteredTree:
+        return self.query_one(FilteredTree)
+
+    @property
+    def path_input(self) -> PathInput:
+        return self.query_one(PathInput)
+
+    def on_directory_tree_file_selected(self, event: DirectoryTree.FileSelected) -> None:
+        event.stop()
+        self.post_message(self.Opened(event.path.resolve()))
+
+    def on_tree_node_highlighted(self, event) -> None:
+        entry = event.node.data
+        if entry is not None:
+            self.path_input.value = str(entry.path.resolve())
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        event.stop()  # Input.Submitted bubbles to the App otherwise
+        self.open(Path(os.path.expanduser(event.value.strip())))
+
+    def on_path_input_dropped(self, event: PathInput.Dropped) -> None:
+        event.stop()
+        self.open(event.path)
+
+    def on_paste(self, event: events.Paste) -> None:
+        """A file dropped on the terminal while the tree has focus (the path input handles its own)."""
+        if path := dropped_path(event.text):
+            event.stop()
+            self.open(path)
+
+    def open(self, path: Path) -> None:
+        path = path.resolve()
+        if path.is_dir() and not self.pick_folders:
+            self.tree.go_to(path)
+            self.tree.focus()
+        else:
+            self.post_message(self.Opened(path))
+
+
 class FilePicker(Screen[Path | None]):
     CSS = """
     #folder { height: 1; padding: 0 1; background: $panel; }
@@ -180,25 +279,20 @@ class FilePicker(Screen[Path | None]):
     def __init__(self, title: str, suffixes: typing.Sequence[str], pref_key: str, default_dir: str,
                  folders: bool = False, show_all: bool = False, start: str | None = None) -> None:
         """Starts in `start` if given, else the folder saved under `pref_key`, else `default_dir`; only shows `suffixes`
-        until Ctrl+T (or
-        everything with `show_all`). With `folders`, it picks a folder: Ctrl+L uses the shown one, Enter on a
-        folder path picks it."""
+        until Ctrl+T (or everything with `show_all`). With `folders`, it picks a folder: Ctrl+L uses the shown one,
+        Enter on a folder path picks it."""
         super().__init__()
         self.folders = folders
         self.show_all = show_all
         self.title_text = title
         self.suffixes = suffixes
         self.pref_key = pref_key
-        last = prefs.get(pref_key)
-        self.start = Path(start if start and os.path.isdir(start) else
-                          last if last and os.path.isdir(last) else default_dir)
+        self.start = start_folder(pref_key, default_dir, start)
 
     def compose(self) -> ComposeResult:
         yield Static(id="folder")
-        tree = FilteredTree(self.start, self.suffixes, self.show_all)
-        yield tree
-        yield PathInput(placeholder="Path to a file or folder. Enter opens, Ctrl+Space completes.",
-                        shows=tree.shows)
+        yield FileBrowser(self.start, self.suffixes, "Path to a file or folder. Enter opens, Ctrl+Space completes.",
+                          show_all=self.show_all, pick_folders=self.folders)
         yield Footer()
 
     def on_mount(self) -> None:
@@ -209,7 +303,7 @@ class FilePicker(Screen[Path | None]):
         return self.folders if action == "use_folder" else True
 
     def action_use_folder(self) -> None:
-        self.choose_folder(Path(self.query_one(FilteredTree).path).resolve())
+        self.choose_folder(self.query_one(FilteredTree).folder())
 
     def choose_folder(self, path: Path) -> None:
         prefs.put(self.pref_key, str(path))
@@ -218,46 +312,19 @@ class FilePicker(Screen[Path | None]):
     def update_folder(self) -> None:
         tree = self.query_one(FilteredTree)
         shown = "all files" if tree.show_all or not self.suffixes else ", ".join(self.suffixes)
-        self.query_one("#folder", Static).update(f"{self.title_text}: {Path(tree.path).resolve()}  ({shown})")
+        self.query_one("#folder", Static).update(f"{self.title_text}: {tree.folder()}  ({shown})")
 
-    def on_directory_tree_directory_selected(self, event: DirectoryTree.DirectorySelected) -> None:
-        if event.path.name == "..":
-            event.stop()
-            self.query_one(FilteredTree).action_parent()
+    def on_filtered_tree_folder_changed(self) -> None:
+        self.update_folder()
 
-    def on_directory_tree_file_selected(self, event: DirectoryTree.FileSelected) -> None:
-        event.stop()
-        self.choose(event.path)
-
-    def on_tree_node_highlighted(self, event) -> None:
-        entry = event.node.data
-        if entry is not None:
-            self.query_one(PathInput).value = str(entry.path.resolve())
-
-    def on_input_submitted(self, event: Input.Submitted) -> None:
-        event.stop()  # the app below may handle Input.Submitted too
-        self.open(Path(os.path.expanduser(event.value.strip())))
-
-    def on_paste(self, event: events.Paste) -> None:
-        """A file dropped on the terminal while the list has focus (the path input handles its own)."""
-        if path := dropped_path(event.text):
-            event.stop()
-            self.open(path)
-
-    def open(self, path: Path) -> None:
-        """A typed or dropped path: a file is chosen, a folder is shown (or chosen, when picking folders)."""
-        path = path.resolve()
-        tree = self.query_one(FilteredTree)
-        if path.is_dir() and self.folders:
-            self.choose_folder(path)
-        elif path.is_dir():
-            tree.path = path
-            self.update_folder()
-            tree.focus()
-        elif path.is_file():
-            self.choose(path)
+    def on_file_browser_opened(self, event: FileBrowser.Opened) -> None:
+        """A file is chosen; a folder only arrives when picking folders."""
+        if event.path.is_dir():
+            self.choose_folder(event.path)
+        elif event.path.is_file():
+            self.choose(event.path)
         else:
-            self.notify(f"Not found: {path}", severity="error")
+            self.notify(f"Not found: {event.path}", severity="error")
 
     def choose(self, path: Path) -> None:
         prefs.put(self.pref_key, str(path.resolve().parent))
@@ -267,7 +334,5 @@ class FilePicker(Screen[Path | None]):
         self.dismiss(None)
 
     def action_toggle_all(self) -> None:
-        tree = self.query_one(FilteredTree)
-        tree.show_all = not tree.show_all
-        tree.reload()
+        self.query_one(FilteredTree).toggle_all()
         self.update_folder()

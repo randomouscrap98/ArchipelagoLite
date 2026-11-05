@@ -34,6 +34,11 @@ class FilterInput(Input):
         self.value = ""
 
 
+def first_enabled(options: OptionList) -> int | None:
+    """Index of the list's first selectable entry."""
+    return next((i for i, option in enumerate(options.options) if not option.disabled), None)
+
+
 def highlight_first(options: OptionList) -> None:
     """After refilling a filtered list: highlight its first selectable entry."""
-    options.highlighted = next((i for i, option in enumerate(options.options) if not option.disabled), None)
+    options.highlighted = first_enabled(options)

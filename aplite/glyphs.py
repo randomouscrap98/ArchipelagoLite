@@ -46,7 +46,7 @@ BLURRED = {"fancy": (("▗", "▄", "▖"), ("▐", " ", "▌"), ("▝", "▀", 
 """Other boxes: glyphs drawn in the box's colour on the parent's background."""
 SCROLLBAR_ENDS = {"fancy": (["▄", " "], ["▌", " "]), "simple": ([" "], [" "])}
 """ScrollBarRender's vertical and horizontal bars: half a cell of smoothness, or none."""
-SYMBOLS = {"favorite": ("♥", "*"), "connected": ("●", "+"), "disconnected": ("○", "-"), "exists": ("√", "ok"),
+SYMBOLS = {"favorite": ("♥", "*"), "on": ("●", "+"), "off": ("○", "-"), "exists": ("√", "ok"),
            "folder": ("►", ">"), "open folder": ("▼", "v"), "search": ("►", ">")}
 """name: (fancy, simple). Fancy ones are in conhost's fonts but missing from some Linux tty fonts."""
 
@@ -91,6 +91,11 @@ def set_mode(app: App, new_mode: Mode) -> None:
     """Switch modes in a running app (saved as the "glyphs" pref) and redraw everything."""
     prefs.put("glyphs", new_mode)
     apply(new_mode)
+    redraw_all(app)
+
+
+def redraw_all(app: App) -> None:
+    """Redraw every widget, borders included (private styles cache), after a change Textual doesn't know about."""
     for screen in app.screen_stack:
         for widget in [screen, *screen.walk_children()]:
             widget._styles_cache.clear()

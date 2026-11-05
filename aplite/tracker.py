@@ -83,7 +83,7 @@ class TrackerPane(Vertical):
     TrackerPane #tracker-list { height: 1fr; }
     """
     # Esc in an empty filter (FilterInput skips it) goes back to the command input
-    BINDINGS = [Binding("escape", "leave", show=False)]
+    BINDINGS = [Binding("escape", "app.focus_command", show=False)]
 
     def __init__(self, ctx: CommonContext) -> None:
         super().__init__()
@@ -104,9 +104,6 @@ class TrackerPane(Vertical):
 
     def on_mount(self) -> None:
         self.refresh_lines()
-
-    def action_leave(self) -> None:
-        self.app.query_one("CommandInput").focus()
 
     def on_input_changed(self, event: FilterInput.Changed) -> None:
         event.stop()

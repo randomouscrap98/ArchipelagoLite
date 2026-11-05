@@ -25,6 +25,11 @@ if typing.TYPE_CHECKING:
 
 STATE_REFRESH = 0.5
 """Seconds between status bar / hints checks (upstream tells the kivy UI through ctx.ui, which aplite leaves None)."""
+RELEASE_TIMEOUT = 5.0
+"""Seconds to keep answering a quitting client's input requests before leaving it to upstream's shutdown."""
+FALLBACK_DELAY = 1.0
+"""Seconds a new context gets to start its own input loop before the fallback starts the app."""
+
 
 @functools.cache
 def hint_status_display() -> tuple[dict[int, str], dict[int, str], dict[int, int]]:
@@ -35,12 +40,9 @@ def hint_status_display() -> tuple[dict[int, str], dict[int, str], dict[int, int
     names = {HintStatus.HINT_FOUND: "Found", HintStatus.HINT_UNSPECIFIED: "Unspecified",
              HintStatus.HINT_NO_PRIORITY: "No Priority", HintStatus.HINT_AVOID: "Avoid",
              HintStatus.HINT_PRIORITY: "Priority"}
-    roles = {HintStatus.HINT_FOUND: "hint_found", HintStatus.HINT_UNSPECIFIED: "hint_unspecified",
-             HintStatus.HINT_NO_PRIORITY: "hint_no_priority", HintStatus.HINT_AVOID: "hint_avoid",
-             HintStatus.HINT_PRIORITY: "hint_priority"}
     order = {HintStatus.HINT_FOUND: 0, HintStatus.HINT_UNSPECIFIED: 1, HintStatus.HINT_NO_PRIORITY: 2,
              HintStatus.HINT_AVOID: 3, HintStatus.HINT_PRIORITY: 4}
-    return names, roles, order
+    return names, colors.hint_roles(), order
 
 
 ARCHIPELAGO_LOGGERS = {"Client", "StreamLog"}
@@ -240,6 +242,9 @@ class ClientApp(AppliteApp):
             return False
         return super().check_action(action, parameters)
 
+    def action_focus_command(self) -> None:
+        self.query_one(CommandInput).focus()
+
     def action_focus_tracker(self) -> None:
         self.query_one(TabbedContent).active = "tab-tracker"
         self.query_one("#tracker-filter").focus()
@@ -256,9 +261,9 @@ class ClientApp(AppliteApp):
         status = Text()
         connected = bool(ctx.server and ctx.server.socket and not ctx.server.socket.closed)
         if connected:
-            status.append(f"{glyphs.symbol('connected')} ", style="green").append("Connected")
+            status.append(f"{glyphs.symbol('on')} ", style="green").append("Connected")
         else:
-            status.append(f"{glyphs.symbol('disconnected')} ", style="red").append("Not connected")
+            status.append(f"{glyphs.symbol('off')} ", style="red").append("Not connected")
         self.refresh_connect_bar(connected)
         if ctx.slot:
             status.append(f"  │  {ctx.player_names.get(ctx.slot, ctx.auth)}")
@@ -410,14 +415,6 @@ async def _release_input_requests(ctx: CommonContext) -> None:
             ctx.input_queue.put_nowait(None)
             ctx.input_requests -= 1
         await asyncio.sleep(0.05)
-
-
-RELEASE_TIMEOUT = 5.0
-"""Seconds to keep answering a quitting client's input requests before leaving it to upstream's shutdown."""
-
-
-FALLBACK_DELAY = 1.0
-"""Seconds a new context gets to start its own input loop before the fallback starts the app."""
 
 
 def install_fallback() -> None:

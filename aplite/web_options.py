@@ -20,6 +20,8 @@ from textual.binding import Binding
 from textual.widgets import Footer, RichLog, Static
 
 import Utils
+from aplite import site_pages
+from aplite.desktop import open_path
 from aplite.nav import AppliteApp
 
 if typing.TYPE_CHECKING:
@@ -45,7 +47,7 @@ def get_world_theme(game_name: str) -> str:
 
 
 def create_app() -> Flask:
-    from flask import Flask, redirect, request
+    from flask import Flask, redirect
 
     app = Flask("WebHostLib", root_path=WEBHOST)  # templates/ and static/ from the real WebHostLib
     app.config["MAX_FORM_MEMORY_SIZE"] = 2 * 1024 * 1024  # as upstream: large pages such as SC2
@@ -81,28 +83,19 @@ def create_app() -> Flask:
     def games():
         from flask import render_template_string
         from worlds.AutoWorld import AutoWorldRegister
+        from aplite.options_creator import has_options_page
         worlds = {game: world for game, world in sorted(AutoWorldRegister.world_types.items(),
-                                                        key=lambda item: item[0].lower())
-                  if not world.hidden and world.web.options_page}
+                                                        key=lambda item: item[0].lower()) if has_options_page(world)}
         return render_template_string(GAMES_PAGE, worlds=worlds)
 
     @app.errorhandler(404)
     def elsewhere(error):
-        # site links in the page headers (other pages of archipelago.gg) go to the real site
-        return redirect(f"https://archipelago.gg{request.full_path.rstrip('?')}")
+        return site_pages.to_official_site()  # site links in the page headers (other pages of the site)
 
     return app
 
 
-GAMES_PAGE = """
-{% extends 'pageWrapper.html' %}
-{% block head %}
-    <title>Options (local)</title>
-    <link rel="stylesheet" type="text/css" href="{{ url_for('static', filename='styles/markdown.css') }}" />
-{% endblock %}
-{% block body %}
-    {% include 'header/grassHeader.html' %}
-    <div class="markdown" style="max-width: 60rem; margin: 1rem auto; padding: 1rem 2rem;">
+GAMES_PAGE = site_pages.page("Options (local)", """
         <h1>Options for installed games</h1>
         <p>A local copy of archipelago.gg's options pages, served by aplite for the worlds installed here
            (including custom apworlds). Export Options saves a YAML for Generate.</p>
@@ -119,16 +112,7 @@ GAMES_PAGE = """
             </tr>
             {% endfor %}
         </table>
-    </div>
-{% endblock %}
-"""
-
-
-def open_browser(url: str) -> None:
-    from aplite.desktop import open_path
-    if not open_path(url):
-        import webbrowser
-        webbrowser.open(url)
+""")
 
 
 class WebOptionsApp(AppliteApp):
@@ -161,13 +145,14 @@ class WebOptionsApp(AppliteApp):
             "Options pages are running at  ", (self.url, "bold underline"), "\n",
             ("Opened in your browser; if it didn't open, copy the link. Leaving (Ctrl+Q / Ctrl+L) stops the server.",
              "dim")))
-        open_browser(self.url)
+        open_path(self.url)  # no webbrowser fallback: it may pick a terminal browser, drawn over this app
 
     def log_line(self, line: str) -> None:
         self.query_one(RichLog).write(line)
 
     def action_open_browser(self) -> None:
-        open_browser(self.url)
+        if not open_path(self.url):
+            self.notify(f"No browser opener found; open {self.url}", timeout=10)
 
     def on_unmount(self) -> None:
         if self.server:

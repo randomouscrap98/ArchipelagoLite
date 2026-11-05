@@ -107,7 +107,7 @@ class ThemeExplorer(Screen):
         app = self.app
         theme = app.current_theme
         mode = "terminal palette (ANSI theme): role colors don't apply" if app.native_ansi_color else \
-            f"{'dark' if theme.dark else 'light'} colors"
+            f"{colors.theme_mode(app)} colors"
         self.query_one("#info", Static).update(
             f"Client colors. Theme: {theme.name}, using {mode}. Enter edits, * = customized. Themes: Ctrl+P.")
         # swatch text: dark on the dark-theme colors, light on the light-theme ones, from the current theme
@@ -196,8 +196,7 @@ class Swatches(Static):
         y, x = event.y, event.x // self.CELL
         if 0 <= y < len(self.rows) and 0 <= x < len(self.rows[0]):
             self.position = (y, x)
-            self.move(0, 0)
-            self.screen.grid_picked(self.rows[y][x])
+            self.screen.grid_picked(self.move(0, 0))
 
 
 def _contrast(value: str) -> str:
@@ -252,7 +251,7 @@ class ColorPicker(ModalScreen[bool]):
 
     def on_mount(self) -> None:
         self.refresh_samples()
-        self.query_one(f"#input-{'dark' if self.app.current_theme.dark else 'light'}", HexInput).focus()
+        self.query_one(f"#input-{colors.theme_mode(self.app)}", HexInput).focus()
 
     def value(self, mode: str) -> str | None:
         return colors.normalize(self.query_one(f"#input-{mode}", HexInput).value)
@@ -278,7 +277,7 @@ class ColorPicker(ModalScreen[bool]):
             self.query_one(Swatches).show(self.value(self.focused_mode()))
 
     def grid_picked(self, value: str) -> None:
-        mode = self.focused_mode() or ("dark" if self.app.current_theme.dark else "light")
+        mode = self.focused_mode() or colors.theme_mode(self.app)
         field = self.query_one(f"#input-{mode}", HexInput)
         field.value = value
         field.focus()

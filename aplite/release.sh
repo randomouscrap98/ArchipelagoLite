@@ -3,6 +3,7 @@
 # then rebuilds dist/ from scratch with build_dist.sh. Needs a clean working tree.
 # Env: REMOTE (default origin)
 set -eu
+PATH="$PATH:$HOME/.local/bin"
 
 REPO=$(cd "$(dirname "$0")/.." && pwd)
 REMOTE=${REMOTE:-origin}
@@ -15,7 +16,7 @@ if existing=$(git describe --tags --exact-match --match 'v*-lite.*' 2>/dev/null)
 fi
 
 git fetch --quiet --tags "$REMOTE"
-upstream=$(sed -n 's/^__version__ = "\(.*\)"/\1/p' Utils.py)
+upstream=$(PYTHONPATH="$REPO" uv run --quiet --no-project --python 3.13 python -m aplite.version --upstream)
 last=$(git tag --list "v$upstream-lite.*" | sed -n "s/^v$upstream-lite\.\([0-9][0-9]*\)$/\1/p" | sort -n | tail -1)
 tag="v$upstream-lite.$(( ${last:-0} + 1 ))"
 

@@ -15,17 +15,17 @@ from rich.text import Text
 from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
-from textual.widgets import Checkbox, Footer, Input, Label, OptionList, Select, SelectionList, Static, TextArea
+from textual.widgets import Checkbox, Footer, Input, Label, OptionList, Select, SelectionList, TextArea
 from textual.widgets.option_list import Option as ListOption
 
 import Utils
 from aplite import prefs
 from aplite.combo import FilterInput, highlight_first
 from aplite.file_picker import FilePicker
-from aplite.master_detail import CSS as MASTER_DETAIL_CSS, EditorApp, MasterDetailScreen, Rows, describe, editor_event, \
-    to_yaml
+from aplite.master_detail import CSS as MASTER_DETAIL_CSS, NOT_A_NUMBER, EditorApp, MasterDetailScreen, Rows, cycle, \
+    describe, detail_pane, editor_event, heading, side_pane, yaml_editor
 
 if typing.TYPE_CHECKING:
     from Options import Option
@@ -84,6 +84,16 @@ def _default_value(option: type[Option]) -> typing.Any:
 def default_value(option: type[Option]) -> typing.Any:
     """The option's default as it would be written in a YAML (a fresh copy, safe to modify)."""
     return copy.copy(_default_value(option))
+
+
+def choice_names(option: type[Option]) -> list[str]:
+    """A choice option's values as a YAML names them, in the order its editor lists them."""
+    return list(option.name_lookup.values())
+
+
+def has_options_page(world: type[World]) -> bool:
+    """Shown in the Options Creator and Web Options (the website's options pages list the same games)."""
+    return not world.hidden and bool(world.web.options_page)
 
 
 def can_randomize(option: type[Option]) -> bool:
@@ -273,25 +283,19 @@ class OptionsScreen(MasterDetailScreen):
         self.options: dict[str, type[Option]] = {}
         self.values: dict[str, typing.Any] = {}  # the current game's entry in values_by_game
         self.values_by_game: dict[str, dict[str, typing.Any]] = {}  # switching games keeps each game's edits
-        self.dirty = False  # unsaved changes
         self.loaded: dict = {}  # the YAML we loaded, kept so saving preserves everything we don't edit
         self.loaded_path: Path | None = None
 
     def compose(self) -> ComposeResult:
         with Horizontal():
-            with Vertical(id="side"):
-                yield FilterInput(placeholder="Filter games", id="side-filter", target="#side-list")
-                yield OptionList(ListOption("Loading worlds…", disabled=True), id="side-list")
+            yield side_pane("Filter games", ListOption("Loading worlds…", disabled=True))
             with Vertical(id="main"):  # name + game stay above the options whether the side list is shown or not
                 with Horizontal(id="top"):
                     yield Input(placeholder="Player name", id="name", max_length=MAX_NAME)
                     yield Label(id="game-label")
                 with Horizontal():
                     yield Rows(id="rows")
-                    with Vertical(id="detail"):
-                        yield Vertical(id="editor")
-                        with VerticalScroll(id="doc"):
-                            yield Static(id="doc-text")
+                    yield detail_pane()
         yield Footer()
 
     def on_mount(self) -> None:
@@ -308,32 +312,17 @@ class OptionsScreen(MasterDetailScreen):
     def worlds_loaded(self) -> None:
         from worlds.AutoWorld import AutoWorldRegister
         self.worlds = {game: world for game, world in sorted(AutoWorldRegister.world_types.items())
-                       if not world.hidden and world.web.options_page}
-        self.fill_games()
+                       if has_options_page(world)}
+        self.fill_side()
 
     # games (side list)
 
-    def fill_games(self) -> None:
-        search = self.query_one("#side-filter", Input).value.strip().casefold()
-        games = self.query_one("#side-list", OptionList)
-        games.clear_options()
-        games.add_options([ListOption(f"{game} (website)" if isinstance(world.web.options_page, str) else game, id=game)
-                           for game, world in self.worlds.items() if search in game.casefold()])
-        highlight_first(games)
+    def side_entries(self, search: str) -> list[ListOption]:
+        return [ListOption(f"{game} (website)" if isinstance(world.web.options_page, str) else game, id=game)
+                for game, world in self.worlds.items() if search in game.casefold()]
 
-    @on(Input.Changed, "#side-filter")
-    def filter_games(self) -> None:
-        self.fill_games()
-
-    @on(Input.Submitted, "#side-filter")
-    def pick_highlighted_game(self) -> None:
-        option = self.query_one("#side-list", OptionList).highlighted_option
-        if option:
-            self.select_game(option.id)
-
-    @on(OptionList.OptionSelected, "#side-list")
-    def game_selected(self, event: OptionList.OptionSelected) -> None:
-        self.select_game(event.option.id)
+    def open_side(self, key: str) -> None:
+        self.select_game(key)
 
     def select_game(self, game: str, values: dict | None = None) -> None:
         """Show a game's options; `values` (from a loaded file) replace any edits made to it so far."""
@@ -379,9 +368,7 @@ class OptionsScreen(MasterDetailScreen):
             self.notify("Random or weighted: edit it in the right pane (Enter)", timeout=3)
             return None
         if option_kind in CHOICE_KINDS:
-            names = list(option.name_lookup.values())
-            index = names.index(value) if value in names else (-1 if delta > 0 else 0)
-            return names[(index + (1 if delta > 0 else -1)) % len(names)]
+            return cycle(choice_names(option), value, delta)
         if option_kind in RANGE_KINDS:
             number = value if isinstance(value, int) else option.range_start
             return max(option.range_start, min(option.range_end, number + delta))
@@ -389,7 +376,7 @@ class OptionsScreen(MasterDetailScreen):
 
     def update_editor(self, key: str) -> bool:
         value = self.values[key]
-        if self.query("#choice") and value in (names := list(self.options[key].name_lookup.values())):
+        if self.query("#choice") and value in (names := choice_names(self.options[key])):
             self.query_one("#choice", OptionList).highlighted = names.index(value)
             if self.query("#custom"):
                 self.query_one("#custom", Input).value = ""
@@ -398,6 +385,9 @@ class OptionsScreen(MasterDetailScreen):
             self.query_one("#number", Input).value = str(value)
             return True
         return False
+
+    def default_of(self, key: str) -> typing.Any:
+        return default_value(self.options[key])
 
     def set_value(self, key: str, value: typing.Any) -> None:
         if self.values.get(key) != value:
@@ -412,13 +402,12 @@ class OptionsScreen(MasterDetailScreen):
         option = self.options[key]
         value = self.values[key]
         option_kind = kind(option)
-        widgets: list = [Label(Text(getattr(option, "display_name", key), style="bold")),
-                         Label(Text(f"{option.__name__}  (default: {describe(default_value(option))})", style="dim"),
-                               classes="heading-end")]
+        widgets: list = heading(getattr(option, "display_name", key),
+                                f"{option.__name__}  (default: {describe(default_value(option))})")
         if is_weighted(option, value) or not isinstance(value, (str, int, bool, list, dict)):
-            widgets += self.yaml_editor(value, "Weighted values; edit as YAML.")
+            widgets += yaml_editor(value, "Weighted values; edit as YAML.")
         elif option_kind in CHOICE_KINDS:
-            names = list(option.name_lookup.values())
+            names = choice_names(option)
             widgets.append(OptionList(*[ListOption(name) for name in names], id="choice"))
             if option_kind == "textchoice":
                 custom = value if isinstance(value, str) and value not in names and not is_random(value) else ""
@@ -438,12 +427,12 @@ class OptionsScreen(MasterDetailScreen):
                                      target="#selection"))
             widgets.append(SelectionList[str](*self.selection_items(option, value, ""), id="selection"))
         elif option_kind == "list":
-            widgets += self.yaml_editor(value, "A YAML list, one '- entry' per line.")
+            widgets += yaml_editor(value, "A YAML list, one '- entry' per line.")
         elif option_kind == "counter":
             limits = f" ({option.min}-{option.max})" if option.min is not None or option.max is not None else ""
-            widgets += self.yaml_editor(value, f"A YAML mapping, one 'name: count{limits}' per line.")
+            widgets += yaml_editor(value, f"A YAML mapping, one 'name: count{limits}' per line.")
         else:
-            widgets += self.yaml_editor(value, "Edit as YAML.")
+            widgets += yaml_editor(value, "Edit as YAML.")
         if can_randomize(option):
             widgets.append(Checkbox("Random", is_random(value), id="random"))
             if option_kind in RANGE_KINDS:
@@ -464,18 +453,13 @@ class OptionsScreen(MasterDetailScreen):
         editor = self.query_one("#editor")
         self.sync_disabled()
         if option_kind in CHOICE_KINDS:
-            names = list(option.name_lookup.values())
+            names = choice_names(option)
             if value in names:
                 editor.query_one("#choice", OptionList).highlighted = names.index(value)
         if editor.query("#selection"):
             highlight_first(editor.query_one("#selection", SelectionList))
 
-        self.query_one("#doc-text", Static).update(Text(cleandoc(option.__doc__ or "No description.")))
-        self.query_one("#doc", VerticalScroll).scroll_home(animate=False)
-
-    @staticmethod
-    def yaml_editor(value: typing.Any, hint: str) -> list:
-        return [Label(Text(hint, style="dim")), TextArea(to_yaml(value), id="yaml")]
+        self.show_doc(cleandoc(option.__doc__ or "No description."))
 
     @staticmethod
     def selection_items(option: type[Option], value: typing.Any, search: str) -> list[tuple[str, str, bool]]:
@@ -520,7 +504,7 @@ class OptionsScreen(MasterDetailScreen):
                 low, high = sorted(int(text) if text else default
                                    for text, default in zip(texts, (option.range_start, option.range_end)))
             except ValueError:
-                self.error("Not a number.")
+                self.error(NOT_A_NUMBER)
                 return
             if error := range_error(option, low) or range_error(option, high):
                 self.error(error)
@@ -541,7 +525,7 @@ class OptionsScreen(MasterDetailScreen):
     @on(OptionList.OptionSelected, "#choice")
     @editor_event
     def choice_selected(self, event: OptionList.OptionSelected) -> None:
-        self.set_value(self.editor_key, list(self.options[self.editor_key].name_lookup.values())[event.option_index])
+        self.set_value(self.editor_key, choice_names(self.options[self.editor_key])[event.option_index])
         self.error("")
         self.back_to_rows()
 
@@ -572,7 +556,7 @@ class OptionsScreen(MasterDetailScreen):
         try:
             number = int(event.value)
         except ValueError:
-            self.error("Not a number.")
+            self.error(NOT_A_NUMBER)
             return
         if error := range_error(option, number):
             self.error(error)
@@ -630,13 +614,9 @@ class OptionsScreen(MasterDetailScreen):
     @on(SelectionList.SelectionToggled, "#selection")
     @editor_event
     def selection_toggled(self, event: SelectionList.SelectionToggled) -> None:
-        chosen = list(self.values[self.editor_key]) if isinstance(self.values[self.editor_key], list) else []
+        """A click: the list already shows the new state."""
         item = event.selection.value
-        if item in chosen:
-            chosen.remove(item)
-        else:
-            chosen.append(item)
-        self.set_value(self.editor_key, sorted(chosen))
+        self.mark([item], item in event.selection_list.selected)
 
     @on(TextArea.Changed, "#yaml")
     @editor_event
@@ -661,11 +641,6 @@ class OptionsScreen(MasterDetailScreen):
                 self.error(f"Unknown: {', '.join(map(str, unknown[:5]))}")
                 return
         self.set_value(self.editor_key, value)
-
-    async def action_reset(self) -> None:
-        if self.editor_key:
-            self.set_value(self.editor_key, default_value(self.options[self.editor_key]))
-            await self._build_editor_now()
 
     # load / save
 

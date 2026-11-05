@@ -20,13 +20,13 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen, Screen
-from textual.widgets import Button, DirectoryTree, Footer, Input, Label, OptionList, ProgressBar, RichLog
+from textual.widgets import Button, Footer, Label, OptionList, ProgressBar, RichLog
 from textual.widgets.option_list import Option as ListOption
 
 import Utils
 import aplite
 from aplite import prefs, prompts
-from aplite.file_picker import FilePicker, FilteredTree, PathInput
+from aplite.file_picker import FileBrowser, FilePicker, FilteredTree, PathInput, start_folder
 from aplite.nav import AppliteApp
 
 SUFFIXES = (".yaml", ".yml")
@@ -108,7 +108,7 @@ class GenerateModal(ModalScreen[None]):
         super().__init__()
         self.files = files
         self.proc: subprocess.Popen | None = None
-        self.folder = tempfile.mkdtemp(prefix="aplite-generate-")
+        self.folder = ""  # copies of the YAMLs, while Generate runs
         self.stage = 0
         self.archive: str | None = None
         self.cancelled = False
@@ -125,6 +125,7 @@ class GenerateModal(ModalScreen[None]):
                 yield Button("Close", id="close", disabled=True)
 
     def on_mount(self) -> None:
+        self.folder = tempfile.mkdtemp(prefix="aplite-generate-")
         for i, path in enumerate(self.files):  # numbered: two folders may hold the same file name
             shutil.copy(path, os.path.join(self.folder, f"{i + 1:02}_{path.name}"))
         env = {**aplite.child_env(), "PYTHONUNBUFFERED": "1", prompts.RELAY_ENV: "1"}
@@ -159,7 +160,7 @@ class GenerateModal(ModalScreen[None]):
 
     def ask(self, request: str) -> None:
         """A file prompt from the child: show the picker, send back the path (empty line: cancelled)."""
-        title, folder, suggest, suffixes = prompts.relay_request(request)
+        title, folder, suffixes, suggest = prompts.relay_request(request)
         start = os.path.dirname(suggest) if suggest else None
         picker = FilePicker(title, suffixes, "prompt_dir", os.path.expanduser("~"), folders=folder, start=start)
 
@@ -226,8 +227,7 @@ class GenerateScreen(Screen):
 
     def __init__(self) -> None:
         super().__init__()
-        last = prefs.get(PREF_KEY)
-        self.start = Path(last if last and os.path.isdir(last) else Utils.user_path("Players"))
+        self.start = start_folder(PREF_KEY, Utils.user_path("Players"))
         self.entries: list[Entry] = []
         from worlds.AutoWorld import AutoWorldRegister
         self.games: typing.Collection[str] = AutoWorldRegister.world_types
@@ -237,10 +237,7 @@ class GenerateScreen(Screen):
         with Horizontal(id="panes"):
             with Vertical(id="left"):
                 yield Label("Files: Enter adds a YAML", classes="heading")
-                tree = FilteredTree(self.start, SUFFIXES)
-                yield tree
-                yield PathInput(placeholder="Path to a YAML or folder. Enter opens, Ctrl+Space completes.",
-                                shows=tree.shows)
+                yield FileBrowser(self.start, SUFFIXES, "Path to a YAML or folder. Enter opens, Ctrl+Space completes.")
             with Vertical(id="right"):
                 yield Label("YAMLs to generate: Delete removes", classes="heading")
                 yield OptionList(id="yamls")
@@ -253,39 +250,20 @@ class GenerateScreen(Screen):
         self.update_folder()
         self.query_one(FilteredTree).focus()
 
-    def update_folder(self) -> None:  # FilteredTree calls this when it changes folder
-        self.query_one(PathInput).value = str(Path(self.query_one(FilteredTree).path).resolve())
+    def update_folder(self) -> None:
+        self.query_one(PathInput).value = str(self.query_one(FilteredTree).folder())
+
+    def on_filtered_tree_folder_changed(self) -> None:
+        self.update_folder()
 
     def log_line(self, text: str, style: str = "") -> None:
         self.query_one("#log", RichLog).write(Text(text, style=style))
 
-    def on_directory_tree_directory_selected(self, event: DirectoryTree.DirectorySelected) -> None:
-        if event.path.name == "..":
-            event.stop()
-            self.query_one(FilteredTree).action_parent()
-
-    def on_tree_node_highlighted(self, event) -> None:
-        entry = event.node.data
-        if entry is not None:
-            self.query_one(PathInput).value = str(entry.path.resolve())
-
-    def on_input_submitted(self, event: Input.Submitted) -> None:
-        """A typed path: a folder is shown in the tree, a file is added."""
-        event.stop()
-        path = Path(os.path.expanduser(event.value.strip())).resolve()
-        tree = self.query_one(FilteredTree)
-        if path.is_dir():
-            tree.path = path
-            self.update_folder()
-            tree.focus()
-        elif path.is_file():
-            self.add(path)
+    def on_file_browser_opened(self, event: FileBrowser.Opened) -> None:
+        if event.path.is_file():
+            self.add(event.path)
         else:
-            self.log_line(f"Not found: {path}", "red")
-
-    def on_directory_tree_file_selected(self, event: DirectoryTree.FileSelected) -> None:
-        event.stop()
-        self.add(event.path.resolve())
+            self.log_line(f"Not found: {event.path}", "red")
 
     def add(self, path: Path) -> None:
         if any(entry.path == path for entry in self.entries):
@@ -376,9 +354,7 @@ class GenerateScreen(Screen):
         self.app.push_screen(GenerateModal([entry.path for entry in self.entries]))
 
     def action_toggle_all(self) -> None:
-        tree = self.query_one(FilteredTree)
-        tree.show_all = not tree.show_all
-        tree.reload()
+        self.query_one(FilteredTree).toggle_all()
 
 
 class GenerateApp(AppliteApp):
@@ -386,6 +362,7 @@ class GenerateApp(AppliteApp):
     CSS = """  /* here, not on GenerateScreen: a default screen's own CSS isn't loaded */
     #panes { height: 1fr; }
     #left { width: 1fr; }
+    FileBrowser { height: 1fr; }
     #right { width: 1fr; }
     #yamls { height: 1fr; }
     FilteredTree { height: 1fr; border: tall $border-blurred; }  /* same box as the lists, so focus shows */

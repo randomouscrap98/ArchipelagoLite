@@ -13,6 +13,7 @@ import os
 import zipimport
 
 import Utils
+from aplite import write_atomic
 
 
 def install() -> None:
@@ -31,11 +32,7 @@ def install() -> None:
             logging.debug(f"Bad bytecode cache entry {path}: {e}")
         code = original(pathname, source)
         try:
-            os.makedirs(cache_dir, exist_ok=True)
-            tmp = f"{path}.{os.getpid()}.tmp"
-            with open(tmp, "wb") as f:
-                marshal.dump(code, f)
-            os.replace(tmp, path)  # atomic, so concurrent starts never read half a file
+            write_atomic(path, marshal.dumps(code))  # concurrent starts never read half a file
         except OSError as e:
             logging.debug(f"Could not write bytecode cache {path}: {e}")
         return code
