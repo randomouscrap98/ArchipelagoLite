@@ -18,7 +18,7 @@ from textual.widgets.option_list import Option
 
 from aplite import nav
 from aplite.master_detail import CONFIRM_SECONDS
-from aplite.combo import FilterInput, highlight_first
+from aplite.combo import FilterInput, highlight_first, keep_scroll
 
 CUSTOM_REPO = "Custom repo available"
 """The description world_manager gives a row whose world names its own repository (adding it, not installing)."""
@@ -127,21 +127,29 @@ class ManagerApp(nav.AppliteApp):
 
     def loaded(self, worlds: list[dict]) -> None:
         self.worlds = worlds
-        self.fill()
+        self.fill(keep_position=True)
         updates = sum(w["sort"] == self.manager.SortStages.UPDATE_AVAILABLE for w in worlds)
         self.status(f"{len(worlds)} worlds, {updates} with updates. Ctrl+R refreshes.")
 
     def on_input_changed(self, event: FilterInput.Changed) -> None:
         self.fill()
 
-    def fill(self) -> None:
+    def fill(self, keep_position: bool = False) -> None:
+        """Refill the list; keep_position: same world (or its row, when it's gone) and scroll, not for a new search."""
+        options = self.query_one(OptionList)
+        old, old_index = self.highlighted(), options.highlighted
         text = self.query_one(FilterInput).value.lower()
         self.shown = [w for w in self.worlds if text in w["title"].lower() or text in w["description"].lower()]
-        options = self.query_one(OptionList)
+        if keep_position:
+            keep_scroll(options)
         options.clear_options()
         width = max((len(w["title"]) for w in self.shown), default=0)
         options.add_options(Option(f"{w['title']:<{width}}  {w['install_text']}") for w in self.shown)
-        highlight_first(options)
+        ids = [w["id"] for w in self.shown]
+        if keep_position and old_index is not None and ids:
+            options.highlighted = ids.index(old["id"]) if old and old["id"] in ids else min(old_index, len(ids) - 1)
+        else:
+            highlight_first(options)
         self.show_details()
 
     def on_option_list_option_highlighted(self, event: OptionList.OptionHighlighted) -> None:
@@ -198,7 +206,7 @@ class ManagerApp(nav.AppliteApp):
             self.status(f"Couldn't delete {file}: {e}")
             return
         self.worlds.remove(world)
-        self.fill()
+        self.fill(keep_position=True)
         self.status(f"Deleted {file}. It stays loaded (and not installable here) until aplite restarts.")
 
     @work(thread=True, exclusive=True)

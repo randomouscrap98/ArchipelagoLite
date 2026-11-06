@@ -16,7 +16,7 @@ from textual.widgets.option_list import Option
 
 import Utils
 from aplite import glyphs, write_atomic
-from aplite.combo import FilterInput, first_enabled
+from aplite.combo import FilterInput, first_enabled, keep_scroll
 from aplite.version import version
 from aplite.nav import AppliteApp
 from aplite.components import override_for, returns_to_launcher, runnable
@@ -154,7 +154,8 @@ class LauncherApp(AppliteApp):
         self.status = status
         self.rebuild()
 
-    def rebuild(self) -> None:
+    def rebuild(self, keep_position: bool = True) -> None:
+        """Refill the list, keeping the highlighted entry; keep_position: and the scroll (not for a new search)."""
         options = self.query_one(OptionList)
         # by Type member name: importing worlds.LauncherComponents loads all worlds, which may still be loading
         groups_by_type = [("CLIENT", "Clients"), ("TOOL", "Tools"), ("ADJUSTER", "Adjusters"), ("MISC", "Misc")]
@@ -173,6 +174,8 @@ class LauncherApp(AppliteApp):
         self.query_one("#status", Static).update(status)
 
         highlighted = options.highlighted_option.id if options.highlighted_option else None
+        if keep_position:
+            keep_scroll(options)
         options.clear_options()
         for label, members in groups:
             if not members:
@@ -210,7 +213,7 @@ class LauncherApp(AppliteApp):
             options.call_after_refresh(options.scroll_home, animate=False)
 
     def on_input_changed(self) -> None:
-        self.rebuild()
+        self.rebuild(keep_position=False)
 
     def on_input_submitted(self) -> None:
         self.launch()

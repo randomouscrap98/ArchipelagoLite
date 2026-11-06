@@ -111,7 +111,7 @@ class ThemeExplorer(Screen):
         self.query_one("#info", Static).update(
             f"Client colors. Theme: {theme.name}, using {mode}. Enter edits, * = customized. Themes: Ctrl+P.")
         table = self.query_one(DataTable)
-        row = table.cursor_row
+        row, scroll_y = table.cursor_row, table.scroll_y
         table.clear()
         for name, role in colors.ROLES.items():
             table.add_row(Text(role.label, style=colors.style(name)),
@@ -119,6 +119,7 @@ class ThemeExplorer(Screen):
                             for mode in colors.MODES),
                           role.used_for, key=name)
         table.move_cursor(row=row, animate=False)
+        table.call_after_refresh(table.scroll_to, y=scroll_y, animate=False)  # move_cursor scrolls it into view
         self.query_one("#preview", Static).update(preview())
 
     def selected(self) -> str:

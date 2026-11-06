@@ -39,6 +39,17 @@ def first_enabled(options: OptionList) -> int | None:
     return next((i for i, option in enumerate(options.options) if not option.disabled), None)
 
 
+def keep_scroll(options: OptionList) -> None:
+    """Before refilling a list in place: put its scroll position back afterwards (setting the highlight again
+    scrolls it into view), unless that would hide the highlight."""
+    scroll_y = options.scroll_y
+
+    def restore() -> None:
+        options.scroll_to(y=scroll_y, animate=False, immediate=True)
+        options.scroll_to_highlight()
+    options.call_after_refresh(restore)
+
+
 def highlight_first(options: OptionList) -> None:
     """After refilling a filtered list: highlight its first selectable entry."""
     options.highlighted = first_enabled(options)

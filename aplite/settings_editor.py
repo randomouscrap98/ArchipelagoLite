@@ -24,6 +24,7 @@ from textual.widgets import Checkbox, Footer, Input, Label, OptionList, TextArea
 from textual.widgets.option_list import Option as ListOption
 
 import settings
+from aplite.combo import keep_scroll
 from aplite.master_detail import SIDE_TEXT_WIDTH, EditorApp, MasterDetailScreen, Rows, cycle, describe, detail_pane, \
     editor_event, fit, heading, side_pane, to_yaml, yaml_editor
 
@@ -335,11 +336,22 @@ class SettingsScreen(MasterDetailScreen):
         with self.app.suspend():
             subprocess.call([*shlex.split(editor), current.filename])
         settings.get_settings._cache = None  # reload what the editor wrote
+        side, rows = self.query_one("#side-list", OptionList), self.query_one("#rows", OptionList)
         selected = self.section.key if self.section else None
+        row = rows.highlighted_option.id if rows.highlighted_option else None
+        keep_scroll(side)
+        keep_scroll(rows)
         self.section = None
-        self.load()
+        with self.prevent(OptionList.OptionHighlighted):  # the refilled side list would select its first section
+            self.load()
+            ids = [option.id for option in side.options]
+            if selected in ids:
+                side.highlighted = ids.index(selected)
         if selected in self.sections:
             self.select_section(selected, focus=False)
+            ids = [option.id for option in rows.options]
+            if row in ids:
+                rows.highlighted = ids.index(row)
         self.notify("Reloaded host.yaml")
 
 

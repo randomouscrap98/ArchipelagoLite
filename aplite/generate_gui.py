@@ -26,6 +26,7 @@ from textual.widgets.option_list import Option as ListOption
 import Utils
 import aplite
 from aplite import prefs, prompts
+from aplite.combo import keep_scroll
 from aplite.file_picker import FileBrowser, FilePicker, FilteredTree, PathInput, start_folder
 from aplite.nav import AppliteApp
 
@@ -311,6 +312,7 @@ class GenerateScreen(Screen):
         yamls = self.query_one("#yamls", OptionList)
         highlighted = yamls.highlighted
         self.entries = [check_yaml(entry.path, games) for entry in self.entries]
+        keep_scroll(yamls)
         yamls.clear_options()
         yamls.add_options([ListOption(entry.label()) for entry in self.entries])
         if highlighted is not None and self.entries:
