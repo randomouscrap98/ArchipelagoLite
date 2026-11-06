@@ -125,10 +125,11 @@ def yaml_editor(value: typing.Any, hint: str) -> list:
 
 def editor_event(handler: typing.Callable) -> typing.Callable:
     """For handlers of editor widget events: drops events from widgets a rebuild already removed, which would otherwise
-    edit whatever row the editor shows now (or query widgets that are gone)."""
+    edit whatever row the editor shows now (or query widgets that are gone), and events during a build (Select.Changed
+    on mount, before its siblings are mounted: it only repeats the value the editor was built with)."""
     @functools.wraps(handler)
     def wrapper(self, event=None) -> None:  # event None: called directly
-        if event is None or event.control is None or event.control.is_attached:
+        if event is None or event.control is None or event.control.is_attached and not self._editor_lock.locked():
             handler(self, event)
     return wrapper
 
