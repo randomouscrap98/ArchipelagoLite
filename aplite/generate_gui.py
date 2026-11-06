@@ -361,7 +361,7 @@ class GenerateScreen(Screen):
 
 
 class GenerateApp(AppliteApp):
-    TITLE = "Generate GUI"
+    TITLE = "Generate Seed"
     CSS = """  /* here, not on GenerateScreen: a default screen's own CSS isn't loaded */
     #panes { height: 1fr; }
     #left { width: 1fr; }
@@ -388,5 +388,5 @@ def run(*args: str) -> None:
 def component():
     """Launcher entry for this tool (added to the component list by aplite)."""
     from worlds.LauncherComponents import Component, Type
-    return Component("Generate GUI", func=run, component_type=Type.TOOL,
+    return Component("Generate Seed", func=run, component_type=Type.TOOL,
                      description="Pick player YAMLs and generate a multiworld, with the log on screen.")

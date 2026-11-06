@@ -72,7 +72,7 @@ def load() -> list:
         import worlds.LauncherComponents as LauncherComponents
         LauncherComponents.run_in_process = True  # core hook: clients need this terminal's stdin
         LauncherComponents.components.extend(components.extra_components())
-        components.rename_old_host(LauncherComponents.components)
+        components.rename_old_components(LauncherComponents.components)
         _loaded = True
     import worlds.LauncherComponents as LauncherComponents
     return LauncherComponents.components

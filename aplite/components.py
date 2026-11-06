@@ -146,17 +146,24 @@ def override_for(component: Component) -> Override:
     return table.get(component.func) or table.get(component.script_name) or Override()
 
 
-RENAMED = {"Host": "Host (old)"}
-"""Upstream component names aplite shows differently; the old names still work for `python -m aplite <name>`."""
+RENAMED = {"Host": "Host (old)", "Generate": "Generate (old)", "Generate GUI": "Generate Seed"}
+"""Component names aplite shows differently (upstream's, and its own former ones); the old names still work for
+`python -m aplite <name>`."""
+OLD_DESCRIPTIONS = {
+    ("MultiServer", "Host"): "Old, limited hosting: only the game server for a generated multiworld, in this terminal. "
+                             "No room page, trackers or downloads; Self-host has those.",
+    ("Generate", "Generate"): "Old, plain generation: the YAMLs in the players folder, output in this terminal. "
+                              "Generate Seed lets you pick YAMLs and checks them first.",
+}
+"""Upstream's Host is only the game server (Self-host is the full room); Generate only runs Generate.py."""
 
 
-def rename_old_host(components: list[Component]) -> None:
-    """Upstream's Host is only the game server; Self-host is the full room (website pages too)."""
+def rename_old_components(components: list[Component]) -> None:
     for component in components:
-        if component.script_name == "MultiServer" and component.display_name == "Host":
-            component.display_name = RENAMED["Host"]
-            component.description = ("Old, limited hosting: only the game server for a generated multiworld, in this "
-                                     "terminal. No room page, trackers or downloads; Self-host has those.")
+        description = OLD_DESCRIPTIONS.get((component.script_name, component.display_name))
+        if description:
+            component.display_name = RENAMED[component.display_name]
+            component.description = description
 
 
 def extra_components() -> list[Component]:
