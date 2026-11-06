@@ -4,6 +4,7 @@ it. Also: the saved theme, and terminal log output held back while an app is on 
 from __future__ import annotations
 
 import contextlib
+import dataclasses
 import functools
 import logging
 import os
@@ -14,6 +15,7 @@ import typing
 
 from textual.app import App, SystemCommand
 from textual.binding import Binding
+from textual.theme import BUILTIN_THEMES
 
 from aplite import colors, glyphs, prefs  # glyphs patches Textual on import
 
@@ -71,6 +73,17 @@ def _stdin_is_tty() -> bool:
         return False
 
 
+def register_ansi_themes(app: App) -> None:
+    """Textual's ANSI themes draw an unfocused list's highlight in the terminal's default colors: invisible, and our
+    filter-field lists (launcher, editors) are never focused. Blue / cyan instead (reverse would suit any palette, but
+    Textual 8.2 drops it from list highlights; gray is the background in some palettes, e.g. Solarized)."""
+    for name, extra in (("ansi-dark", {"border": "ansi_cyan", "block-cursor-blurred-background": "ansi_blue"}),
+                        ("ansi-light", {"block-cursor-blurred-background": "ansi_cyan"})):  # dark text on blue: unreadable
+        theme = BUILTIN_THEMES[name]
+        app.register_theme(dataclasses.replace(theme, variables={
+            **theme.variables, "block-cursor-blurred-foreground": "ansi_bright_white", **extra}))
+
+
 class AppliteApp(App):
     BINDINGS = [Binding("ctrl+q", "leave('quit')", "Quit"), Binding("ctrl+l", "leave('launcher')", "Launcher"),
                 Binding("ctrl+p", "command_palette", "Options", show=False)]  # the footer shows it at the right
@@ -83,6 +96,7 @@ class AppliteApp(App):
             return super().run(*args, **kwargs)
 
     def on_mount(self) -> None:  # Textual calls each class's on_mount, so subclasses get this too
+        register_ansi_themes(self)
         prefs.bind_theme(self)
         colors.install(self)
         self.animation_level = "none"  # Textual's own animations (tab underline, smooth scrolls) lagged behind

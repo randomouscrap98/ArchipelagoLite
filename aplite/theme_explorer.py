@@ -39,8 +39,8 @@ BLK_NX64 = (
 NX64's FFFFFF (also in Endesga) is E3EFFA here, continuing its blue ramp."""
 
 
-def swatch(value: str, text_color: str, custom: bool = False) -> Text:
-    return Text(f" {value}{'*' if custom else ' '}", style=Style(color=text_color, bgcolor=value))
+def swatch(value: str, custom: bool = False) -> Text:
+    return Text(f" {value}{'*' if custom else ' '}", style=Style(color=_contrast(value), bgcolor=value))
 
 
 def marked(*parts: str | tuple[str, str]) -> Text:
@@ -110,18 +110,12 @@ class ThemeExplorer(Screen):
             f"{colors.theme_mode(app)} colors"
         self.query_one("#info", Static).update(
             f"Client colors. Theme: {theme.name}, using {mode}. Enter edits, * = customized. Themes: Ctrl+P.")
-        # swatch text: dark on the dark-theme colors, light on the light-theme ones, from the current theme
-        variables = app.get_css_variables()
-        dark_text, light_text = variables["background"], variables["foreground"]
-        if not theme.dark:
-            dark_text, light_text = light_text, dark_text
-        text_color = {"dark": dark_text, "light": light_text}
         table = self.query_one(DataTable)
         row = table.cursor_row
         table.clear()
         for name, role in colors.ROLES.items():
             table.add_row(Text(role.label, style=colors.style(name)),
-                          *(swatch(colors.color(name, mode), text_color[mode], colors.is_custom(name, mode))
+                          *(swatch(colors.color(name, mode), colors.is_custom(name, mode))
                             for mode in colors.MODES),
                           role.used_for, key=name)
         table.move_cursor(row=row, animate=False)

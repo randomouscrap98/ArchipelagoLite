@@ -20,6 +20,7 @@ from rich.segment import Segment
 from textual import _border, _styles_cache, command, keys
 from textual.renderables.bar import Bar
 from textual.scrollbar import ScrollBarRender
+from textual.color import Color
 from textual.content import Content
 from textual.style import Style
 from textual.widgets import DirectoryTree
@@ -54,6 +55,8 @@ UNSAFE = {name for name in _border.BORDER_CHARS if name not in SAFE_BORDERS}
 mode: Mode = "fancy"
 _focused = False
 """Whether the widget being rendered has focus (rendering is synchronous)."""
+_dark = True
+"""Whether the app rendering it has a dark theme (same)."""
 
 
 def default_mode() -> Mode:
@@ -102,6 +105,10 @@ def redraw_all(app: App) -> None:
             widget.refresh()
 
 
+ANSI_BLURRED = {True: Color.parse("ansi_bright_black"), False: Color.parse("ansi_white")}
+"""Unfocused box outline in ANSI themes, by dark: dark / light gray in most palettes (Solarized: the background)."""
+
+
 @functools.lru_cache(maxsize=1024)
 def _blurred_box(colour, inner_style: Style, outer_style: Style):
     glyph = Style(background=outer_style.background, foreground=colour).rich_style
@@ -122,11 +129,14 @@ def _install() -> None:
         if name in UNSAFE and not _focused:
             # outer is a coloured stripe (toast severity, Markdown quotes): keep its colour
             colour = style.foreground if name == "outer" and style.foreground else inner_style.background
+            if colour.ansi == -1:  # ANSI themes' ansi_default background: as a foreground it's the default text
+                colour = ANSI_BLURRED[_dark]
             return _blurred_box(colour, inner_style, outer_style)
         return get_box(name, inner_style, outer_style, style)
 
     def render_widget_noting_focus(self, widget, crop):
-        global _focused
+        global _focused, _dark
+        _dark = widget.app.current_theme.dark
         # a Select keeps focus itself but draws its box on its SelectCurrent child
         _focused = widget.has_focus or isinstance(widget, SelectCurrent) and widget.parent.has_focus
         return render_widget(self, widget, crop)
