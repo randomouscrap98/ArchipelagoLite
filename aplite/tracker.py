@@ -75,6 +75,12 @@ def supported(ctx: CommonContext) -> bool:
     return hasattr(ctx, "tracker_core")
 
 
+def find_nearest(lines: list, line, index: int) -> int:
+    """Index of the `line` in `lines` closest to `index`, or `index` if it's gone."""
+    matches = [i for i, other in enumerate(lines) if other == line]
+    return min(matches, key=lambda i: abs(i - index)) if matches else index
+
+
 class TrackerPane(Vertical):
     DEFAULT_CSS = """
     TrackerPane { height: 1fr; }
@@ -122,10 +128,21 @@ class TrackerPane(Vertical):
         status.update(Text("  │  ").join(to_text(text) for text in summary if text))
         lines = [to_text(line) for line in list(self.page.lines)]
         options = self.query_one("#tracker-list", OptionList)
-        highlighted = options.highlighted
+        old = [options.get_option_at_index(i).prompt for i in range(options.option_count)]
+        highlighted, scroll_y = options.highlighted, options.scroll_y
+        top = min(int(scroll_y), len(old) - 1)  # assumes one line per entry (tracker lines are short)
         options.clear_options()
         options.add_options([line for line in lines if query in line.plain.casefold()]
                             or [Text("No matches." if query and lines else "Waiting for the tracker...",
                                      style="dim")])
-        if highlighted is not None and highlighted < options.option_count:
-            options.highlighted = highlighted
+        # Keep the user's place when entries appear/disappear above it: the highlight and the top visible line follow
+        # their entry's text (nearest match, names can repeat in headers), else stay at the same index
+        new = [options.get_option_at_index(i).prompt for i in range(options.option_count)]
+        if highlighted is not None and highlighted < len(old):
+            highlighted = find_nearest(new, old[highlighted], highlighted)
+            if highlighted < options.option_count:
+                options.highlighted = highlighted
+        if top >= 0:
+            scroll_y += find_nearest(new, old[top], top) - top
+        # clearing reset the scroll, and restoring the highlight scrolls to it
+        options.call_after_refresh(options.scroll_to, y=scroll_y, animate=False)
