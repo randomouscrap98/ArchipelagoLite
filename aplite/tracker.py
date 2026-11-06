@@ -7,21 +7,27 @@ from __future__ import annotations
 import re
 import typing
 
+from rich.style import Style
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical
 from textual.widgets import OptionList, Static
 
+from aplite import colors
 from aplite.combo import FilterInput
 
 if typing.TYPE_CHECKING:
     from CommonClient import CommonContext
 
 # per TrackerLogLineGroup / UTTextColor name; UT's kivy colors (Tracker.kv) assume a dark background
-STYLES = {"error": "red", "default": "", "ut_status": "italic", "hinted": "dodger_blue2", "hinted_in_logic": "cyan",
-          "hinted_glitched": "dark_orange", "excluded": "dim", "excluded_glitched": "dim dark_orange",
-          "glitched": "gold3", "unconnected": "green", "in_logic": "green", "out_of_logic": "red"}
+STYLES = {"error": colors.style("tracker_out_of_logic"), "default": Style(), "ut_status": Style(italic=True),
+          "hinted": colors.style("tracker_hinted"), "hinted_in_logic": colors.style("tracker_hinted_in_logic"),
+          "hinted_glitched": colors.style("tracker_hinted_glitched"), "excluded": Style(dim=True),
+          "excluded_glitched": colors.style("tracker_glitched") + Style(dim=True),
+          "glitched": colors.style("tracker_glitched"), "unconnected": colors.style("tracker_in_logic"),
+          "in_logic": colors.style("tracker_in_logic"), "out_of_logic": colors.style("tracker_out_of_logic")}
+"""UT's color groups -> client color roles (colors.py)."""
 NO_GUI_COLOR = "DD00FF"  # what UT's module-level get_ut_color returns without kivy: treat as unstyled
 MARKUP = re.compile(r"\[color=([^\]]*)\](.*?)\[/color\]")
 LABELS = ("total_locs", "logic_locs", "glitched_locs", "hinted_locs", "go_mode")

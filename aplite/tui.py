@@ -233,7 +233,7 @@ class ClientApp(AppliteApp):
         return self.logger_tabs[name]
 
     def echo(self, text: str) -> None:
-        line = Text(text, style="orange1")
+        line = Text(text, style=colors.style("echo"))
         self.query_one("#log-all", RichLog).write(line)
         self.query_one("#log-archipelago", RichLog).write(line)
 
@@ -261,9 +261,9 @@ class ClientApp(AppliteApp):
         status = Text()
         connected = bool(ctx.server and ctx.server.socket and not ctx.server.socket.closed)
         if connected:
-            status.append(f"{glyphs.symbol('on')} ", style="green").append("Connected")
+            status.append(f"{glyphs.symbol('on')} ", style=colors.style("connected")).append("Connected")
         else:
-            status.append(f"{glyphs.symbol('off')} ", style="red").append("Not connected")
+            status.append(f"{glyphs.symbol('off')} ", style=colors.style("not_connected")).append("Not connected")
         self.refresh_connect_bar(connected)
         if ctx.slot:
             status.append(f"  │  {ctx.player_names.get(ctx.slot, ctx.auth)}")

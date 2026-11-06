@@ -55,8 +55,8 @@ UNSAFE = {name for name in _border.BORDER_CHARS if name not in SAFE_BORDERS}
 mode: Mode = "fancy"
 _focused = False
 """Whether the widget being rendered has focus (rendering is synchronous)."""
-_dark = True
-"""Whether the app rendering it has a dark theme (same)."""
+_outline: Color | None = None
+"""The rendering app's theme's aplite-outline color, if it has one (same)."""
 
 
 def default_mode() -> Mode:
@@ -105,15 +105,16 @@ def redraw_all(app: App) -> None:
             widget.refresh()
 
 
-ANSI_BLURRED = {True: Color.parse("ansi_bright_black"), False: Color.parse("ansi_white")}
-"""Unfocused box outline in ANSI themes, by dark: dark / light gray in most palettes (Solarized: the background)."""
-
-
 @functools.lru_cache(maxsize=1024)
 def _blurred_box(colour, inner_style: Style, outer_style: Style):
     glyph = Style(background=outer_style.background, foreground=colour).rich_style
     inside = inner_style.rich_style
     return tuple(tuple(Segment(c, inside if c == " " else glyph) for c in row) for row in BLURRED[mode])
+
+
+@functools.lru_cache(maxsize=16)
+def _parse_color(value: str | None) -> Color | None:
+    return Color.parse(value) if value else None
 
 
 def _checkbox(self: ToggleButton) -> Content:
@@ -129,14 +130,14 @@ def _install() -> None:
         if name in UNSAFE and not _focused:
             # outer is a coloured stripe (toast severity, Markdown quotes): keep its colour
             colour = style.foreground if name == "outer" and style.foreground else inner_style.background
-            if colour.ansi == -1:  # ANSI themes' ansi_default background: as a foreground it's the default text
-                colour = ANSI_BLURRED[_dark]
+            if _outline and name != "outer":  # the panel color is no outline there (black, ansi_default text)
+                colour = _outline
             return _blurred_box(colour, inner_style, outer_style)
         return get_box(name, inner_style, outer_style, style)
 
     def render_widget_noting_focus(self, widget, crop):
-        global _focused, _dark
-        _dark = widget.app.current_theme.dark
+        global _focused, _outline
+        _outline = _parse_color(widget.app.current_theme.variables.get("aplite-outline"))  # nav.register_themes
         # a Select keeps focus itself but draws its box on its SelectCurrent child
         _focused = widget.has_focus or isinstance(widget, SelectCurrent) and widget.parent.has_focus
         return render_widget(self, widget, crop)

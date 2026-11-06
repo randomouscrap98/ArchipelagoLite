@@ -11,6 +11,7 @@ import threading
 import typing
 from pathlib import Path
 
+from rich.style import Style
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -20,7 +21,7 @@ from textual.widgets import Button, Footer, Input, Label, OptionList, RichLog, S
 from textual.widgets.option_list import Option as ListOption
 
 import Utils
-from aplite import glyphs, selfhost
+from aplite import colors, glyphs, selfhost
 from aplite.master_detail import MasterDetailScreen, Rows, TextScroll, detail_pane, heading
 from aplite.nav import AppliteApp
 
@@ -383,7 +384,7 @@ class SelfHostScreen(Screen):
         elif running:
             url = selfhost.base_url(config, self.status)
             server.update(Text.assemble(
-                (f"{glyphs.symbol('on')} Running ", "bold green"), (url, f"underline link {url}"),
+                (f"{glyphs.symbol('on')} Running ", colors.style("connected") + Style(bold=True)), (url, f"underline link {url}"),
                 f"  (listening on {self.status['bind']}:{self.status['port']})\n",
                 ("Keeps running after you leave; stop it here.", "dim")))
         elif self.status:

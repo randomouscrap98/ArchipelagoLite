@@ -15,7 +15,8 @@ import typing
 
 from textual.app import App, SystemCommand
 from textual.binding import Binding
-from textual.theme import BUILTIN_THEMES
+from textual.widgets import OptionList
+from textual.theme import BUILTIN_THEMES, Theme
 
 from aplite import colors, glyphs, prefs  # glyphs patches Textual on import
 
@@ -73,15 +74,48 @@ def _stdin_is_tty() -> bool:
         return False
 
 
-def register_ansi_themes(app: App) -> None:
-    """Textual's ANSI themes draw an unfocused list's highlight in the terminal's default colors: invisible, and our
-    filter-field lists (launcher, editors) are never focused. Blue / cyan instead (reverse would suit any palette, but
-    Textual 8.2 drops it from list highlights; gray is the background in some palettes, e.g. Solarized)."""
-    for name, extra in (("ansi-dark", {"border": "ansi_cyan", "block-cursor-blurred-background": "ansi_blue"}),
-                        ("ansi-light", {"block-cursor-blurred-background": "ansi_cyan"})):  # dark text on blue: unreadable
+HIGH_CONTRAST = Theme(
+    name="high-contrast", dark=True,  # dark: the client uses the dark role colors
+    primary="#FFFF00", secondary="#00FFFF", accent="#00FFFF", warning="#FFFF00", error="#FF5555", success="#00FF00",
+    foreground="#FFFFFF", background="#000000", surface="#000000", panel="#000000", text_alpha=1.0,
+    variables={
+        "text": "#FFFFFF", "text-muted": "#C0C0C0", "text-disabled": "#A0A0A0",
+        "border": "#FFFF00", "border-blurred": "#808080",
+        "block-cursor-foreground": "#000000", "block-cursor-background": "#FFFF00",
+        "block-cursor-blurred-foreground": "#000000", "block-cursor-blurred-background": "#00FFFF",
+        "block-hover-background": "#303030",
+        "input-cursor-foreground": "#000000", "input-cursor-background": "#FFFFFF",
+        "input-selection-foreground": "#000000", "input-selection-background": "#00FFFF",
+        "footer-background": "#000000", "footer-key-foreground": "#FFFF00", "footer-description-foreground": "#FFFFFF",
+        "scrollbar": "#808080", "scrollbar-hover": "#C0C0C0", "scrollbar-active": "#FFFF00",
+        "scrollbar-background": "#000000", "scrollbar-background-hover": "#000000",
+        "scrollbar-background-active": "#000000",
+        "aplite-outline": "#808080", "aplite-dim": "#C0C0C0",
+    })
+"""Black and white with yellow focus and cyan unfocused highlights; pure colors, so 16-color terminals match them.
+aplite-outline: unfocused box outlines (glyphs), aplite-dim: replaces dim text (colors.RoleFilter)."""
+
+
+# Textual's unfocused-highlight rule ignores $block-cursor-blurred-foreground (its default: the foreground, which this
+# rule used anyway); high contrast needs black there, on cyan
+_HIGHLIGHT = "color: $foreground;\n            background: $block-cursor-blurred-background;"
+OptionList.DEFAULT_CSS = OptionList.DEFAULT_CSS.replace(
+    _HIGHLIGHT, _HIGHLIGHT.replace("$foreground", "$block-cursor-blurred-foreground"))
+
+
+def register_themes(app: App) -> None:
+    """High contrast, and Textual's ANSI themes adjusted: they draw an unfocused list's highlight in the terminal's
+    default colors (invisible, and our filter-field lists (launcher, editors) are never focused): blue / cyan instead
+    (reverse would suit any palette, but Textual 8.2 drops it from list highlights; gray is the background in some
+    palettes, e.g. Solarized). Their outlines: gray (glyphs' panel-colored ones would be the default text color)."""
+    app.register_theme(HIGH_CONTRAST)
+    for name, extra in (("ansi-dark", {"border": "ansi_cyan", "block-cursor-blurred-background": "ansi_blue",
+                                       "block-cursor-blurred-foreground": "ansi_bright_white",
+                                       "aplite-outline": "ansi_bright_black"}),
+                        ("ansi-light", {"block-cursor-blurred-background": "ansi_cyan",  # dark text on blue: unreadable
+                                        "aplite-outline": "ansi_white"})):
         theme = BUILTIN_THEMES[name]
-        app.register_theme(dataclasses.replace(theme, variables={
-            **theme.variables, "block-cursor-blurred-foreground": "ansi_bright_white", **extra}))
+        app.register_theme(dataclasses.replace(theme, variables={**theme.variables, **extra}))
 
 
 class AppliteApp(App):
@@ -96,7 +130,7 @@ class AppliteApp(App):
             return super().run(*args, **kwargs)
 
     def on_mount(self) -> None:  # Textual calls each class's on_mount, so subclasses get this too
-        register_ansi_themes(self)
+        register_themes(self)
         prefs.bind_theme(self)
         colors.install(self)
         self.animation_level = "none"  # Textual's own animations (tab underline, smooth scrolls) lagged behind

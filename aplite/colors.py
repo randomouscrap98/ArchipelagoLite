@@ -8,6 +8,7 @@ name in ANSI themes (the terminal's palette). Saved in aplite.yaml as colors: {d
 overrides only."""
 from __future__ import annotations
 
+import functools
 import re
 import typing
 
@@ -48,6 +49,19 @@ ROLES: dict[str, Role] = {
     "hint_no_priority": Role("Hint: no priority", "hint status", "blue", "#9D65FF", "#325CC0"),
     "hint_avoid": Role("Hint: avoid", "hint status", "red", "#F4005F", "#AA3731"),
     "hint_priority": Role("Hint: priority", "hint status", "magenta", "#F4005F", "#7A3E9D"),
+    "tracker_in_logic": Role("Tracker: in logic", "Universal Tracker locations (also unconnected)", "green",
+                             "#98E024", "#448C27"),
+    "tracker_out_of_logic": Role("Tracker: out of logic", "Universal Tracker locations (also its errors)", "red",
+                                 "#F4005F", "#AA3731"),
+    "tracker_glitched": Role("Tracker: glitched", "Universal Tracker locations", "yellow", "#E6DB74", "#CB9000"),
+    "tracker_hinted": Role("Tracker: hinted", "Universal Tracker locations", "blue", "#6A9EFF", "#325CC0"),
+    "tracker_hinted_in_logic": Role("Tracker: hinted, in logic", "Universal Tracker locations", "cyan",
+                                    "#58D1EB", "#0083B2"),
+    "tracker_hinted_glitched": Role("Tracker: hinted, glitched", "Universal Tracker locations", "bright_yellow",
+                                    "#FD971F", "#B85C00"),
+    "echo": Role("Your commands", "what you typed, echoed in the log", "yellow", "#FD971F", "#B85C00"),
+    "connected": Role("Connected", "client status line (and self-host: Running)", "green", "#98E024", "#448C27"),
+    "not_connected": Role("Not connected", "client status line", "red", "#F4005F", "#AA3731"),
 }
 MODES = ("dark", "light")
 HEX = re.compile(r"#?([0-9a-fA-F]{6})")
@@ -155,7 +169,24 @@ class RoleFilter(LineFilter):
                     mode = self.mode()
                     result = list(segments)
                 result[index] = Segment(text, self._swap(style, mode), control)
+        dim = self.app.current_theme.variables.get("aplite-dim")
+        if dim:
+            if result is segments:
+                result = list(segments)
+            for index, (text, style, control) in enumerate(result):
+                if style and style.dim:
+                    result[index] = Segment(text, _undim(style, dim), control)
         return result
+
+
+@functools.lru_cache(maxsize=1024)
+def _undim(style: Style, color: str) -> Style:
+    """Dim text in a theme with aplite-dim (nav.HIGH_CONTRAST; terminals fade dim): that color on dark backgrounds,
+    the text's own color on light ones (cursor rows: gray on cyan / yellow is unreadable)."""
+    background = style.bgcolor and style.bgcolor.get_truecolor()
+    if background and 0.299 * background.red + 0.587 * background.green + 0.114 * background.blue > 140:
+        return style + Style(dim=False)
+    return style + Style(dim=False, color=color)
 
 
 def install(app: App) -> None:
