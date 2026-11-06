@@ -40,6 +40,8 @@ class Override:
     """Its terminal output matters: wait for Enter before going back to the launcher."""
     returns: bool | None = None
     """Back to the launcher afterwards? None: the default rule (everything but clients)."""
+    supported: bool = True
+    """False: listed but not launchable ("needs full GUI"), for components that only crash without kivy."""
 
 
 # handlers
@@ -135,6 +137,11 @@ def overrides() -> dict[typing.Callable | str, Override]:
         export_datapackage: Override(run=_export_datapackage, pauses=True),
         generate_yamls: Override(run=_generate_templates, pauses=True),
     }
+    try:
+        from worlds.apquest.components import run_client as apquest_client
+        table[apquest_client] = Override(supported=False)  # the game itself is a kivy window
+    except ImportError:  # the world was removed
+        pass
     manager = apworld_manager.launch_func()  # an optional custom apworld: its UIs are kivy/curses
     if manager:
         table[manager] = Override(run=apworld_manager.run)
@@ -181,6 +188,8 @@ def runner(component: Component) -> Run | None:
     so it gets the terminal and aplite's patches, except command-line scripts (see _run_cli_script)."""
     from worlds.LauncherComponents import Type
     override = override_for(component)
+    if not override.supported:
+        return None
     if override.run:
         return override.run
     if component.func:
