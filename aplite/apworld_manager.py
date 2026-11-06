@@ -5,16 +5,19 @@ ignore/claude/research/apworld-manager.md."""
 from __future__ import annotations
 
 import contextlib
+import os
 import typing
 
 import Utils
 from textual import work
 from textual.app import ComposeResult
 from textual.binding import Binding
+from textual.containers import Horizontal, Vertical
 from textual.widgets import Footer, Header, OptionList, Static
 from textual.widgets.option_list import Option
 
 from aplite import nav
+from aplite.master_detail import CONFIRM_SECONDS
 from aplite.combo import FilterInput, highlight_first
 
 CUSTOM_REPO = "Custom repo available"
@@ -52,9 +55,13 @@ def captured_messageboxes(messages: list[tuple[str, bool]]) -> typing.Iterator[N
 
 class ManagerApp(nav.AppliteApp):
     TITLE = "Install/Update Apworlds"
-    BINDINGS = [Binding("ctrl+r", "reload", "Refresh")]
+    BINDINGS = [Binding("ctrl+r", "reload", "Refresh"), Binding("ctrl+t", "delete", "Delete")]
     CSS = """
+    OptionList { height: 1fr; overflow-y: scroll; }
     #details { height: auto; max-height: 6; padding: 0 1; border-top: solid $primary; }
+    #details Horizontal { height: auto; }
+    #heading { width: 1fr; }
+    #size { width: auto; padding-left: 2; }
     #status { height: 1; padding: 0 1; color: $text-muted; }
     """
 
@@ -65,12 +72,30 @@ class ManagerApp(nav.AppliteApp):
         self.shown: list[dict] = []
         self.busy = False
         self.installed_any = False
+        self.armed: dict | None = None
+        """The world a first ctrl+t asked to delete; a second one within CONFIRM_SECONDS deletes it."""
+
+    def world_table(self) -> list[dict]:
+        """refresh_apworld_table, with the latest version of uninstalled worlds picked by full version: it compares only
+        major.minor.micro there, so ties (0.1.9a0 vs 0.1.9.post3) went to whichever the index lists last (Balatro
+        installed a 2024 release). Installed worlds already compare full versions."""
+        worlds = self.manager.refresh_apworld_table()
+        parse = self.manager.parse_version
+        for world in worlds:
+            remotes = self.manager.repositories.packages_by_id_version.get(world["id"])
+            if not world["installed"] and world.get("latest_version") and remotes:
+                world["latest_version"] = max(remotes.values(), key=lambda r: parse(r.world_version))
+        return worlds
 
     def compose(self) -> ComposeResult:
         yield Header()
         yield FilterInput(placeholder="Search. Enter installs/updates, ↑/↓ select.", target="OptionList")
         yield OptionList()
-        yield Static(id="details")
+        with Vertical(id="details"):
+            with Horizontal():
+                yield Static(id="heading")
+                yield Static(id="size")
+            yield Static(id="description")
         yield Static(id="status")
         yield Footer()
 
@@ -92,7 +117,7 @@ class ManagerApp(nav.AppliteApp):
             repos = self.manager.repositories
             repos.load_repos_from_settings()
             repos.refresh()
-            worlds = self.manager.refresh_apworld_table()
+            worlds = self.world_table()
         except Exception as e:  # network, a repo with bad data, or a changed world_manager API
             nav.on_app_thread(self, self.status, f"Couldn't load the world list: {e}")
             return
@@ -128,12 +153,18 @@ class ManagerApp(nav.AppliteApp):
 
     def show_details(self) -> None:
         world = self.highlighted()
-        text = ""
+        heading = size = description = ""
         if world:
             latest = world.get("latest_version")
             version = f"  (latest {latest.world_version})" if latest else ""
-            text = f"[b]{world['title']}[/b]{version}\n{world['description']}"
-        self.query_one("#details", Static).update(text)
+            if world["installed"]:
+                version = f"  installed {world['installed_version']}{version}"
+                size = size_text(world.get("file"))
+            heading = f"[b]{world['title']}[/b]{version}"
+            description = world["description"]
+        self.query_one("#heading", Static).update(heading)
+        self.query_one("#size", Static).update(size)
+        self.query_one("#description", Static).update(description)
 
     def on_input_submitted(self, event: FilterInput.Submitted) -> None:
         event.stop()
@@ -144,6 +175,31 @@ class ManagerApp(nav.AppliteApp):
             self.status(f"Nothing to install for {world['title']}.")
             return
         self.install(world)
+
+    def action_delete(self) -> None:
+        world = self.highlighted()
+        if world is None or self.busy:
+            return
+        file = world.get("file")
+        bundled = world["sort"] in (self.manager.SortStages.BUNDLED, self.manager.SortStages.BUNDLED_BUT_UPDATABLE)
+        if not world["installed"] or not file or bundled or not os.path.isfile(file):
+            self.status(f"{world['title']} isn't an installed .apworld file aplite can delete.")
+            return
+        if self.armed is not world:
+            self.armed = world
+            self.notify(f"Press Ctrl+T again to delete {os.path.basename(file)}.", severity="warning",
+                        timeout=CONFIRM_SECONDS)
+            self.set_timer(CONFIRM_SECONDS, lambda: setattr(self, "armed", None) if self.armed is world else None)
+            return
+        self.armed = None
+        try:
+            os.remove(file)
+        except OSError as e:
+            self.status(f"Couldn't delete {file}: {e}")
+            return
+        self.worlds.remove(world)
+        self.fill()
+        self.status(f"Deleted {file}. It stays loaded (and not installable here) until aplite restarts.")
 
     @work(thread=True, exclusive=True)
     def install(self, world: dict) -> None:
@@ -171,7 +227,7 @@ class ManagerApp(nav.AppliteApp):
                     return
                 self.installed_any = True
                 done = f"Installed {world['title']}. New worlds load next time the launcher starts."
-            worlds = self.manager.refresh_apworld_table()
+            worlds = self.world_table()
         except Exception as e:
             nav.on_app_thread(self, self.status, f"Install failed: {e}")
             return
@@ -179,6 +235,19 @@ class ManagerApp(nav.AppliteApp):
             self.busy = False
         nav.on_app_thread(self, self.loaded, worlds)
         nav.on_app_thread(self, self.status, done)
+
+
+def size_text(file) -> str:
+    """An installed file's size, colored by how big it is: under 1 MB green, under 10 MB yellow, else red."""
+    try:
+        size = os.path.getsize(file) if file else None
+    except OSError:
+        return ""
+    if size is None:
+        return ""
+    mb = size / 1024 / 1024
+    color = "$success" if mb < 1 else "$warning" if mb < 10 else "$error"
+    return f"[{color}]{size / 1024:.0f} KB[/]" if mb < 1 else f"[{color}]{mb:.1f} MB[/]"
 
 
 def run(*args: str) -> None:
