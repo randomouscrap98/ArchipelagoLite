@@ -123,8 +123,8 @@ def overrides() -> dict[typing.Callable | str, Override]:
     worlds.LauncherComponents loads every world."""
     from worlds.LauncherComponents import export_datapackage, generate_yamls, install_apworld, open_host_yaml, \
         open_patch
-    from aplite import webhost
-    return {
+    from aplite import apworld_manager, webhost
+    table = {
         webhost.run: Override(picker=webhost.picker, picked=_picked_file),
         open_patch: Override(run=_open_patch, picker=_patch_picker, picked=_patch_picked,
                              returns=True),  # the patch's client comes back to the launcher (user request)
@@ -135,6 +135,10 @@ def overrides() -> dict[typing.Callable | str, Override]:
         export_datapackage: Override(run=_export_datapackage, pauses=True),
         generate_yamls: Override(run=_generate_templates, pauses=True),
     }
+    manager = apworld_manager.launch_func()  # an optional custom apworld: its UIs are kivy/curses
+    if manager:
+        table[manager] = Override(run=apworld_manager.run)
+    return table
 
 
 def override_for(component: Component) -> Override:
