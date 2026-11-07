@@ -8,6 +8,7 @@ To add a fix: one FIXES entry keyed by the world's game name. Remove it once the
 Notes: ignore/claude/research/world-gui-tabs.md (which worlds, where they crash)."""
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 import importlib.abc
 import logging
@@ -63,6 +64,8 @@ class Fix:
     stub_imports: tuple[str, tuple[str, ...]] | None = None
     """(client module, modules): while that module is imported, each of the modules is a NullUI-backed stand-in (only
     without kivy, i.e. always in aplite). Removed again afterwards, so nothing else sees it."""
+    after_import: tuple[str, typing.Callable[[types.ModuleType], None]] | None = None
+    """(client module, hook): the hook gets that module right after it's imported, e.g. to swap a GUI-only method."""
 
 
 def _dkc_barrel_label() -> None:
@@ -75,6 +78,16 @@ def _dkc_barrel_label() -> None:
         handler.handle_barrel_label = handle_barrel_label  # on this instance only; the class is untouched
 
 
+def _b3_tui(module: types.ModuleType) -> None:
+    from aplite import tui
+
+    def run_gui(self) -> None:  # instead of its kivy GameManager: aplite's TUI, which ends when the user quits
+        self.input_task = self.ui_task = asyncio.create_task(tui.console_loop(self), name="Input")
+
+    module.gui_enabled = True  # its GUI path awaits ui_task; the other one returns once server_task does
+    module.PS2Context.run_gui = run_gui
+
+
 FIXES: dict[str, Fix] = {
     "Warioworld": Fix("WwClient.py: top-level `import kvui` (client can't load without kivy); "
                       "ctx.ui.spritelingcountupdate unguarded in _give_item / give_items / the item prefill (the Dolphin "
@@ -85,6 +98,9 @@ FIXES: dict[str, Fix] = {
     "Donkey Kong Country": Fix("Client.py game_watcher -> handle_barrel_label: `from kvui import` (first line) + "
                                "ctx.ui.connect_layout unguarded, before items are received: no items ever",
                                setup=_dkc_barrel_label),
+    "Burnout 3": Fix("B3Client.py async_main: without the GUI it awaits ctx.server_task, which ends at once with no "
+                     "server address (\"Please connect...\" then exit)",
+                     after_import=("worlds.burnout3.B3Client", _b3_tui)),
 }
 
 
@@ -95,9 +111,10 @@ def _stub_module(name: str) -> types.ModuleType:
 
 
 class _StubbingLoader(importlib.abc.Loader):
-    def __init__(self, loader, stubs: tuple[str, ...]) -> None:
+    def __init__(self, loader, stubs: tuple[str, ...], after: typing.Callable | None = None) -> None:
         self.loader = loader
         self.stubs = stubs
+        self.after = after
 
     def create_module(self, spec):
         return self.loader.create_module(spec)
@@ -115,18 +132,23 @@ class _StubbingLoader(importlib.abc.Loader):
         finally:
             for name in added:
                 sys.modules.pop(name, None)
+        if self.after:
+            try:
+                self.after(module)
+            except Exception:  # the world's client changed: it may misbehave as before, aplite must not
+                logger.exception(f"client fix for {module.__name__} failed")
 
 
 class _StubFinder(importlib.abc.MetaPathFinder):
-    """Wraps the loader of the client modules named in FIXES' stub_imports."""
+    """Wraps the loader of the client modules named in FIXES' stub_imports and after_import."""
 
-    def __init__(self, targets: dict[str, tuple[str, ...]]) -> None:
+    def __init__(self, targets: dict[str, tuple[tuple[str, ...], typing.Callable | None]]) -> None:
         self.targets = targets
         self.busy = False
 
     def find_spec(self, fullname, path, target=None):
-        stubs = self.targets.get(fullname)
-        if stubs is None or self.busy:
+        entry = self.targets.get(fullname)
+        if entry is None or self.busy:
             return None
         self.busy = True  # the real finders below us find the spec
         try:
@@ -136,7 +158,7 @@ class _StubFinder(importlib.abc.MetaPathFinder):
             self.busy = False
         if spec is None or spec.loader is None:
             return None
-        spec.loader = _StubbingLoader(spec.loader, stubs)
+        spec.loader = _StubbingLoader(spec.loader, *entry)
         return spec
 
 
@@ -156,7 +178,8 @@ def apply(ctx: CommonContext) -> None:
 def install() -> None:
     """Call after the worlds are loaded: runs the setups, then applies fixes to every client context as it's made."""
     from CommonClient import CommonContext
-    targets = {fix.stub_imports[0]: fix.stub_imports[1] for fix in FIXES.values() if fix.stub_imports}
+    targets = {fix.stub_imports[0]: (fix.stub_imports[1], None) for fix in FIXES.values() if fix.stub_imports}
+    targets.update({fix.after_import[0]: ((), fix.after_import[1]) for fix in FIXES.values() if fix.after_import})
     if targets:
         sys.meta_path.insert(0, _StubFinder(targets))
     for game, fix in FIXES.items():

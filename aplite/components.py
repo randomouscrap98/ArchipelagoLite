@@ -6,6 +6,7 @@ the few that need a desktop GUI or would otherwise misbehave in a terminal; add 
 """
 from __future__ import annotations
 
+import contextlib
 import dataclasses
 import functools
 import inspect
@@ -240,13 +241,42 @@ def _run_func(component: Component, *args: str) -> None:
     sys.argv = [sys.argv[0], *args]
     before = set(threading.enumerate())
     started = time.monotonic()
-    Launcher.run_component(component, *(args if _accepts_args(component.func) else ()))
+    with _processes_in_process(component.func):
+        Launcher.run_component(component, *(args if _accepts_args(component.func) else ()))
     # Some funcs only start the real work in a thread and return (e.g. Minecraft Dig's run_client_threaded, made for
     # upstream's GUI launcher). Wait for it, or aplite moves on while that thread still uses the terminal. Only on a
     # quick return: a func that ran for real may leave unrelated threads behind (executors, servers).
     if time.monotonic() - started < 1:
         for thread in set(threading.enumerate()) - before:
             thread.join()
+
+
+@contextlib.contextmanager
+def _processes_in_process(func: typing.Callable) -> typing.Iterator[None]:
+    """Some funcs start their client in a multiprocessing.Process and return (e.g. Burnout 3), to stay out of
+    upstream's kivy launcher. That child gets stdin from /dev/null, so no terminal UI: run its target here instead, as
+    upstream's LauncherComponents.launch does when kivy isn't running. Only processes `func` itself starts, so pools
+    and workers deeper in a client stay real processes."""
+    import multiprocessing.process
+    base = multiprocessing.process.BaseProcess
+    code = getattr(func, "__code__", None)
+    start, join = base.start, base.join
+
+    def patched_start(self) -> None:
+        if sys._getframe(1).f_code is not code:
+            return start(self)
+        self._aplite_ran = True
+        self.run()
+
+    def patched_join(self, timeout: float | None = None) -> None:
+        if not getattr(self, "_aplite_ran", False):
+            join(self, timeout)
+
+    base.start, base.join = patched_start, patched_join
+    try:
+        yield
+    finally:
+        base.start, base.join = start, join
 
 
 def _script(component: Component) -> str:
