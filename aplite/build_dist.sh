@@ -46,6 +46,8 @@ cp "$REPO/meta.yaml" "$BUILD/app/Players/Templates/"
 # Utils.user_path copies Players/sprites/lua to the home folder when this differs from the copy there
 printf '{"buildtime": "%s", "hashes": {}, "version": [%s]}\n' "$(date -u '+%Y-%m-%d %H:%M:%S')" \
     "$(echo "$version" | sed 's/\./, /g')" > "$BUILD/app/manifest.json"
+# core worlds as .apworlds, like official builds (setup.py): far fewer files to open (aplite/pack_worlds.py)
+host_python "$REPO/aplite/pack_worlds.py" "$BUILD/app" "$version"
 host_python "$REPO/aplite/requirements.py" "$REPO/requirements.txt" > "$BUILD/requirements-lite.txt"
 
 # python_tree DEST UV_PYTHON SITE_PACKAGES WHEEL_PLATFORM: Python + dependencies + source + bytecode in DEST

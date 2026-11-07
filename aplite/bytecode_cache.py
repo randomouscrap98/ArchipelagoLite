@@ -38,7 +38,7 @@ def _bundle(archive: str) -> dict[str, tuple[int, int, object]]:
         bundle = {}
         try:
             with open(_bundle_path(archive), "rb") as f:
-                version, entries = marshal.load(f)
+                version, entries = marshal.loads(f.read())  # load(f) reads in small pieces: ~2.5x slower
             if version == _version:
                 bundle = entries
         except FileNotFoundError:
