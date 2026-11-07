@@ -92,6 +92,12 @@ class VersionPicker(ModalScreen):
         self.versions = versions
         self.installed = installed
         self.parse = parse
+        self.newest_by_hash: dict[str, str] = {}
+        """File hash -> the newest version with it: an author re-uploading a newer file to an older release leaves the
+        older version pointing at the newer file (Balatro's v0.1.9e now serves post3's file)."""
+        for version in versions:
+            if digest := version.data.get("hash_sha256"):
+                self.newest_by_hash.setdefault(digest, version.world_version)
         self.armed: tuple[int, float] | None = None
         """The older version a first Enter picked (index, time); a second Enter on it within CONFIRM_SECONDS installs."""
 
@@ -104,6 +110,9 @@ class VersionPicker(ModalScreen):
     def label(self, version, width: int) -> str:
         date = (version.created_at or "")[:10]
         parts = [f"{version.world_version:<{width}}", f"{date:<10}", f"{size_label(version.data.get('size')):>8}"]
+        newest = self.newest_by_hash.get(version.data.get("hash_sha256"), version.world_version)
+        if newest != version.world_version:
+            parts.append(f"[$error]replaced with {newest}[/]")
         if version.is_prerelease or self.parse(version.world_version).is_prerelease:  # flagged, or a1/b2/rc0/dev
             parts.append("[$warning]prerelease[/]")
         if self.installed is not None and self.parse(version.world_version) == self.installed:
