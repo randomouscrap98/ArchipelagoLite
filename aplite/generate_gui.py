@@ -49,9 +49,13 @@ class Entry:
     path: Path
     players: list[tuple[str, str]]  # (name, game) per YAML document
     problems: list[str]
+    meta: str | None = None  # meta_description, for a meta file (overrides the player YAMLs' options)
 
     def label(self) -> Text:
-        who = ", ".join(f"{name} ({game})" for name, game in self.players) or "?"
+        if self.meta is not None:
+            who = f"meta: {self.meta}"
+        else:
+            who = ", ".join(f"{name} ({game})" for name, game in self.players) or "?"
         text = Text(f"{self.path.name}  {who}")
         if self.problems:
             text.stylize("bold red")
@@ -77,6 +81,9 @@ def check_yaml(path: Path, games: typing.Collection[str]) -> Entry:
         return entry
     if not docs:
         entry.problems.append("no YAML documents in it")
+    if docs and isinstance(docs[-1], dict) and "meta_description" in docs[-1]:  # Generate.py reads the last one
+        entry.meta = str(docs[-1]["meta_description"])
+        return entry
     for doc in docs:
         if not isinstance(doc, dict):
             entry.problems.append("not a player YAML")
@@ -106,9 +113,10 @@ class GenerateModal(ModalScreen[None]):
     """
     BINDINGS = [Binding("escape", "close", "Close")]
 
-    def __init__(self, files: list[Path]) -> None:
+    def __init__(self, files: list[Path], meta: Path | None = None) -> None:
         super().__init__()
         self.files = files
+        self.meta = meta
         self.proc: subprocess.Popen | None = None
         self.folder = ""  # copies of the YAMLs, while Generate runs
         self.stage = 0
@@ -130,6 +138,8 @@ class GenerateModal(ModalScreen[None]):
         self.folder = tempfile.mkdtemp(prefix="aplite-generate-")
         for i, path in enumerate(self.files):  # numbered: two folders may hold the same file name
             shutil.copy(path, os.path.join(self.folder, f"{i + 1:02}_{path.name}"))
+        if self.meta:  # Generate.py only knows it by this exact name in the player folder
+            shutil.copy(self.meta, os.path.join(self.folder, "meta.yaml"))
         env = {**aplite.child_env(), "PYTHONUNBUFFERED": "1", prompts.RELAY_ENV: "1"}
         self.proc = subprocess.Popen(
             [sys.executable, "-m", "aplite.script", Utils.local_path("Generate.py"),
@@ -283,6 +293,8 @@ class GenerateScreen(Screen):
             self.log_line(f"{entry.path.name}:", "bold red")
             for problem in entry.problems:
                 self.log_line(f"  {problem}", "red")
+        elif entry.meta is not None:
+            self.log_line(f"{verb} {entry.path.name} (meta: {entry.meta})")
         else:
             self.log_line(f"{verb} {entry.path.name}: " + ", ".join(f"{n} ({g})" for n, g in entry.players))
 
@@ -347,14 +359,19 @@ class GenerateScreen(Screen):
         self.action_generate()
 
     def action_generate(self) -> None:
-        if not self.entries:
-            self.log_line("Add at least one YAML first.", "yellow")
+        players = [entry for entry in self.entries if entry.meta is None]
+        metas = [entry for entry in self.entries if entry.meta is not None]
+        if not players:
+            self.log_line("Add at least one player YAML first.", "yellow")
             return
         bad = [entry.path.name for entry in self.entries if entry.problems]
         if bad:
             self.log_line(f"Fix or remove first: {', '.join(bad)}", "red")
             return
-        self.app.push_screen(GenerateModal([entry.path for entry in self.entries]))
+        if len(metas) > 1:
+            self.log_line(f"Only one meta file allowed: {', '.join(entry.path.name for entry in metas)}", "red")
+            return
+        self.app.push_screen(GenerateModal([entry.path for entry in players], metas[0].path if metas else None))
 
     def action_toggle_all(self) -> None:
         self.query_one(FilteredTree).toggle_all()

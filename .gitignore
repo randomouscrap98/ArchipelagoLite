@@ -2,6 +2,7 @@
 .vscode
 ignore/
 minecraft_dig_versions.json
+.claude/
 
 *_Spoiler.txt
 *.bmbp
