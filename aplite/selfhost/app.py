@@ -159,6 +159,48 @@ class GamesList(OptionList):
             self.highlighted = option
 
 
+def already_loaded(path: str) -> selfhost.Info | None:
+    """The newest loaded game from this zip: the same path, or the same name (AP_<seed>: a copy of it)."""
+    source, name = os.path.abspath(path), Path(path).stem
+    return next((info for info in selfhost.games() if info.get("source") == source or info["name"] == name), None)
+
+
+class AlreadyLoaded(ModalScreen[bool]):
+    """New game picked a game that's already loaded: another copy is a separate room with its own, empty progress."""
+    CSS = """
+    AlreadyLoaded { align: center middle; }
+    #loaded-box { width: 70; max-width: 90%; height: auto; border: thick $warning; background: $surface;
+                  padding: 0 1; }
+    #loaded-buttons { height: auto; align-horizontal: right; margin-top: 1; }
+    #loaded-buttons Button { margin-left: 1; }
+    """
+    BINDINGS = [Binding("escape", "cancel", "Cancel")]
+
+    def __init__(self, info: selfhost.Info) -> None:
+        super().__init__()
+        self.info = info
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="loaded-box"):
+            yield Static(Text.assemble(
+                (f"{self.info['name']} is already loaded", "bold"), f" (loaded {self.info['loaded'][:16]}).\n\n",
+                "Its room and saved progress are in Games (Ctrl+G). Another copy is a separate room that starts "
+                "from nothing, and players could join the wrong one."))
+            with Horizontal(id="loaded-buttons"):
+                yield Button("Cancel", id="loaded-cancel", variant="primary")
+                yield Button("Load another copy", id="loaded-again", variant="warning")
+
+    def on_mount(self) -> None:
+        self.query_one("#loaded-cancel", Button).focus()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.dismiss(event.button.id == "loaded-again")
+
+    def action_cancel(self) -> None:
+        self.dismiss(False)
+
+
 class GamesScreen(ModalScreen[typing.Optional[str]]):
     """Every loaded game (newest first) with its details; activate / deactivate / delete them here. Dismisses with
     an active game's room id to show it on the main screen (Show), else None."""
@@ -533,7 +575,13 @@ class SelfHostScreen(Screen):
             return
         from aplite.webhost import game_picker
         self.app.push_screen(game_picker("Self-host: pick a generated game"),
-                             lambda path: path and self.new_game(str(path)))
+                             lambda path: path and self.picked_game(str(path)))
+
+    def picked_game(self, path: str) -> None:
+        if existing := already_loaded(path):
+            self.app.push_screen(AlreadyLoaded(existing), lambda again: again and self.new_game(path))
+        else:
+            self.new_game(path)
 
     def new_game(self, path: str) -> None:
         """Loads a game (kept in the DB from now on) and activates it if a room is free."""

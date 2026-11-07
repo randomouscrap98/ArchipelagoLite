@@ -209,12 +209,23 @@ class HexInput(Input):
         self.cursor_position = len(self.value)
 
 
+def color_note(color_system: str | None) -> str:
+    """A warning when the terminal can't show the colors as picked (Rich's detection: COLORTERM, TERM,
+    TEXTUAL_COLOR_SYSTEM): measured, the 128 grid colors become 86 distinct ones with 256 colors, 15 with 16."""
+    if color_system == "256":
+        return "Your terminal shows 256 colors: swatches are approximate. The hex value is saved exactly."
+    if color_system in ("standard", "windows"):
+        return "Your terminal shows 16 colors: swatches are only a rough guide. The hex value is saved exactly."
+    return ""
+
+
 class ColorPicker(ModalScreen[bool]):
     CSS = """
     ColorPicker { align: center middle; }
     ColorPicker > Vertical { width: auto; height: auto; max-width: 100%; border: solid $primary;
                              background: $surface; padding: 0 1; }
     ColorPicker #title { text-style: bold; }
+    ColorPicker #color-note { color: $warning; width: auto; max-width: 60; }
     ColorPicker .field { height: 1; width: auto; }
     ColorPicker .field Static { width: auto; }
     ColorPicker .field .label { width: 7; }
@@ -233,6 +244,8 @@ class ColorPicker(ModalScreen[bool]):
         with Vertical():
             yield Static(f"{colors.ROLES[self.role].label}: {colors.ROLES[self.role].used_for}", id="title")
             yield Static("Arrow keys pick a color, or type a hex.")
+            if note := color_note(self.app.console.color_system):
+                yield Static(note, id="color-note")
             for mode in colors.MODES:
                 with Horizontal(classes="field"):
                     yield Static(f"{mode.capitalize()}:", classes="label")
