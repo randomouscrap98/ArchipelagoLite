@@ -25,6 +25,7 @@ _bundles: dict[str, dict[str, tuple[int, int, object]]] = {}
 _dirty: set[str] = set()
 _lock = threading.Lock()  # the launcher loads worlds in a thread while the main thread may flush
 _cache_dir = ""
+hits = compiled = 0  # this run's apworld modules, for aplite.startup_log
 _version = b""
 
 
@@ -80,6 +81,7 @@ def install() -> None:
         return original_compile(pathname, source)
 
     def get_module_code(self, fullname: str):
+        global hits, compiled
         path = zipimport._get_module_path(self, fullname)
         files = self._get_files()
         for suffix, isbytecode, ispackage in zipimport._zip_searchorder:
@@ -93,9 +95,11 @@ def install() -> None:
             with _lock:
                 cached = _bundle(self.archive).get(inner)
             if cached and cached[0] == crc and cached[1] == size:
+                hits += 1
                 return cached[2], ispackage, entry[0]
             code, ispackage, modpath = original_get_code(self, fullname)
             if modpath == entry[0]:  # compiled from this source (not a .pyc found first)
+                compiled += 1
                 with _lock:
                     _bundle(self.archive)[inner] = (crc, size, code)
                     _dirty.add(self.archive)

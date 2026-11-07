@@ -10,6 +10,7 @@ import os
 import signal
 import sys
 import tempfile
+import time
 
 if hasattr(signal, "SIGHUP"):  # an inherited "ignore" (some launchers) would keep us alive after the terminal closes
     signal.signal(signal.SIGHUP, signal.SIG_DFL)
@@ -48,7 +49,7 @@ import Utils
 
 Utils.gui_enabled = False  # before CommonClient does `from Utils import gui_enabled`
 
-from aplite import bytecode_cache, client_fixes, components, launcher, nav, prompts, tui
+from aplite import bytecode_cache, client_fixes, components, launcher, nav, prompts, startup_log, tui
 
 bytecode_cache.install()  # before any .apworld is imported
 prompts.install()  # terminal file prompts; before worlds load (LauncherComponents imports open_filename by name)
@@ -62,7 +63,9 @@ def load() -> list:
     global _loaded
     if not _loaded:
         level = logging.getLogger().level
+        started = time.perf_counter()
         import CommonClient  # loads all worlds
+        loaded = time.perf_counter() - started
         # NetUtils' first `import _speedups` without a compiled one has pyximport build it, and setuptools sets the
         # root logger to WARNING: every INFO line (chat, prompts, /help) would vanish. Upstream works around it too.
         logging.getLogger().setLevel(level)
@@ -74,6 +77,7 @@ def load() -> list:
         LauncherComponents.components.extend(components.extra_components())
         components.rename_old_components(LauncherComponents.components)
         _loaded = True
+        startup_log.report(loaded)
         bytecode_cache.flush()  # now, not at exit: a relaunch (execve) skips atexit
     import worlds.LauncherComponents as LauncherComponents
     return LauncherComponents.components
