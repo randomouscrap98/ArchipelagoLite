@@ -266,6 +266,7 @@ class GenerateScreen(Screen):
             with Vertical(id="right"):
                 yield Label("YAMLs to generate: Delete removes", classes="heading")
                 yield OptionList(id="yamls")
+                yield Label(id="meta")
                 yield Button("Generate", id="generate", variant="primary")
         yield Label("Log", classes="heading")
         yield RichLog(id="log", wrap=True, markup=False)
@@ -273,6 +274,7 @@ class GenerateScreen(Screen):
 
     def on_mount(self) -> None:
         self.update_folder()
+        self.update_meta()
         self.query_one(FilteredTree).focus()
 
     def update_folder(self) -> None:
@@ -300,6 +302,7 @@ class GenerateScreen(Screen):
         self.query_one("#yamls", OptionList).add_option(ListOption(entry.label()))
         self.report(entry, "Added")
         self.check_names()
+        self.update_meta()
 
     def report(self, entry: Entry, verb: str) -> None:
         if entry.problems:
@@ -345,6 +348,7 @@ class GenerateScreen(Screen):
         for entry in self.entries:
             self.report(entry, "Checked")
         self.check_names()
+        self.update_meta()
 
     def check_names(self) -> None:
         names = [name.casefold() for entry in self.entries for name, _ in entry.players]
@@ -361,6 +365,26 @@ class GenerateScreen(Screen):
         if self.entries:
             yamls.highlighted = min(index, len(self.entries) - 1)
         self.log_line(f"Removed {entry.path.name}.")
+        self.update_meta()
+
+    def update_meta(self) -> None:
+        """One line under the list: the meta file Generate will apply (picked, or host.yaml's), if any."""
+        label = self.query_one("#meta", Label)
+        metas = [entry for entry in self.entries if entry.meta is not None]
+        host = host_meta()
+        if len(metas) > 1:
+            text = Text("Only one meta file allowed", "red")
+        elif metas:
+            text = Text(f"Meta: {metas[0].path.name}: {metas[0].meta}", "yellow")
+            if host and host.resolve() != metas[0].path.resolve():
+                text = Text(f"Meta: {metas[0].path.name}, replaces host.yaml's {host.name}: {metas[0].meta}", "yellow")
+        elif host:
+            text = Text(f"Meta: {host.name} (from host.yaml): {check_yaml(host, self.games).meta}", "yellow")
+        else:
+            label.display = False
+            return
+        label.update(text)
+        label.display = True
 
     def on_key(self, event) -> None:
         if event.key == "backspace" and self.query_one("#yamls").has_focus:
@@ -403,6 +427,7 @@ class GenerateApp(AppliteApp):
     FileBrowser { height: 1fr; }
     #right { width: 1fr; }
     #yamls { height: 1fr; }
+    #meta { padding: 0 1; text-wrap: nowrap; text-overflow: ellipsis; }
     .tree-box { height: 1fr; border: tall $border-blurred; }  /* same box as the lists, so focus shows */
     .tree-box:focus-within { border: tall $border; }
     FilteredTree { height: 1fr; }
