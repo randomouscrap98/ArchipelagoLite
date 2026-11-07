@@ -70,6 +70,16 @@ def installed_games() -> set[str]:
     return set(json.loads(out.strip().splitlines()[-1]))
 
 
+def host_meta() -> Path | None:
+    """The meta file host.yaml points at, if it exists: Generate.py applies it to every run when nothing overrides it."""
+    import settings
+    generator = settings.get_settings().generator
+    path = Path(generator.meta_file_path)
+    if not path.is_absolute():  # Generate.py: relative to the player files folder
+        path = Path(generator.player_files_path.resolve()) / path
+    return path if path.is_file() else None
+
+
 def check_yaml(path: Path, games: typing.Collection[str]) -> Entry:
     """Read a player YAML and check every game it can roll is in `games`."""
     entry = Entry(path, [], [])
@@ -138,12 +148,15 @@ class GenerateModal(ModalScreen[None]):
         self.folder = tempfile.mkdtemp(prefix="aplite-generate-")
         for i, path in enumerate(self.files):  # numbered: two folders may hold the same file name
             shutil.copy(path, os.path.join(self.folder, f"{i + 1:02}_{path.name}"))
-        if self.meta:  # Generate.py only knows it by this exact name in the player folder
-            shutil.copy(self.meta, os.path.join(self.folder, "meta.yaml"))
+        meta = "meta.yaml"  # relative to the copies; a missing file means no meta
+        if self.meta:
+            shutil.copy(self.meta, os.path.join(self.folder, meta))
+        elif host := host_meta():  # what Generate.py would pick up from the player files folder on its own
+            meta = str(host)
         env = {**aplite.child_env(), "PYTHONUNBUFFERED": "1", prompts.RELAY_ENV: "1"}
         self.proc = subprocess.Popen(
             [sys.executable, "-m", "aplite.script", Utils.local_path("Generate.py"),
-             "--player_files_path", self.folder],
+             "--player_files_path", self.folder, "--meta_file_path", meta],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env,
             text=True, encoding="utf-8", errors="replace", bufsize=1)
         threading.Thread(target=self.read_output, daemon=True).start()
@@ -371,6 +384,11 @@ class GenerateScreen(Screen):
         if len(metas) > 1:
             self.log_line(f"Only one meta file allowed: {', '.join(entry.path.name for entry in metas)}", "red")
             return
+        host = host_meta()
+        if metas and host and host.resolve() != metas[0].path.resolve():
+            self.log_line(f"{metas[0].path.name} replaces the host.yaml meta file {host}", "yellow")
+        elif host and not metas:
+            self.log_line(f"Using the host.yaml meta file {host}", "yellow")
         self.app.push_screen(GenerateModal([entry.path for entry in players], metas[0].path if metas else None))
 
     def action_toggle_all(self) -> None:
