@@ -81,8 +81,10 @@ python_tree() {
         }
     done
     cp -a "$BUILD/app" "$dest/app"
-    # the AppImage is read-only, so compile now (bytecode doesn't depend on the platform, only the Python version)
-    host_python -m compileall -q -j0 "$site/.." "$dest/app" >/dev/null
+    # the AppImage is read-only, so compile now (bytecode doesn't depend on the platform, only the Python version).
+    # Hash-based: a timestamp .pyc never matches after unzipping (zip stores 2-second, timezone-less times), so Windows
+    # recompiled all ~850 on first start. Unchecked: the source is never read; app/ is replaced as a whole on update.
+    host_python -m compileall -q -j0 --invalidation-mode unchecked-hash "$site/.." "$dest/app" >/dev/null
 }
 
 # sni DEST ASSET: SNI (SNES clients' bridge to emulators/hardware; host.yaml sni_path "SNI" finds it) in DEST/app/SNI,
