@@ -26,7 +26,7 @@ fi
 
 # same files ModuleUpdate checks, plus aplite's own requirements and this script
 stamp=$(cat "$REPO/requirements.txt" "$REPO"/worlds/*/requirements.txt "$REPO/aplite/requirements.txt" \
-    "$REPO/aplite/requirements.py" "$SELF" | cksum)
+    "$REPO/aplite/requirements.py" "$REPO/_speedups.pyx" "$REPO/aplite/build_speedups.sh" "$SELF" | cksum)
 
 if [ "${1:-}" = "--sync" ] || [ "$(cat "$STAMP" 2>/dev/null)" != "$stamp" ]; then
     echo "aplite: installing dependencies..." >&2
@@ -41,6 +41,12 @@ if [ "${1:-}" = "--sync" ] || [ "$(cat "$STAMP" 2>/dev/null)" != "$stamp" ]; the
             done
         }
     done
+    # compiled _speedups, else NetUtils' pyximport builds it on every launch (or fails there without a compiler)
+    include=$("$PY" -c "import sysconfig; print(sysconfig.get_paths()['include'])")
+    suffix=$("$PY" -c "import sysconfig; print(sysconfig.get_config_var('EXT_SUFFIX'))")
+    echo "aplite: building _speedups..." >&2
+    sh "$REPO/aplite/build_speedups.sh" "$REPO/_speedups$suffix" "$include" ||
+        echo "aplite: WARNING: could not build _speedups (only startup is slower)" >&2
     echo "$stamp" > "$STAMP"
     [ "${1:-}" = "--sync" ] && exit 0
 fi

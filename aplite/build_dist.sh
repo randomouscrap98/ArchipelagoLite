@@ -4,6 +4,7 @@
 #   ArchipelagoLite_<version>_x86_64.AppImage and _linux-x86_64.tar.gz (one AppDir, glibc Python)
 #   ArchipelagoLite_<version>_windows-x86_64.zip (run aplite.cmd)
 # Packages are cross-installed as platform wheels and nothing built is run, so this works on any Linux (musl too).
+# _speedups is compiled with zig (aplite/build_speedups.sh, via uvx: no system compiler).
 # Needs uv, curl and tar; mksquashfs (squashfs-tools) for the AppImage (without it that one is skipped).
 # Only git-tracked files are packaged (working tree contents).
 # Env: MKSQUASHFS (mksquashfs command), APLITE_RUNTIME_URL (AppImage type2 runtime to download)
@@ -103,6 +104,16 @@ with tempfile.TemporaryDirectory() as tmp:
 EOF
 }
 
+# speedups DEST MODULE ZIG_TARGET [LINK_ARGS...]: compiled _speedups in DEST/app (aplite/build_speedups.sh), from the
+# Python headers in DEST/python. The .pyx stays: NetUtils' pyximport fallback if the module ever fails to load.
+speedups() {
+    dest=$1 module=$2
+    shift 2
+    echo "build_dist: _speedups ($1)"
+    include=$(ls -d "$dest/python/include/python$PYVER" 2>/dev/null || echo "$dest/python/include")
+    sh "$REPO/aplite/build_speedups.sh" "$dest/app/$module" "$include" "$@"
+}
+
 # shipped DEST: what DEST/app holds, in app/aplite/_files.txt; anything else there is user data from older versions
 # (aplite/datadir.py moves it up to the data folder)
 shipped() {
@@ -114,6 +125,7 @@ shipped() {
 # Linux: AppImage + tar.gz
 APPDIR="$BUILD/linux/ArchipelagoLite"
 python_tree "$APPDIR" "cpython-$PYVER-linux-x86_64-gnu" "lib/python$PYVER/site-packages" x86_64-manylinux_2_28
+speedups "$APPDIR" "_speedups.cpython-$(echo $PYVER | tr -d .)-x86_64-linux-gnu.so" x86_64-linux-gnu.2.17
 sni "$APPDIR" manylinux_2_28-amd64.tar.xz
 shipped "$APPDIR"
 lib="$APPDIR/python/lib/python$PYVER"
@@ -148,6 +160,8 @@ fi
 # Windows: zip
 WINDIR="$BUILD/windows/ArchipelagoLite"
 python_tree "$WINDIR" "cpython-$PYVER-windows-x86_64-none" Lib/site-packages x86_64-pc-windows-msvc
+speedups "$WINDIR" "_speedups.cp$(echo $PYVER | tr -d .)-win_amd64.pyd" x86_64-windows-gnu \
+    "$WINDIR/python/libs/python$(echo $PYVER | tr -d .).lib"
 sni "$WINDIR" windows-amd64.zip
 shipped "$WINDIR"
 rm -rf "$WINDIR/python/include" "$WINDIR/python/libs" "$WINDIR/python/Lib/idlelib" "$WINDIR/python/Lib/turtledemo" \
