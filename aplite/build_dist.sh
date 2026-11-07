@@ -15,6 +15,10 @@ PYVER=3.13
 RUNTIME_URL=${APLITE_RUNTIME_URL:-https://github.com/AppImage/type2-runtime/releases/download/continuous/runtime-x86_64}
 MKSQUASHFS=${MKSQUASHFS:-mksquashfs}
 SNI_VERSION=v0.0.100  # same as upstream's setup.py (SNI_VERSION)
+# Microsoft's VC++ runtime DLLs (msvcp140...) from the msvc-runtime wheel: fresh Windows lacks them, and C++ extensions
+# (dolphin_memory_engine: Luigi's Mansion, TWW, ...) fail to load. Upstream's installer runs vc_redist.x64.exe instead.
+VCRT_WHEEL=https://files.pythonhosted.org/packages/c2/6e/7ba5696e9d8c1bcb01352f06e441497c308e84f75aba598400646ab31ca7/msvc_runtime-14.51.36231-cp313-cp313-win_amd64.whl
+VCRT_SHA256=f3c3ac4f733a774f6ae209567e533bfde6f72dc1c10977733bfe09ce01e5b624
 BUILD="$REPO/build/aplite-dist"
 DIST="$REPO/dist"
 EXCLUDE='^(\.github|\.run|test|deploy|typings)/|^\.'  # git-tracked paths left out of the package
@@ -116,6 +120,31 @@ speedups() {
     sh "$REPO/aplite/build_speedups.sh" "$dest/app/$module" "$include" "$@"
 }
 
+# vcruntime DEST: the msvc-runtime wheel's DLLs (what it would put in sys.prefix) next to DEST/python/python.exe, and
+# its license. Download kept in build/vcrt-dl.
+vcruntime() {
+    wheel="$REPO/build/vcrt-dl/$(basename "$VCRT_WHEEL")"
+    mkdir -p "$REPO/build/vcrt-dl"
+    if [ ! -f "$wheel" ]; then
+        curl -fsSL -o "$wheel.part" "$VCRT_WHEEL"
+        mv "$wheel.part" "$wheel"
+    fi
+    [ "$(sha256sum "$wheel" | cut -d' ' -f1)" = "$VCRT_SHA256" ] || { echo "build_dist: bad msvc-runtime wheel" >&2; exit 1; }
+    host_python - "$wheel" "$1/python" <<'EOF'
+import os, sys, zipfile
+wheel, dest = sys.argv[1:]
+with zipfile.ZipFile(wheel) as z:
+    for name in z.namelist():
+        parts = name.split("/")
+        if len(parts) == 3 and parts[0].endswith(".data") and parts[1] == "data" and parts[2].endswith(".dll"):
+            with open(os.path.join(dest, parts[2]), "wb") as f:
+                f.write(z.read(name))
+        elif name.endswith("/licenses/LICENSE"):
+            with open(os.path.join(dest, "msvc-runtime-LICENSE.txt"), "wb") as f:
+                f.write(z.read(name))
+EOF
+}
+
 # shipped DEST: what DEST/app holds, in app/aplite/_files.txt; anything else there is user data from older versions
 # (aplite/datadir.py moves it up to the data folder)
 shipped() {
@@ -164,6 +193,7 @@ WINDIR="$BUILD/windows/ArchipelagoLite"
 python_tree "$WINDIR" "cpython-$PYVER-windows-x86_64-none" Lib/site-packages x86_64-pc-windows-msvc
 speedups "$WINDIR" "_speedups.cp$(echo $PYVER | tr -d .)-win_amd64.pyd" x86_64-windows-gnu \
     "$WINDIR/python/libs/python$(echo $PYVER | tr -d .).lib"
+vcruntime "$WINDIR"
 sni "$WINDIR" windows-amd64.zip
 shipped "$WINDIR"
 rm -rf "$WINDIR/python/include" "$WINDIR/python/libs" "$WINDIR/python/Lib/idlelib" "$WINDIR/python/Lib/turtledemo" \
