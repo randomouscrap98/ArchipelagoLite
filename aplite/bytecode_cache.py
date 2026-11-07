@@ -4,6 +4,7 @@ Cache compiled code for modules imported from zips (.apworld files).
 Python can't write .pyc files into zips, so every apworld module is recompiled on every start (~1.8s for 32 apworlds).
 This swaps zipimport's compile step for one that stores code objects in the Archipelago cache dir, keyed by the
 module path, its source and the Python bytecode version, so edited or updated apworlds recompile automatically.
+Also where aplite.source_patches applies.
 """
 import hashlib
 import importlib.util
@@ -13,7 +14,7 @@ import os
 import zipimport
 
 import Utils
-from aplite import write_atomic
+from aplite import source_patches, write_atomic
 
 
 def install() -> None:
@@ -21,6 +22,10 @@ def install() -> None:
     original = zipimport._compile_source
 
     def compile_source(pathname: str, source: bytes):
+        try:
+            source = source_patches.apply(pathname, source)  # before the digest: a patch change recompiles
+        except Exception:  # a world's odd source (encoding): compile it as it is
+            logging.exception(f"source patches failed for {pathname}")
         digest = hashlib.sha256(importlib.util.MAGIC_NUMBER + pathname.encode() + b"\0" + source).hexdigest()
         path = os.path.join(cache_dir, digest)
         try:
