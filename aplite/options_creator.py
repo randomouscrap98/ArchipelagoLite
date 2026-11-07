@@ -488,7 +488,10 @@ class OptionsScreen(MasterDetailScreen):
             return
         number = int(event.tab.id.removeprefix("player-"))
         if number != self.index:
+            browsing = event.tabs.has_focus  # arrowing through the tabs: stay on them (Ctrl+N/B go to the editor)
             self.show_player(number)
+            if browsing and not isinstance(self.app.screen, ModalScreen):  # a weighted player's game picker may be up
+                event.tabs.focus()
 
     def check_action(self, action: str, parameters: tuple) -> bool | None:
         if action == "switch_player":
