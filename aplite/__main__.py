@@ -74,6 +74,7 @@ def load() -> list:
         LauncherComponents.components.extend(components.extra_components())
         components.rename_old_components(LauncherComponents.components)
         _loaded = True
+        bytecode_cache.flush()  # now, not at exit: a relaunch (execve) skips atexit
     import worlds.LauncherComponents as LauncherComponents
     return LauncherComponents.components
 
@@ -185,6 +186,7 @@ def run(component, args: tuple[str, ...], come_back: bool) -> None:
     if nav.next_step is None and components.pauses_after(component):
         aplite.wait_for_enter()
     # a fresh process rather than looping, so nothing the component left behind leaks into the launcher
+    bytecode_cache.flush()  # what the component imported (execve skips atexit)
     sys.stdout.flush()
     if sys.platform == "win32":  # no real exec there: the new process would race the shell for the console
         if os.environ.get("APLITE_RELAUNCH"):  # aplite.cmd (Windows dist) starts us again on this exit code
