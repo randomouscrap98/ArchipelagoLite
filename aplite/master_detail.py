@@ -49,7 +49,7 @@ EDITOR_SHARE = 0.6
 MAX_LIST_HEIGHT = 20
 """Most rows an editor list shows before scrolling."""
 NOT_A_NUMBER = "Not a number."
-PATH_PLACEHOLDER = "Path. Enter sets, Ctrl+Space completes, Ctrl+B browses"
+PATH_PLACEHOLDER = "Path. Enter sets, Ctrl+Space completes, Ctrl+O browses"
 
 CSS = f"""
 #side {{ width: {SIDE_WIDTH}; }}
@@ -167,7 +167,7 @@ class MasterDetailScreen(Screen):
     NARROW = 140
     """Below this many columns, opening a game/section hides the side list (Ctrl+G brings it back)."""
     BROWSE_PREF = "settings_browse_dir"
-    """Pref remembering the folder Ctrl+B (browse for a path) was last in."""
+    """Pref remembering the folder Ctrl+O (browse for a path) was last in."""
     STRIP_TEXT = False
     """Strip spaces from text values (#str)."""
     MISSING_NOTE = ""
@@ -432,7 +432,7 @@ class MasterDetailScreen(Screen):
         self.set_timer(CONFIRM_SECONDS, lambda: self._armed.discard(action))
         return False
 
-    # simple editors (#int, #str) and paths (#path with an #exists line, Ctrl+B browses)
+    # simple editors (#int, #str) and paths (#path with an #exists line, Ctrl+O browses)
 
     @on(Input.Submitted, "#int")
     @editor_event

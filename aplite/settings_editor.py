@@ -116,7 +116,7 @@ class Section:
 class SettingsScreen(MasterDetailScreen):
     BINDINGS = [Binding("ctrl+g", "toggle_side", "Sections"), Binding("ctrl+s", "save", "Save"),
                 Binding("ctrl+e", "external", "Edit in $EDITOR"), Binding("ctrl+r", "reset", "Reset setting"),
-                Binding("ctrl+b", "browse", "Browse")]
+                Binding("ctrl+o", "browse", "Browse")]
     NARROW = 100  # sections get browsed more than games, so keep the list longer
     MISSING_NOTE = " (saving is still allowed)"
 

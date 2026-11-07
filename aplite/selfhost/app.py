@@ -48,7 +48,7 @@ class ServerSettingsScreen(MasterDetailScreen, ModalScreen):
     """
     BINDINGS = [Binding("escape", "back_to_rows", "Back"),  # shown (clickable): editor -> rows -> Self-host
                 Binding("ctrl+s", "save", "Save"), Binding("ctrl+r", "reset", "Reset setting"),
-                Binding("ctrl+b", "browse", "Browse")]
+                Binding("ctrl+o", "browse", "Browse")]
     BROWSE_PREF = "selfhost_browse_dir"
     STRIP_TEXT = True
     APPLY_NOTE = "Changes apply when the server (re)starts."
@@ -278,7 +278,7 @@ class GamesScreen(ModalScreen[typing.Optional[str]]):
         if info is None:
             self.query_one("#games-show", Button).disabled = True
             self.query_one("#games-text", Static).update(Text(
-                "No games yet. New game (Ctrl+N) on the main screen adds one.", style="dim"))
+                "No games yet. New game (Ctrl+O) on the main screen adds one.", style="dim"))
             return
         active = info["room"] in selfhost.active()
         toggle.label = "Deactivate" if active else "Activate"
@@ -362,9 +362,10 @@ SCREEN_CSS = """
 
 class SelfHostScreen(Screen):
     CSS = SCREEN_CSS
-    BINDINGS = [Binding("ctrl+r", "toggle_server", "Start/stop server"), Binding("ctrl+n", "new_game", "New game"),
+    BINDINGS = [Binding("ctrl+r", "toggle_server", "Start/stop server"), Binding("ctrl+o", "new_game", "New game"),
                 Binding("ctrl+g", "games", "Games"),
-                Binding("ctrl+e", "settings", "Settings"), Binding("ctrl+b", "open_room", "Open room", show=False),
+                Binding("ctrl+e", "settings", "Settings"), Binding("ctrl+t", "open_room", "Open room", show=False),
+                Binding("ctrl+n", "switch_room(1)", "Next room"), Binding("ctrl+b", "switch_room(-1)", "Prev room"),
                 Binding("ctrl+w", "wake", "Wake room", show=False), Binding("escape", "back", "Back", show=False)]
 
     def __init__(self, load: str | None = None) -> None:
@@ -391,7 +392,7 @@ class SelfHostScreen(Screen):
         yield Label("Room", id="room-heading", classes="heading")
         yield Tabs(id="rooms")
         with Horizontal(id="room-bar"):  # the selected game's own actions
-            yield Button("Open room ^B", id="open", compact=True)
+            yield Button("Open room ^T", id="open", compact=True)
             yield Button("Wake room ^W", id="wake", compact=True)
             yield Label(id="room-loaded")
         yield Static(id="room")
@@ -466,6 +467,7 @@ class SelfHostScreen(Screen):
                 info = selfhost.game(room)
                 await tabs.add_tab(Tab(f"{number} {info['name'] if info else room}", id=tab_id(room)))
             self.active = active
+            self.refresh_bindings()  # Next/Prev room show with two or more
             if want in active:
                 self.selected = want
                 tabs.active = tab_id(want)
@@ -479,6 +481,15 @@ class SelfHostScreen(Screen):
                 self.selected = room
                 self.refresh_state()
 
+    def check_action(self, action: str, parameters: tuple) -> bool | None:
+        return len(self.active) > 1 if action == "switch_room" else True  # the tabs show only then
+
+    def action_switch_room(self, delta: int) -> None:
+        """Ctrl+N / Ctrl+B: next / previous room tab, like the client's tabs."""
+        if self.selected in self.active:
+            self.query_one("#rooms", Tabs).active = tab_id(
+                self.active[(self.active.index(self.selected) + delta) % len(self.active)])
+
     def select(self, room: str) -> None:
         self.selected = room
         self.refresh_state()
@@ -487,7 +498,7 @@ class SelfHostScreen(Screen):
 
     def room_text(self, config: dict[str, typing.Any], running: bool) -> Text:
         if not self.info:
-            return Text("No game active. Ctrl+N adds a generated game (.zip / .archipelago); Games (Ctrl+G) "
+            return Text("No game active. Ctrl+O adds a generated game (.zip / .archipelago); Games (Ctrl+G) "
                         "activates one loaded before.", style="dim")
         info = self.info
         players = ", ".join(f"{name} ({game})" for _, name, game in info["players"])

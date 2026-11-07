@@ -138,7 +138,7 @@ class VersionPicker(ModalScreen):
 class ManagerApp(nav.AppliteApp):
     TITLE = "APWorld Manager"
     BINDINGS = [Binding("ctrl+r", "reload", "Refresh"), Binding("ctrl+t", "delete", "Delete"),
-                Binding("ctrl+n", "versions", "Versions"), Binding("ctrl+o", "open_repo", "Open repo")]
+                Binding("ctrl+y", "versions", "Versions"), Binding("ctrl+o", "open_repo", "Open repo")]
     CSS = """
     OptionList { height: 1fr; overflow-y: scroll; }
     #details { height: auto; max-height: 6; padding: 0 1; border-top: solid $primary; }

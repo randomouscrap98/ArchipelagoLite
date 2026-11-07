@@ -169,7 +169,8 @@ class ClientApp(AppliteApp):
     TabPane { padding: 0; }
     RichLog, DataTable { height: 1fr; }
     """
-    # alt+digit is unreliable (textual reads ESC 3 as the pound key), so ctrl letters the Input doesn't use
+    # alt+digit is unreliable (textual reads ESC 3 as the pound key), ctrl+pageup/pagedown are terminal tab keys (GNOME
+    # Terminal, Konsole...): Ctrl+N / Ctrl+B switch tabs on every aplite screen with tabs
     BINDINGS = [("ctrl+n", "switch_tab(1)", "Next tab"), ("ctrl+b", "switch_tab(-1)", "Prev tab"),
                 ("ctrl+t", "focus_address", "Address"), Binding("ctrl+f", "focus_tracker", "Filter tracker")]
 
