@@ -6,6 +6,8 @@ from __future__ import annotations
 
 import contextlib
 import os
+import re
+import time
 import typing
 
 import Utils
@@ -13,12 +15,14 @@ from textual import work
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
+from textual.screen import ModalScreen
 from textual.widgets import Footer, Header, OptionList, Static
 from textual.widgets.option_list import Option
 
 from aplite import nav
 from aplite.master_detail import CONFIRM_SECONDS
 from aplite.combo import FilterInput, highlight_first, keep_scroll
+from aplite.desktop import open_path
 
 CUSTOM_REPO = "Custom repo available"
 """The description world_manager gives a row whose world names its own repository (adding it, not installing)."""
@@ -53,15 +57,86 @@ def captured_messageboxes(messages: list[tuple[str, bool]]) -> typing.Iterator[N
         Utils.messagebox = original
 
 
+def repo_url(world: dict) -> str | None:
+    """Where a world lives: the manifest's repo_url/github, else the repo of a GitHub release download (nearly every
+    index entry), else the folder the download comes from. The index has no repo field, and the apworld's own
+    release_url is built from the index's address for index worlds (not a github.com link, so None)."""
+    manifest = world.get("manifest") or {}
+    if url := manifest.get("repo_url") or manifest.get("github"):
+        return url
+    remote = world.get("latest_version") or next(iter((world.get("remotes") or {}).values()), None)
+    download = remote.data.get("world") if remote else None
+    if not download:
+        return None
+    if match := re.match(r"(https?://[^/]+/[^/]+/[^/]+)/releases/download/", download):
+        return match.group(1)
+    return download.rsplit("/", 1)[0]
+
+
+class VersionPicker(ModalScreen):
+    """Every listed version of one world, newest first. Enter installs; an older one than installed needs a second
+    Enter within CONFIRM_SECONDS. Dismisses with the chosen ApWorldMetadata, or None."""
+    CSS = """
+    VersionPicker { align: center middle; }
+    VersionPicker Vertical { width: 70; max-width: 90%; height: auto; max-height: 80%; border: thick $primary;
+                             background: $surface; }
+    VersionPicker #picker-title { padding: 0 1; }
+    VersionPicker OptionList { height: auto; max-height: 30; border: none; }
+    """
+    BINDINGS = [Binding("escape", "cancel", "Cancel")]
+
+    def __init__(self, title: str, versions: list, installed, parse) -> None:
+        """versions: ApWorldMetadata newest first; installed: the installed version (parsed) or None."""
+        super().__init__()
+        self.title_text = title
+        self.versions = versions
+        self.installed = installed
+        self.parse = parse
+        self.armed: tuple[int, float] | None = None
+        """The older version a first Enter picked (index, time); a second Enter on it within CONFIRM_SECONDS installs."""
+
+    def compose(self) -> ComposeResult:
+        with Vertical():
+            yield Static(f"[b]{self.title_text}[/b]: pick a version", id="picker-title")
+            width = max(len(v.world_version) for v in self.versions)
+            yield OptionList(*[Option(self.label(v, width)) for v in self.versions])
+
+    def label(self, version, width: int) -> str:
+        date = (version.created_at or "")[:10]
+        parts = [f"{version.world_version:<{width}}", f"{date:<10}", f"{size_label(version.data.get('size')):>8}"]
+        if version.is_prerelease or self.parse(version.world_version).is_prerelease:  # flagged, or a1/b2/rc0/dev
+            parts.append("[$warning]prerelease[/]")
+        if self.installed is not None and self.parse(version.world_version) == self.installed:
+            parts.append("[$success]installed[/]")
+        return "  ".join(parts)
+
+    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+        event.stop()
+        index = event.option_index
+        version = self.versions[index]
+        older = self.installed is not None and self.parse(version.world_version) < self.installed
+        if older and not (self.armed and self.armed[0] == index and time.monotonic() - self.armed[1] < CONFIRM_SECONDS):
+            self.armed = (index, time.monotonic())
+            self.notify(f"{version.world_version} is older than the installed version: a downgrade. "
+                        f"Press Enter again to install it.", severity="warning", timeout=CONFIRM_SECONDS)
+            return
+        self.dismiss(version)
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+
 class ManagerApp(nav.AppliteApp):
-    TITLE = "Install/Update Apworlds"
-    BINDINGS = [Binding("ctrl+r", "reload", "Refresh"), Binding("ctrl+t", "delete", "Delete")]
+    TITLE = "APWorld Manager"
+    BINDINGS = [Binding("ctrl+r", "reload", "Refresh"), Binding("ctrl+t", "delete", "Delete"),
+                Binding("ctrl+n", "versions", "Versions"), Binding("ctrl+o", "open_repo", "Open repo")]
     CSS = """
     OptionList { height: 1fr; overflow-y: scroll; }
     #details { height: auto; max-height: 6; padding: 0 1; border-top: solid $primary; }
     #details Horizontal { height: auto; }
     #heading { width: 1fr; }
     #size { width: auto; padding-left: 2; }
+    #link { color: $text-muted; }
     #status { height: 1; padding: 0 1; color: $text-muted; }
     """
 
@@ -95,6 +170,7 @@ class ManagerApp(nav.AppliteApp):
             with Horizontal():
                 yield Static(id="heading")
                 yield Static(id="size")
+            yield Static(id="link")
             yield Static(id="description")
         yield Static(id="status")
         yield Footer()
@@ -161,7 +237,7 @@ class ManagerApp(nav.AppliteApp):
 
     def show_details(self) -> None:
         world = self.highlighted()
-        heading = size = description = ""
+        heading = size = description = link = ""
         if world:
             latest = world.get("latest_version")
             version = f"  (latest {latest.world_version})" if latest else ""
@@ -170,7 +246,11 @@ class ManagerApp(nav.AppliteApp):
                 size = size_text(world.get("file"))
             heading = f"[b]{world['title']}[/b]{version}"
             description = world["description"]
+            if url := repo_url(world):
+                link = f'[link="{url}"]{url.removeprefix("https://")}[/link]  (Ctrl+O opens)'
         self.query_one("#heading", Static).update(heading)
+        self.query_one("#link", Static).update(link)
+        self.query_one("#link", Static).display = bool(link)
         self.query_one("#size", Static).update(size)
         self.query_one("#description", Static).update(description)
 
@@ -209,8 +289,33 @@ class ManagerApp(nav.AppliteApp):
         self.fill(keep_position=True)
         self.status(f"Deleted {file}. It stays loaded (and not installable here) until aplite restarts.")
 
+    def action_open_repo(self) -> None:
+        world = self.highlighted()
+        url = repo_url(world) if world else None
+        if not url:
+            self.status("No repository link for this world.")
+        elif not open_path(url):
+            self.status(f"No desktop browser to open it: {url}")
+
+    def action_versions(self) -> None:
+        world = self.highlighted()
+        if world is None or self.busy:
+            return
+        parse = self.manager.parse_version
+        remotes = self.manager.repositories.packages_by_id_version.get(world["id"]) or {}
+        if not remotes:
+            self.status(f"No versions listed for {world['title']}.")
+            return
+        versions = sorted(remotes.values(), key=lambda r: parse(r.world_version), reverse=True)
+        installed = parse(world["installed_version"]) if world["installed"] and world.get("installed_version") else None
+
+        def picked(version) -> None:
+            if version is not None:
+                self.install({**world, "latest_version": version}, version.world_version)
+        self.push_screen(VersionPicker(world["title"], versions, installed, parse), picked)
+
     @work(thread=True, exclusive=True)
-    def install(self, world: dict) -> None:
+    def install(self, world: dict, version: str | None = None) -> None:
         self.busy = True
         messages: list[tuple[str, bool]] = []
         try:
@@ -226,7 +331,8 @@ class ManagerApp(nav.AppliteApp):
                 self.manager.repositories.refresh()
                 done = f"Added repository {url}."
             else:
-                nav.on_app_thread(self, self.status, f"Installing {world['title']}...")
+                name = f"{world['title']} {version}" if version else world["title"]
+                nav.on_app_thread(self, self.status, f"Installing {name}...")
                 with captured_messageboxes(messages):
                     self.manager.install_world(world)
                 errors = [text for text, error in messages if error]
@@ -234,7 +340,7 @@ class ManagerApp(nav.AppliteApp):
                     nav.on_app_thread(self, self.status, f"Install failed: {errors[0]}")
                     return
                 self.installed_any = True
-                done = f"Installed {world['title']}. New worlds load next time the launcher starts."
+                done = f"Installed {name}. New worlds load next time the launcher starts."
             worlds = self.world_table()
         except Exception as e:
             nav.on_app_thread(self, self.status, f"Install failed: {e}")
@@ -243,6 +349,13 @@ class ManagerApp(nav.AppliteApp):
             self.busy = False
         nav.on_app_thread(self, self.loaded, worlds)
         nav.on_app_thread(self, self.status, done)
+
+
+def size_label(size) -> str:
+    """A byte count as KB under 1 MB, else MB; empty when unknown."""
+    if not isinstance(size, (int, float)):
+        return ""
+    return f"{size / 1024:.0f} KB" if size < 1024 * 1024 else f"{size / 1024 / 1024:.1f} MB"
 
 
 def size_text(file) -> str:
@@ -255,7 +368,7 @@ def size_text(file) -> str:
         return ""
     mb = size / 1024 / 1024
     color = "$success" if mb < 1 else "$warning" if mb < 10 else "$error"
-    return f"[{color}]{size / 1024:.0f} KB[/]" if mb < 1 else f"[{color}]{mb:.1f} MB[/]"
+    return f"[{color}]{size_label(size)}[/]"
 
 
 def run(*args: str) -> None:

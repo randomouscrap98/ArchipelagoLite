@@ -154,7 +154,8 @@ def override_for(component: Component) -> Override:
     return table.get(component.func) or table.get(component.script_name) or Override()
 
 
-RENAMED = {"Host": "Host (old)", "Generate": "Generate (old)", "Generate GUI": "Generate Seed"}
+RENAMED = {"Host": "Host (old)", "Generate": "Generate (old)", "Generate GUI": "Generate Seed",
+           "Install/Update Apworlds": "APWorld Manager"}
 """Component names aplite shows differently (upstream's, and its own former ones); the old names still work for
 `python -m aplite <name>`."""
 OLD_DESCRIPTIONS = {
@@ -166,12 +167,21 @@ OLD_DESCRIPTIONS = {
 """Upstream's Host is only the game server (Self-host is the full room); Generate only runs Generate.py."""
 
 
+MANAGER_DESCRIPTION = "Browse the apworld repositories; install, update or pick any version."
+"""The APWorld Manager apworld's entry has no description."""
+
+
 def rename_old_components(components: list[Component]) -> None:
+    from aplite import apworld_manager
+    manager = apworld_manager.launch_func()
     for component in components:
         description = OLD_DESCRIPTIONS.get((component.script_name, component.display_name))
         if description:
             component.display_name = RENAMED[component.display_name]
             component.description = description
+        elif manager and component.func is manager and component.display_name == "Install/Update Apworlds":
+            component.display_name = RENAMED[component.display_name]
+            component.description = component.description or MANAGER_DESCRIPTION
 
 
 def extra_components() -> list[Component]:

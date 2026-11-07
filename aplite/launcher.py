@@ -21,7 +21,7 @@ from aplite import datadir, glyphs, write_atomic
 from aplite.combo import FilterInput, first_enabled, keep_scroll
 from aplite.version import version
 from aplite.nav import AppliteApp
-from aplite.components import override_for, returns_to_launcher, runnable
+from aplite.components import RENAMED, override_for, returns_to_launcher, runnable
 
 if typing.TYPE_CHECKING:
     from worlds.LauncherComponents import Component  # importing worlds loads all of them, so only lazily
@@ -30,8 +30,8 @@ Components = typing.Sequence["Component"]
 
 
 def load_favorites() -> list[str]:
-    """Shared with the kivy launcher."""
-    return list(Utils.persistent_load().get("launcher", {}).get("favorites", []))
+    """Shared with the kivy launcher. Favorites saved under a component's old name show under its aplite name."""
+    return [RENAMED.get(name, name) for name in Utils.persistent_load().get("launcher", {}).get("favorites", [])]
 
 
 @dataclasses.dataclass
