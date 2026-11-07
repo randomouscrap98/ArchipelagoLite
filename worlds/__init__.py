@@ -19,6 +19,8 @@ from .Files import APWorldContainer
 
 local_folder = os.path.dirname(__file__)
 user_folder = user_path("worlds") if user_path() != local_path() else user_path("custom_worlds")
+if os.environ.get("APLITE_DATA_DIR"):  # ArchipelagoLite tar.gz/zip: data next to app/, like upstream's
+    user_folder = user_path("custom_worlds")
 try:
     os.makedirs(user_folder, exist_ok=True)
 except OSError:  # can't access/write?

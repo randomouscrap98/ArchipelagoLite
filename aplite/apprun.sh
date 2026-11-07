@@ -43,6 +43,8 @@ if [ -z "$opened_terminal" ] && [ -z "${APLITE_NO_TERMINAL:-}" ] && ! { [ -t 0 ]
 fi
 
 export SKIP_REQUIREMENTS_UPDATE=1
+# tar.gz: user data in this folder, as upstream's tar.gz keeps it (aplite/datadir.py); the AppImage uses the home folder
+[ -z "${APPIMAGE:-}" ] && export APLITE_DATA_DIR="$HERE"
 export PYTHONPATH="$HERE/app${PYTHONPATH:+:$PYTHONPATH}"
 if [ -n "$opened_terminal" ]; then
     # in a terminal we opened: keep an error on screen before the window closes

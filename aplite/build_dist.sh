@@ -103,10 +103,19 @@ with tempfile.TemporaryDirectory() as tmp:
 EOF
 }
 
+# shipped DEST: what DEST/app holds, in app/aplite/_files.txt; anything else there is user data from older versions
+# (aplite/datadir.py moves it up to the data folder)
+shipped() {
+    (cd "$1/app" && find . -path '*/__pycache__' -prune -o \( -type f -o -type l \) -print | sed 's|^\./||') \
+        > "$BUILD/files-shipped.txt"
+    mv "$BUILD/files-shipped.txt" "$1/app/aplite/_files.txt"
+}
+
 # Linux: AppImage + tar.gz
 APPDIR="$BUILD/linux/ArchipelagoLite"
 python_tree "$APPDIR" "cpython-$PYVER-linux-x86_64-gnu" "lib/python$PYVER/site-packages" x86_64-manylinux_2_28
 sni "$APPDIR" manylinux_2_28-amd64.tar.xz
+shipped "$APPDIR"
 lib="$APPDIR/python/lib/python$PYVER"
 rm -rf "$APPDIR/python/include" "$APPDIR/python/share" "$lib/idlelib" "$lib/turtledemo" "$lib/ensurepip" \
     "$lib"/config-$PYVER-*
@@ -140,6 +149,7 @@ fi
 WINDIR="$BUILD/windows/ArchipelagoLite"
 python_tree "$WINDIR" "cpython-$PYVER-windows-x86_64-none" Lib/site-packages x86_64-pc-windows-msvc
 sni "$WINDIR" windows-amd64.zip
+shipped "$WINDIR"
 rm -rf "$WINDIR/python/include" "$WINDIR/python/libs" "$WINDIR/python/Lib/idlelib" "$WINDIR/python/Lib/turtledemo" \
     "$WINDIR/python/Lib/ensurepip"
 # the Windows launcher (aplite/aplite.cmd), CRLF: cmd misreads labels in LF-only batch files

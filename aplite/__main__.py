@@ -108,6 +108,12 @@ def main() -> None:
         launch_from_launcher()
         return
 
+    from aplite import datadir
+    if datadir.migration:  # direct launch: no launcher to show it in
+        print(datadir.message(datadir.migration))
+        aplite.wait_for_enter("Press Enter to continue…")
+        datadir.migration = None
+
     load()
     if target.startswith("archipelago://"):
         import Launcher

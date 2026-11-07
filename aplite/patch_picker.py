@@ -14,4 +14,4 @@ def patch_suffixes() -> list[str]:
 
 
 def patch_picker() -> FilePicker:
-    return FilePicker("Open patch", patch_suffixes(), "patch_dir", Utils.local_path())
+    return FilePicker("Open patch", patch_suffixes(), "patch_dir", Utils.user_path())

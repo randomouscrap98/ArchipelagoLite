@@ -10,12 +10,14 @@ from rich.padding import Padding
 from rich.table import Table
 from rich.text import Text
 from textual.app import ComposeResult
-from textual.containers import Horizontal
-from textual.widgets import Footer, Input, OptionList, Static
+from textual.binding import Binding
+from textual.containers import Horizontal, Vertical
+from textual.screen import ModalScreen
+from textual.widgets import Button, Footer, Input, OptionList, Static
 from textual.widgets.option_list import Option
 
 import Utils
-from aplite import glyphs, write_atomic
+from aplite import datadir, glyphs, write_atomic
 from aplite.combo import FilterInput, first_enabled, keep_scroll
 from aplite.version import version
 from aplite.nav import AppliteApp
@@ -74,6 +76,33 @@ Choice = tuple["Component", tuple[str, ...], bool]
 """What the launcher returns: the component to run, its args, and whether to come back to the launcher after."""
 
 
+class MovedModal(ModalScreen[None]):
+    """Once, after datadir moved user data out of app/ (tar.gz, Windows zip)."""
+    CSS = """
+    MovedModal { align: center middle; }
+    #moved-box { width: 90%; height: auto; max-height: 90%; padding: 1 2; border: thick $primary; background: $surface; }
+    #moved-buttons { height: auto; align-horizontal: right; margin-top: 1; }
+    """
+    BINDINGS = [Binding("escape", "dismiss", "Close")]
+
+    def __init__(self, text: str) -> None:
+        super().__init__()
+        self.text = text
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="moved-box"):
+            yield Static(self.text, markup=False)
+            with Horizontal(id="moved-buttons"):
+                yield Button("OK", id="moved-ok")
+
+    def on_mount(self) -> None:
+        self.query_one(Button).focus()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.dismiss()
+
+
 class LauncherApp(AppliteApp):
     TITLE = "Archipelago"
     CSS = """
@@ -112,6 +141,9 @@ class LauncherApp(AppliteApp):
             self.set_components(self.source)
         self.rebuild()
         self.query_one(Input).focus()
+        if datadir.migration:
+            self.push_screen(MovedModal(datadir.message(datadir.migration)))
+            datadir.migration = None
 
     def load_components(self) -> None:
         try:

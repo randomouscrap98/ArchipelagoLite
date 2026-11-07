@@ -10,6 +10,8 @@ if not defined APLITE_NO_WT if not defined WT_SESSION (
 )
 set "HERE=%~dp0"
 set SKIP_REQUIREMENTS_UPDATE=1
+rem user data in this folder, as upstream's Windows build keeps it (aplite/datadir.py)
+set "APLITE_DATA_DIR=%HERE%"
 set "PYTHONPATH=%HERE%app;%PYTHONPATH%"
 rem aplite exits with this code to be started again, fresh (coming back to the launcher)
 set APLITE_RELAUNCH=75
