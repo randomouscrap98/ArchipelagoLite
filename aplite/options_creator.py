@@ -284,6 +284,7 @@ class OptionsScreen(MasterDetailScreen):
         self.values: dict[str, typing.Any] = {}  # the current game's entry in values_by_game
         self.values_by_game: dict[str, dict[str, typing.Any]] = {}  # switching games keeps each game's edits
         self.loaded: dict = {}  # the YAML we loaded, kept so saving preserves everything we don't edit
+        self.others: list[dict] = []  # a multi-player file's other players (after the first), saved back as they were
         self.loaded_path: Path | None = None
 
     def compose(self) -> ComposeResult:
@@ -664,7 +665,8 @@ class OptionsScreen(MasterDetailScreen):
             self.notify(f"{path.name} is empty", severity="error")
             return
         if len(documents) > 1:
-            self.notify(f"{path.name} has {len(documents)} players; editing the first", timeout=8)
+            self.notify(f"{path.name} has {len(documents)} players; editing the first (saving keeps the others)",
+                        timeout=8)
         data = documents[0]
         game = data.get("game")
         if isinstance(game, dict):
@@ -672,17 +674,18 @@ class OptionsScreen(MasterDetailScreen):
             if len(games) == 1:
                 game = games[0]
             elif games:
-                self.app.push_screen(GamePicker(games), lambda chosen: chosen and self.apply_loaded(path, data, chosen))
+                self.app.push_screen(GamePicker(games), lambda chosen: chosen and self.apply_loaded(
+                    path, data, chosen, documents[1:]))
                 return
             else:
                 game = None
         if game not in self.worlds:
             self.notify(f"{path.name}: game {game!r} isn't installed", severity="error", timeout=10)
             return
-        self.apply_loaded(path, data, game)
+        self.apply_loaded(path, data, game, documents[1:])
 
-    def apply_loaded(self, path: Path, data: dict, game: str) -> None:
-        self.loaded, self.loaded_path = data, path
+    def apply_loaded(self, path: Path, data: dict, game: str, others: list[dict]) -> None:
+        self.loaded, self.loaded_path, self.others = data, path, others
         self.query_one("#name", Input).value = str(data.get("name", ""))[:MAX_NAME]
         section = data.get(game) if isinstance(data.get(game), dict) else {}
         self.select_game(game, section)
@@ -714,7 +717,7 @@ class OptionsScreen(MasterDetailScreen):
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
             with open(path, "w", encoding="utf-8") as f:
-                f.write(Utils.dump(data, sort_keys=False))
+                f.write("---\n".join(Utils.dump(doc, sort_keys=False) for doc in [data, *self.others]))
         except OSError as e:
             self.notify(f"Could not save: {e}", severity="error", timeout=10)
             return
