@@ -45,8 +45,9 @@ in_spare = False
 
 APPIMAGE = os.environ.get("APPIMAGE") if os.path.isfile(os.environ.get("APPIMAGE") or "") else None
 """The AppImage file when running from one (its runtime sets $APPIMAGE). Each run mounts it at a new path that goes
-away when that run ends, so the manager's address and the update checks go by this file, and the manager and spares
-start through it (each with a mount of its own, outliving the opener's)."""
+away when that run ends, so the update check goes by this file, and the manager and spares start through it (each
+with a mount of its own, outliving the opener's). All AppImages share one manager, as they share one data folder: each
+build has a new file name, and an open from another one makes the running manager step down."""
 
 logger = logging.getLogger("aplite.background")
 
@@ -55,7 +56,8 @@ def address() -> str | None:
     """The manager's pipe/socket: one per user, machine (containers share /tmp with their host) and install. None when
     no private folder for the socket can be had (Linux)."""
     from aplite import REPO
-    key = hashlib.sha1(f"{getpass.getuser()}|{socket.gethostname()}|{APPIMAGE or REPO}".encode()).hexdigest()[:16]
+    install = "appimage" if APPIMAGE else REPO
+    key = hashlib.sha1(f"{getpass.getuser()}|{socket.gethostname()}|{install}".encode()).hexdigest()[:16]
     if sys.platform == "win32":
         return rf"\\.\pipe\aplite-{key}"
     folder = os.environ.get("XDG_RUNTIME_DIR") or os.path.join(tempfile.gettempdir(), f"aplite-{os.getuid()}")
@@ -149,7 +151,8 @@ def _open_in_spare(conn: Connection, argv: list[str]) -> int | None:
     """Run this open in a spare and return its exit code; None when the manager declined (open normally)."""
     with conn:
         try:
-            conn.send({"op": "open", "pid": os.getpid(), "cwd": os.getcwd(), "argv": argv, "env": dict(os.environ)})
+            conn.send({"op": "open", "pid": os.getpid(), "cwd": os.getcwd(), "argv": argv, "env": dict(os.environ),
+                       "stamp": code_stamp()})
             if sys.platform != "win32":
                 send_fds(conn, [0, 1, 2])
             reply = conn.recv()
@@ -394,10 +397,13 @@ def memory_bytes() -> int | None:
 # --- manager -------------------------------------------------------------------------------------------------------
 
 def code_stamp() -> list:
-    """This file and the dist's _version.txt (sizes, mtimes), and the AppImage file: any aplite update rewrites them,
-    and a manager whose code was replaced under it steps down rather than talk to a newer thin client with old code."""
+    """Which aplite this is: this file and the dist's _version.txt (paths, sizes, mtimes), or the AppImage file (its
+    mount paths change every run). An open sends its own; a manager started from another one (updated in place, or
+    another AppImage) steps down rather than hand it a spare with other code."""
+    if APPIMAGE:
+        return tree_fingerprint([], [APPIMAGE])
     folder = os.path.dirname(os.path.abspath(__file__))
-    return tree_fingerprint([], [os.path.abspath(__file__), os.path.join(folder, "_version.txt"), *install_files()])
+    return tree_fingerprint([], [os.path.abspath(__file__), os.path.join(folder, "_version.txt")])
 
 
 def install_files() -> list[str]:
@@ -509,7 +515,7 @@ class Manager:
                 return  # conn stays open: it carries the open later
             if op == "open":
                 fds = recv_fds(conn, 3) if sys.platform != "win32" else []
-                if code_stamp() != self.stamp:
+                if message.get("stamp") != self.stamp:
                     for fd in fds:
                         os.close(fd)
                     self._step_down(conn)
