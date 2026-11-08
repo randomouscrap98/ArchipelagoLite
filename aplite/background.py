@@ -400,8 +400,10 @@ class Manager:
         self.stopping = False
         self.failures = 0
         self.cond = threading.Condition()
+        self.path = ""
 
     def serve(self, path: str) -> None:
+        self.path = path
         listener = self._listen(path)
         if listener is None:
             return
@@ -589,8 +591,7 @@ class Manager:
                 spare.process.kill()
             self._top_up()
             if self.stopping and self.active == 0:
-                logger.info("background manager stopped")
-                os._exit(0)
+                self._exit()
 
     def _configure(self, count: int) -> None:
         with self.cond:
@@ -603,11 +604,21 @@ class Manager:
                 self.stopping = True
                 self.cond.notify_all()
                 if self.active == 0:
-                    logger.info("background manager stopped")
-                    os._exit(0)
+                    self._exit()
             else:
                 self.failures = 0
                 self._top_up()
+
+
+    def _exit(self) -> typing.NoReturn:
+        """Now, from whichever thread: the main one sits in accept()."""
+        logger.info("background manager stopped")
+        if sys.platform != "win32":
+            try:  # os._exit skips the Listener's own cleanup
+                os.unlink(self.path)
+            except OSError:
+                pass
+        os._exit(0)
 
 
 def main() -> None:

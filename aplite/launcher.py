@@ -17,7 +17,7 @@ from textual.widgets import Button, Footer, Input, OptionList, Static
 from textual.widgets.option_list import Option
 
 import Utils
-from aplite import datadir, glyphs, write_atomic
+from aplite import datadir, glyphs, prefs, write_atomic
 from aplite.combo import FilterInput, first_enabled, keep_scroll
 from aplite.version import version
 from aplite.nav import AppliteApp
@@ -125,6 +125,10 @@ class LauncherApp(AppliteApp):
         self.favorites = load_favorites()
         self.name_width = max((len(c.display_name) for c in self.components), default=0)
         self.launch_when_loaded: str | bool = False  # Enter pressed while loading: the highlighted name, or True
+        self.counts = ""
+        """The entry count part of the status line ("62", "3 of 62")."""
+        self.spares = ""
+        """Background spares on the status line ("BGS: 2/3"), when that's on."""
 
     def compose(self) -> ComposeResult:
         yield FilterInput(placeholder="Search. Enter launches, ↑/↓ select.", target="OptionList")
@@ -141,6 +145,8 @@ class LauncherApp(AppliteApp):
             self.set_components(self.source)
         self.rebuild()
         self.query_one(Input).focus()
+        self.poll_spares()
+        self.set_interval(2, self.poll_spares)
         if datadir.migration:
             self.push_screen(MovedModal(datadir.message(datadir.migration)))
             datadir.migration = None
@@ -186,6 +192,38 @@ class LauncherApp(AppliteApp):
         self.status = status
         self.rebuild()
 
+    def poll_spares(self) -> None:
+        from aplite import background
+        if background.SUPPORTED and prefs.get(background.PREF):
+            self.run_worker(self.read_spares, thread=True, exclusive=True, group="spares")
+        elif self.spares:
+            self.spares = ""
+            self.update_status()
+
+    def read_spares(self) -> None:
+        from aplite import background
+        try:
+            status = background.request({"op": "status"})
+            ready = sum(1 for _, loaded, waiting in status["spares"] if loaded and waiting)
+            text = f"BGS: {ready}/{status['count']}"
+        except (OSError, EOFError, KeyError, TypeError):
+            text = "BGS: off"  # on in aplite.yaml, but no manager (yet, or it died)
+        if text != self.spares:
+            self.call_from_thread(self.show_spares, text)
+
+    def show_spares(self, text: str) -> None:
+        self.spares = text
+        self.update_status()
+
+    def update_status(self) -> None:
+        if self.status:
+            status = Text(self.status, style="italic")
+        else:
+            status = Text(f"{self.counts} components", style="dim")
+        if self.spares:
+            status.append(f" · {self.spares}", style="dim")
+        self.query_one("#status", Static).update(status)
+
     def rebuild(self, keep_position: bool = True) -> None:
         """Refill the list, keeping the highlighted entry; keep_position: and the scroll (not for a new search)."""
         options = self.query_one(OptionList)
@@ -198,12 +236,8 @@ class LauncherApp(AppliteApp):
         groups += [(label, [c for c in matches if type_name(c) == type_ and c.display_name not in self.favorites])
                    for type_, label in groups_by_type]
 
-        if self.status:
-            status = Text(self.status, style="italic")
-        else:
-            count = f"{len(matches)} of {len(self.components)}" if search else str(len(self.components))
-            status = Text(f"{count} components", style="dim")
-        self.query_one("#status", Static).update(status)
+        self.counts = f"{len(matches)} of {len(self.components)}" if search else str(len(self.components))
+        self.update_status()
 
         highlighted = options.highlighted_option.id if options.highlighted_option else None
         if keep_position:
