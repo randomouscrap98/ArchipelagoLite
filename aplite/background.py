@@ -377,6 +377,13 @@ def memory_bytes() -> int | None:
 
 # --- manager -------------------------------------------------------------------------------------------------------
 
+def code_stamp() -> list:
+    """This file and the dist's _version.txt (sizes, mtimes): any aplite update rewrites them, and a manager whose code
+    was replaced under it steps down rather than talk to a newer thin client with old code."""
+    folder = os.path.dirname(os.path.abspath(__file__))
+    return tree_fingerprint([], [os.path.abspath(__file__), os.path.join(folder, "_version.txt")])
+
+
 class Spare:
     def __init__(self, process: subprocess.Popen) -> None:
         self.process = process
@@ -401,6 +408,7 @@ class Manager:
         self.failures = 0
         self.cond = threading.Condition()
         self.path = ""
+        self.stamp = code_stamp()
 
     def serve(self, path: str) -> None:
         self.path = path
@@ -480,6 +488,11 @@ class Manager:
                 return  # conn stays open: it carries the open later
             if op == "open":
                 fds = recv_fds(conn, 3) if sys.platform != "win32" else []
+                if code_stamp() != self.stamp:
+                    for fd in fds:
+                        os.close(fd)
+                    self._step_down(conn)
+                    return
                 try:
                     self._open(conn, message, fds)
                 finally:
@@ -609,6 +622,21 @@ class Manager:
                 self.failures = 0
                 self._top_up()
 
+
+    def _step_down(self, conn: Connection) -> None:
+        """aplite was updated: this open loads normally (and starts a new manager after its load, once this one is
+        gone); quit when the opens already handed out end."""
+        logger.info("aplite was updated; stopping (a new manager starts with a later open)")
+        conn.send({"declined": True})
+        conn.close()
+        with self.cond:
+            self.stopping = True
+            for spare in self.spares:
+                spare.process.kill()
+            self.spares.clear()
+            self.cond.notify_all()
+            if self.active == 0:
+                self._exit()
 
     def _exit(self) -> typing.NoReturn:
         """Now, from whichever thread: the main one sits in accept()."""

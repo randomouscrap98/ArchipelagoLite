@@ -39,7 +39,9 @@ class BackgroundModal(ModalScreen[None]):
                 "Keep copies of aplite running in the background with the worlds already loaded. Opening aplite takes "
                 "one over, so only the first open after a restart waits for the worlds to load; more than one helps "
                 f"when opening several in a row. {cost}\n"
-                "Off stops them right away (open windows keep running).", id="background-text")
+                "Off stops them right away (open windows keep running).\n"
+                "[$warning]Turn this off before updating aplite: Windows can't replace files a running spare "
+                "uses.[/]", id="background-text")
             yield OptionList(*[Option(self.label(n, each), id=str(n)) for n in range(background.MAX_SPARES + 1)])
 
     @staticmethod
