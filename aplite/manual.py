@@ -445,8 +445,11 @@ class ManualPane(Vertical):
                 if not entries:
                     continue
             label = Text(f"{category} ({len(entries)})")
-            if any(entry[0].style for entry in entries):
+            names = {data[3] for _, data in entries if data[0] == "location"}
+            if self.ctx.reachable and names & self.ctx.reachable:  # the template's category colors
                 label.stylize(colors.style("tracker_in_logic"))
+            elif names & self.ctx.glitched:
+                label.stylize(colors.style("tracker_glitched"))
             node = tree.root.add(label, data=("category", category), expand=bool(query) or category in expanded)
             for text, data in entries:
                 leaf = node.add_leaf(text, data=data)
