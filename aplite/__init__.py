@@ -36,6 +36,6 @@ def wait_for_enter(message: str = "Press Enter to return to the launcher…") ->
         pass
 
 
-if os.environ.get("APLITE_DATA_DIR"):  # tar.gz / Windows zip (aplite script, aplite.cmd): data next to app/; every aplite process
+if os.environ.get("APLITE_DATA_DIR"):  # tar.gz / Windows zip (aplite script, aplite.exe): data next to app/; every aplite process
     from aplite import datadir
     datadir.install()

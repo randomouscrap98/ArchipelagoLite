@@ -2,7 +2,7 @@
 # Builds into dist/, from a relocatable Python (python-build-standalone, via uv) + aplite's dependencies + the source
 # tree (no freezing):
 #   ArchipelagoLite_<version>_x86_64.AppImage and _linux-x86_64.tar.gz (one AppDir, glibc Python)
-#   ArchipelagoLite_<version>_windows-x86_64.zip (run aplite.cmd)
+#   ArchipelagoLite_<version>_windows-x86_64.zip (run aplite.exe)
 # Packages are cross-installed as platform wheels and nothing built is run, so this works on any Linux (musl too).
 # _speedups is compiled with zig (aplite/build_speedups.sh, via uvx: no system compiler).
 # Needs uv, curl and tar; mksquashfs (squashfs-tools) for the AppImage (without it that one is skipped).
@@ -14,6 +14,7 @@ REPO=$(cd "$(dirname "$0")/.." && pwd)
 PYVER=3.13
 RUNTIME_URL=${APLITE_RUNTIME_URL:-https://github.com/AppImage/type2-runtime/releases/download/continuous/runtime-x86_64}
 MKSQUASHFS=${MKSQUASHFS:-mksquashfs}
+ZIG=ziglang==0.17.1  # as in aplite/build_speedups.sh; builds aplite.exe
 SNI_VERSION=v0.0.100  # same as upstream's setup.py (SNI_VERSION)
 # Microsoft's VC++ runtime DLLs (msvcp140...) from the msvc-runtime wheel: fresh Windows lacks them, and C++ extensions
 # (dolphin_memory_engine: Luigi's Mansion, TWW, ...) fail to load. Upstream's installer runs vc_redist.x64.exe instead.
@@ -201,8 +202,13 @@ sni "$WINDIR" windows-amd64.zip
 shipped "$WINDIR"
 rm -rf "$WINDIR/python/include" "$WINDIR/python/libs" "$WINDIR/python/Lib/idlelib" "$WINDIR/python/Lib/turtledemo" \
     "$WINDIR/python/Lib/ensurepip"
-# the Windows launcher (aplite/aplite.cmd), CRLF: cmd misreads labels in LF-only batch files
-awk '{ printf "%s\r\n", $0 }' "$REPO/aplite/aplite.cmd" > "$WINDIR/aplite.cmd"
+# the Windows launcher: aplite.exe (aplite/launcher_win.c, zig like _speedups, with the icon), and
+# aplite_fallback.cmd in case antivirus/SmartScreen blocks the unsigned exe (CRLF: cmd misreads labels in LF-only
+# batch files)
+printf '1 ICON "%s"\n' "$REPO/data/icon.ico" > "$BUILD/aplite.rc"
+(cd "$BUILD" && uvx --quiet --from "$ZIG" python-zig cc -target x86_64-windows-gnu -municode -O2 -s \
+    -o "$WINDIR/aplite.exe" "$REPO/aplite/launcher_win.c" aplite.rc)  # zig's rc failed (FileSystemFailure) when not run from the .rc's folder
+awk '{ printf "%s\r\n", $0 }' "$REPO/aplite/aplite_fallback.cmd" > "$WINDIR/aplite_fallback.cmd"
 rm -f "$DIST/${name}_windows-x86_64.zip"
 host_python - "$BUILD/windows" "$DIST/${name}_windows-x86_64.zip" <<'EOF'
 import os, sys, zipfile

@@ -1,7 +1,7 @@
 """
 Linux tar.gz and Windows zip: user data in the top folder (next to app/), laid out like upstream's tar.gz / Windows
 builds keep it next to their launcher, so Lite can be extracted into an existing Archipelago folder and share
-host.yaml, Players, custom_worlds and output with it. The tar.gz's aplite script and aplite.cmd set APLITE_DATA_DIR; the AppImage
+host.yaml, Players, custom_worlds and output with it. The tar.gz's aplite script and aplite.exe set APLITE_DATA_DIR; the AppImage
 and source checkouts don't.
 
 Lite versions before this kept user data in app/; the first run moves it up (see migrate).

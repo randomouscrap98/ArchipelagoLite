@@ -1,5 +1,5 @@
 @echo off
-rem Archipelago Lite with the bundled Python. Prefers Windows Terminal; set APLITE_NO_WT=1 to stay in this console.
+rem Fallback for aplite.exe (if antivirus or SmartScreen blocks it): Archipelago Lite with the bundled Python. Prefers Windows Terminal; set APLITE_NO_WT=1 to stay in this console.
 setlocal
 if not defined APLITE_NO_WT if not defined WT_SESSION (
     where wt >nul 2>nul && (
