@@ -20,7 +20,7 @@ from textual.widgets import Footer, Header, OptionList, Static
 from textual.widgets.option_list import Option
 
 from aplite import nav
-from aplite.master_detail import CONFIRM_SECONDS
+from aplite.master_detail import CONFIRM_SECONDS, TextScroll
 from aplite.combo import FilterInput, highlight_first, keep_scroll
 from aplite.desktop import open_path
 
@@ -68,22 +68,52 @@ def repo_url(world: dict) -> str | None:
     download = remote.data.get("world") if remote else None
     if not download:
         return None
-    if match := re.match(r"(https?://[^/]+/[^/]+/[^/]+)/releases/download/", download):
-        return match.group(1)
-    return download.rsplit("/", 1)[0]
+    return release_repo(download) or download.rsplit("/", 1)[0]
+
+
+RELEASE_DOWNLOAD = re.compile(r"(https?://[^/]+/[^/]+/[^/]+)/releases/download/([^/]+)/")
+
+
+def release_repo(download: str | None) -> str | None:
+    """The repo of a GitHub release download URL (https://github.com/owner/repo), else None."""
+    match = RELEASE_DOWNLOAD.match(download or "")
+    return match.group(1) if match else None
+
+
+def release_page(download: str | None) -> str | None:
+    """The release page (notes, changelog) of a GitHub release download URL, else None."""
+    match = RELEASE_DOWNLOAD.match(download or "")
+    return f"{match.group(1)}/releases/tag/{match.group(2)}" if match else None
+
+
+def short_repo(url: str) -> str:
+    return url.split("://", 1)[-1].split("/", 1)[-1]  # owner/repo
+
+
+def repo_change(version, latest) -> str | None:
+    """How `version`'s repo differs from `latest`'s (ApWorldMetadata): "other maintainer" (another owner), "old repo"
+    (same owner, another repo), or None (same, or not GitHub releases). Older versions sometimes come from a
+    different fork or maintainer (Hexcells Infinite <= 1.2)."""
+    mine, theirs = release_repo(version.data.get("world")), release_repo(latest.data.get("world"))
+    if not mine or not theirs or mine.lower() == theirs.lower():
+        return None
+    return "other maintainer" if mine.lower().split("/")[-2] != theirs.lower().split("/")[-2] else "old repo"
 
 
 class VersionPicker(ModalScreen):
-    """Every listed version of one world, newest first. Enter installs; an older one than installed needs a second
-    Enter within CONFIRM_SECONDS. Dismisses with the chosen ApWorldMetadata, or None."""
+    """Every listed version of one world, newest first, with the highlighted one explained in a box below. Enter
+    installs; an older one than installed needs a second Enter within CONFIRM_SECONDS. Dismisses with the chosen
+    ApWorldMetadata, or None."""
     CSS = """
     VersionPicker { align: center middle; }
     VersionPicker Vertical { width: 70; max-width: 90%; height: auto; max-height: 80%; border: thick $primary;
                              background: $surface; }
     VersionPicker #picker-title { padding: 0 1; }
     VersionPicker OptionList { height: auto; max-height: 30; border: none; }
+    VersionPicker #picker-doc { height: 4; border-top: solid $panel; padding: 0 1; }
+    VersionPicker #picker-doc:focus { border-top: solid $border; }
     """
-    BINDINGS = [Binding("escape", "cancel", "Cancel")]
+    BINDINGS = [Binding("escape", "cancel", "Cancel"), Binding("ctrl+o", "open_release", "Open release page")]
 
     def __init__(self, title: str, versions: list, installed, parse) -> None:
         """versions: ApWorldMetadata newest first; installed: the installed version (parsed) or None."""
@@ -106,6 +136,10 @@ class VersionPicker(ModalScreen):
             yield Static(f"[b]{self.title_text}[/b]: pick a version", id="picker-title")
             width = max(len(v.world_version) for v in self.versions)
             yield OptionList(*[Option(self.label(v, width)) for v in self.versions])
+            yield TextScroll(Static(id="picker-info"), id="picker-doc")
+
+    def on_mount(self) -> None:
+        self.explain(0)
 
     def label(self, version, width: int) -> str:
         date = (version.created_at or "")[:10]
@@ -117,7 +151,45 @@ class VersionPicker(ModalScreen):
             parts.append("[$warning]prerelease[/]")
         if self.installed is not None and self.parse(version.world_version) == self.installed:
             parts.append("[$success]installed[/]")
+        if repo_change(version, self.versions[0]):
+            parts.append("[$warning]\\[!][/]")
         return "  ".join(parts)
+
+    def explain(self, index: int | None) -> None:
+        """Fill the box below the list for the version at `index`: release page, then what its tags mean."""
+        lines = []
+        if index is not None:
+            version = self.versions[index]
+            download = version.data.get("world")
+            if page := release_page(download):
+                lines.append(f'Release page (Ctrl+O): [link="{page}"]{page.removeprefix("https://")}[/link]')
+            elif download:
+                lines.append(f"Download: {download}")
+            if change := repo_change(version, self.versions[0]):
+                lines.append(f"[$warning]\\[!] {change}:[/] {short_repo(release_repo(download))} (the newest version "
+                             f"is from {short_repo(release_repo(self.versions[0].data.get('world')))})")
+            newest = self.newest_by_hash.get(version.data.get("hash_sha256"), version.world_version)
+            if newest != version.world_version:
+                lines.append(f"Replaced with {newest}: the author re-uploaded a newer file to this release, so "
+                             f"installing it gets {newest}.")
+            if version.is_prerelease or self.parse(version.world_version).is_prerelease:
+                lines.append("Prerelease: may be unfinished or unstable.")
+            if self.installed is not None and self.parse(version.world_version) < self.installed:
+                lines.append("Older than installed: Enter twice to downgrade.")
+        self.query_one("#picker-info", Static).update("\n".join(lines))
+        self.query_one("#picker-doc", TextScroll).scroll_home(animate=False)
+
+    def on_option_list_option_highlighted(self, event: OptionList.OptionHighlighted) -> None:
+        event.stop()
+        self.explain(event.option_index)
+
+    def action_open_release(self) -> None:
+        index = self.query_one(OptionList).highlighted
+        page = release_page(self.versions[index].data.get("world")) if index is not None else None
+        if not page:
+            self.notify("No release page for this version.")
+        elif not open_path(page):
+            self.notify(f"No desktop browser to open it: {page}")
 
     def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
         event.stop()
@@ -180,6 +252,7 @@ class ManagerApp(nav.AppliteApp):
                 yield Static(id="heading")
                 yield Static(id="size")
             yield Static(id="link")
+            yield Static(id="repo-note")
             yield Static(id="description")
         yield Static(id="status")
         yield Footer()
@@ -246,13 +319,15 @@ class ManagerApp(nav.AppliteApp):
 
     def show_details(self) -> None:
         world = self.highlighted()
-        heading = size = description = link = ""
+        heading = size = description = link = note = ""
         if world:
             latest = world.get("latest_version")
             version = f"  (latest {latest.world_version})" if latest else ""
             if world["installed"]:
                 version = f"  installed {world['installed_version']}{version}"
                 size = size_text(world.get("file"))
+                if note := self.installed_repo_note(world):
+                    version += "  [$warning]\\[!][/]"
             heading = f"[b]{world['title']}[/b]{version}"
             description = world["description"]
             if url := repo_url(world):
@@ -260,8 +335,25 @@ class ManagerApp(nav.AppliteApp):
         self.query_one("#heading", Static).update(heading)
         self.query_one("#link", Static).update(link)
         self.query_one("#link", Static).display = bool(link)
+        self.query_one("#repo-note", Static).update(note)
+        self.query_one("#repo-note", Static).display = bool(note)
         self.query_one("#size", Static).update(size)
         self.query_one("#description", Static).update(description)
+
+    def installed_repo_note(self, world: dict) -> str:
+        """A warning line when the installed version comes from another repo than the newest listed one."""
+        remotes = self.manager.repositories.packages_by_id_version.get(world["id"]) or {}
+        if not remotes or not world.get("installed_version"):
+            return ""
+        parse = self.manager.parse_version
+        newest = max(remotes.values(), key=lambda r: parse(r.world_version))
+        installed = next((r for r in remotes.values()
+                          if parse(r.world_version) == parse(world["installed_version"])), None)
+        change = installed and repo_change(installed, newest)
+        if not change:
+            return ""
+        return (f"[$warning]\\[!] installed version is from {'another maintainer' if change == 'other maintainer' else 'an old repo'}: {short_repo(release_repo(installed.data['world']))}"
+                f"[/] (the newest is from {short_repo(release_repo(newest.data['world']))}). Ctrl+Y lists versions.")
 
     def on_input_submitted(self, event: FilterInput.Submitted) -> None:
         event.stop()
