@@ -172,7 +172,7 @@ class ClientApp(AppliteApp):
     # alt+digit is unreliable (textual reads ESC 3 as the pound key), ctrl+pageup/pagedown are terminal tab keys (GNOME
     # Terminal, Konsole...): Ctrl+N / Ctrl+B switch tabs on every aplite screen with tabs
     BINDINGS = [("ctrl+n", "switch_tab(1)", "Next tab"), ("ctrl+b", "switch_tab(-1)", "Prev tab"),
-                ("ctrl+t", "focus_address", "Address"), Binding("ctrl+f", "focus_tracker", "Filter tracker")]
+                ("ctrl+t", "focus_address", "Address"), Binding("ctrl+f", "focus_tracker", "Search")]
 
     def __init__(self, ctx: CommonContext) -> None:
         super().__init__()
@@ -192,6 +192,9 @@ class ClientApp(AppliteApp):
                 yield RichLog(id="log-archipelago", wrap=True)
             with TabPane("All", id="tab-all"):
                 yield RichLog(id="log-all", wrap=True)
+            for title, widget in getattr(self.ctx, "aplite_tabs", list)():  # a client's own tabs (aplite.manual)
+                with TabPane(title, id=f"tab-{title.lower()}"):
+                    yield widget
             if tracker.supported(self.ctx):
                 with TabPane("Tracker", id="tab-tracker"):
                     yield tracker.TrackerPane(self.ctx)
@@ -239,7 +242,7 @@ class ClientApp(AppliteApp):
         self.query_one("#log-archipelago", RichLog).write(line)
 
     def check_action(self, action: str, parameters: tuple) -> bool | None:
-        if action == "focus_tracker" and not tracker.supported(self.ctx):
+        if action == "focus_tracker" and not tracker.supported(self.ctx) and not self.query(".tab-search"):
             return False
         return super().check_action(action, parameters)
 
@@ -247,8 +250,17 @@ class ClientApp(AppliteApp):
         self.query_one(CommandInput).focus()
 
     def action_focus_tracker(self) -> None:
-        self.query_one(TabbedContent).active = "tab-tracker"
-        self.query_one("#tracker-filter").focus()
+        """The search of the current tab when it has one (a client's own tab, e.g. Manual), else the tracker's."""
+        tabs = self.query_one(TabbedContent)
+        search = tabs.query_one(f"#{tabs.active}").query(".tab-search")
+        if search:
+            search.first().focus()
+        elif tracker.supported(self.ctx):
+            tabs.active = "tab-tracker"
+            self.query_one("#tracker-filter").focus()
+        elif search := self.query(".tab-search"):
+            tabs.active = search.first().query_ancestor(TabPane).id
+            search.first().focus()
 
     def action_switch_tab(self, step: int) -> None:
         tabs = self.query_one(TabbedContent)

@@ -120,6 +120,11 @@ def _options_creator(*args: str) -> None:
     options_creator.run()
 
 
+def _manual_client(*args: str) -> None:
+    from aplite import manual
+    manual.run(*args)
+
+
 @functools.cache
 def overrides() -> dict[typing.Callable | str, Override]:
     """Keyed by upstream's component func, or by script_name for script components. Imported lazily: importing
@@ -135,6 +140,7 @@ def overrides() -> dict[typing.Callable | str, Override]:
         open_host_yaml: Override(run=_settings_editor),  # upstream's starts a desktop editor in the background
         "OptionsCreator": Override(run=_options_creator),  # upstream's is kivy
         "SNIClient": Override(run=_sni_client),
+        "ManualClient": Override(run=_manual_client),  # each manual_*.apworld bundles a kivy-only copy (aplite.manual)
         export_datapackage: Override(run=_export_datapackage, pauses=True),
         generate_yamls: Override(run=_generate_templates, pauses=True),
     }
