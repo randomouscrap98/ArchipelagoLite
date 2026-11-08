@@ -345,17 +345,21 @@ def start_manager(count: int, log_path: str) -> None:
     from aplite import REPO
     args = python_command("-m", "aplite.background", str(count), log_path)
     cwd = os.path.expanduser("~") if APPIMAGE else REPO  # not in this run's mount: it would keep it busy
-    kwargs: dict[str, typing.Any] = dict(stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                                         stderr=subprocess.DEVNULL, env=child_env(), cwd=cwd, close_fds=True)
-    if sys.platform == "win32":
-        flags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
-        try:  # out of the terminal's job, if it has one that allows it, so closing the window doesn't take it along
-            subprocess.Popen(args, creationflags=flags | subprocess.CREATE_BREAKAWAY_FROM_JOB, **kwargs)
-            return
-        except OSError:
-            subprocess.Popen(args, creationflags=flags, **kwargs)
-    else:
-        subprocess.Popen(args, start_new_session=True, **kwargs)
+    os.makedirs(os.path.dirname(log_path), exist_ok=True)
+    # its output to the log too: a manager that dies before it logs (a launcher or AppImage runtime error, a
+    # traceback) leaves a reason there
+    with open(log_path, "ab") as output:
+        kwargs: dict[str, typing.Any] = dict(stdin=subprocess.DEVNULL, stdout=output, stderr=output, env=child_env(),
+                                             cwd=cwd, close_fds=True)
+        if sys.platform == "win32":
+            flags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
+            try:  # out of the terminal's job, if it has one that allows it, so closing the window doesn't take it along
+                subprocess.Popen(args, creationflags=flags | subprocess.CREATE_BREAKAWAY_FROM_JOB, **kwargs)
+                return
+            except OSError:
+                subprocess.Popen(args, creationflags=flags, **kwargs)
+        else:
+            subprocess.Popen(args, start_new_session=True, **kwargs)
 
 
 def memory_bytes() -> int | None:

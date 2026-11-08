@@ -51,9 +51,13 @@ def get(key: str) -> typing.Any:
 
 
 def put(key: str, value: typing.Any) -> None:
-    prefs = _load()
-    if prefs.get(key) == value:
+    """Save one pref. Re-reads aplite.yaml first and changes only `key`: other aplite processes (windows, background
+    spares) may have saved theirs since this one loaded, and writing this process's old copy would undo them."""
+    global _prefs
+    if _load().get(key) == value:
         return
+    _prefs = None
+    prefs = _load()
     prefs[key] = value
     try:
         write_atomic(path(), yaml.safe_dump(prefs, sort_keys=True))
