@@ -1,5 +1,5 @@
-"""aplite preferences, stored in aplite.yaml next to host.yaml. Keys: theme, glyphs, colors (colors.py), webhost_url, and
-the folder each file picker was last in (its pref_key, "..._dir")."""
+"""aplite preferences, stored in aplite.yaml next to host.yaml. Keys: theme, glyphs, colors (colors.py), webhost_url,
+background_spares (background.py), and the folder each file picker was last in (its pref_key, "..._dir")."""
 from __future__ import annotations
 
 import logging
@@ -17,6 +17,7 @@ if typing.TYPE_CHECKING:
 DEFAULTS: dict[str, typing.Any] = {
     "theme": "textual-dark",
     "webhost_url": OFFICIAL_SITE,  # Host on Archipelago uploads here (a self-hosted WebHost works too)
+    "background_spares": 0,
 }
 
 _prefs: dict[str, typing.Any] | None = None
@@ -37,6 +38,12 @@ def _load() -> dict[str, typing.Any]:
             except Exception as e:
                 logging.warning(f"Could not read {path()}, using defaults: {e}")
     return _prefs
+
+
+def reset() -> None:
+    """Forget the loaded prefs: the next get() reads aplite.yaml again (another aplite process may have changed it)."""
+    global _prefs
+    _prefs = None
 
 
 def get(key: str) -> typing.Any:

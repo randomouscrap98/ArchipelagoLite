@@ -10,10 +10,16 @@ import os
 import signal
 import sys
 import tempfile
+import threading
 import time
 
 if hasattr(signal, "SIGHUP"):  # an inherited "ignore" (some launchers) would keep us alive after the terminal closes
     signal.signal(signal.SIGHUP, signal.SIG_DFL)
+
+from aplite import background
+
+if __name__ == "__main__":  # before anything heavy: a background spare may run this open instead
+    background.try_handoff(sys.argv[1:])
 
 import ModuleUpdate
 
@@ -55,11 +61,20 @@ bytecode_cache.install()  # before any .apworld is imported
 prompts.install()  # terminal file prompts; before worlds load (LauncherComponents imports open_filename by name)
 
 _loaded = False
+_load_lock = threading.Lock()
 
 
 def load() -> list:
-    """Load all worlds and apply the patches that need them. Returns the launcher components. Safe to call twice
-    (the launcher runs it in a thread; direct launch calls it up front)."""
+    """Load all worlds and apply the patches that need them. Returns the launcher components. Safe to call twice, also
+    at once (the launcher runs it in a thread; direct launch calls it up front; a background spare starts it early)."""
+    global _loaded
+    with _load_lock:
+        _load()
+    import worlds.LauncherComponents as LauncherComponents
+    return LauncherComponents.components
+
+
+def _load() -> None:
     global _loaded
     if not _loaded:
         level = logging.getLogger().level
@@ -79,13 +94,50 @@ def load() -> list:
         _loaded = True
         startup_log.report(loaded)
         bytecode_cache.flush()  # now, not at exit: a relaunch (execve) skips atexit
-    import worlds.LauncherComponents as LauncherComponents
-    return LauncherComponents.components
+        start_background()
+
+
+def start_background() -> None:
+    """Keep in background is on but its manager isn't running (first open after a reboot): start it now that this
+    open's own load is done."""
+    if not background.SUPPORTED or background.in_spare or os.environ.get("APLITE_NO_BACKGROUND"):
+        return
+    from aplite import prefs
+    count = prefs.get(background.PREF) or 0
+    if count > 0 and not background.running():
+        background.start_manager(count, background_log())
+
+
+def background_log() -> str:
+    return Utils.user_path("logs", "aplite_background.txt")
+
+
+def fingerprint() -> list:
+    """What a background spare's loaded state depends on (it's replaced when this changes)."""
+    return background.tree_fingerprint(
+        [Utils.user_path("custom_worlds"), Utils.local_path("worlds"), os.path.dirname(os.path.abspath(aplite.__file__))],
+        [Utils.user_path("host.yaml")])
+
+
+def become_spare() -> None:
+    """`python -m aplite --spare` (started by the background manager): load worlds, wait for an open to take over,
+    then pick up what changed since this process started."""
+    Utils.init_logging("aplite")
+    tui.log_buffer.attach()
+    background.spare_start_load(load)
+    background.serve_spare(fingerprint)
+    from aplite import glyphs, prefs
+    prefs.reset()  # aplite.yaml may have changed meanwhile
+    glyphs.apply(glyphs.chosen_mode())  # depends on the opener's environment (WT_SESSION, TERM)
 
 
 def main() -> None:
     # everything after the target goes to the component untouched, so `--` isn't needed
     argv = sys.argv[1:]
+    spare = argv[:1] == [background.SPARE_ARG]
+    if spare:
+        become_spare()
+        argv = sys.argv[1:]  # the opener's
     if argv[:1] in (["-h"], ["--help"]):
         print(__doc__.strip().splitlines()[0])
         print("usage: python -m aplite [patch file|component|archipelago:// url] [component args]")
@@ -106,8 +158,9 @@ def main() -> None:
     if component_args[:1] == ["--"]:
         component_args = component_args[1:]
 
-    Utils.init_logging("aplite")
-    tui.log_buffer.attach()  # so a client's TUI can replay startup messages
+    if not spare:
+        Utils.init_logging("aplite")
+        tui.log_buffer.attach()  # so a client's TUI can replay startup messages
 
     if target is None:
         launch_from_launcher()
@@ -191,13 +244,10 @@ def run(component, args: tuple[str, ...], come_back: bool) -> None:
         aplite.wait_for_enter()
     # a fresh process rather than looping, so nothing the component left behind leaks into the launcher
     bytecode_cache.flush()  # what the component imported (execve skips atexit)
-    sys.stdout.flush()
-    if sys.platform == "win32":  # no real exec there: the new process would race the shell for the console
-        if os.environ.get("APLITE_RELAUNCH"):  # aplite.cmd (Windows dist) starts us again on this exit code
-            sys.exit(int(os.environ["APLITE_RELAUNCH"]))
-        import subprocess
-        sys.exit(subprocess.call([sys.executable, "-m", "aplite"], env=aplite.child_env()))
-    os.execve(sys.executable, [sys.executable, "-m", "aplite"], aplite.child_env())
+    if background.in_spare:
+        sys.stdout.flush()
+        sys.exit(background.RELAUNCH)  # the thin client that opened us asks for the next spare
+    background.relaunch()
 
 
 if __name__ == "__main__":

@@ -151,6 +151,16 @@ class AppliteApp(App):
                             "Fancy: block-character borders and scrollbars. Simple: plain lines, for consoles "
                             "without block characters (conhost, Linux tty)", lambda: glyphs.set_mode(self, other))
         yield SystemCommand("Client Colors", "Items, players, locations, hint statuses", self.open_theme_explorer)
+        from aplite import background
+        if background.SUPPORTED:
+            from aplite.background_ui import count
+            yield SystemCommand(f"Background spares: {count() or 'off'}",
+                                "Keep aplite loaded in the background so it opens instantly", self.open_background)
+
+    def open_background(self) -> None:
+        from aplite.background_ui import BackgroundModal
+        if not isinstance(self.screen, BackgroundModal):
+            self.push_screen(BackgroundModal())
 
     def open_theme_explorer(self) -> None:
         from aplite.theme_explorer import ThemeExplorer
