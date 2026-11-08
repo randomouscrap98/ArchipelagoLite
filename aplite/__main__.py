@@ -29,7 +29,7 @@ from aplite.requirements import lite_requirements
 
 def _use_lite_requirements() -> None:
     """Swap core requirements.txt for a copy without kivy, so ModuleUpdate doesn't try to install it."""
-    if ModuleUpdate.update_ran:  # SKIP_REQUIREMENTS_UPDATE (aplite.sh, AppRun): no check, nothing to swap
+    if ModuleUpdate.update_ran:  # SKIP_REQUIREMENTS_UPDATE (aplite.sh, dist launchers): no check, nothing to swap
         return
     lines = lite_requirements(ModuleUpdate.core_constraints)
     # per user: /tmp is shared, and another user's copy can't be overwritten

@@ -164,9 +164,8 @@ shipped "$APPDIR"
 lib="$APPDIR/python/lib/python$PYVER"
 rm -rf "$APPDIR/python/include" "$APPDIR/python/share" "$lib/idlelib" "$lib/turtledemo" "$lib/ensurepip" \
     "$lib"/config-$PYVER-*
-cp "$REPO/aplite/apprun.sh" "$APPDIR/AppRun"  # also reopens itself in a terminal when double-clicked
-chmod +x "$APPDIR/AppRun"
-ln -s AppRun "$APPDIR/aplite"
+cp "$REPO/aplite/dist-launcher.sh" "$APPDIR/aplite"  # also reopens itself in a terminal when double-clicked
+chmod +x "$APPDIR/aplite"
 cp "$REPO/data/icon.png" "$APPDIR/archipelago-lite.png"
 ln -s archipelago-lite.png "$APPDIR/.DirIcon"
 cat > "$APPDIR/archipelago-lite.desktop" <<'EOF'
@@ -184,9 +183,11 @@ echo "  $DIST/${name}_linux-x86_64.tar.gz"
 if [ "$appimage" = 1 ]; then
     runtime="$REPO/build/appimage-runtime-x86_64"
     [ -f "$runtime" ] || curl -fsSL -o "$runtime" "$RUNTIME_URL"
+    ln -s aplite "$APPDIR/AppRun"  # the AppImage's entry point; not in the tar.gz (users wondered what it was)
     "$MKSQUASHFS" "$APPDIR" "$BUILD/app.squashfs" -root-owned -noappend -comp zstd -quiet -no-progress
     cat "$runtime" "$BUILD/app.squashfs" > "$DIST/${name}_x86_64.AppImage"
     chmod +x "$DIST/${name}_x86_64.AppImage"
+    rm "$APPDIR/AppRun"
     echo "  $DIST/${name}_x86_64.AppImage"
 fi
 

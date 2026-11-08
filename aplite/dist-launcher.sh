@@ -1,7 +1,9 @@
 #!/bin/sh
-# AppRun of the Linux AppImage / tar.gz (aplite/build_dist.sh copies it): aplite with the bundled Python.
-# Started without a terminal (double-clicked in a file manager), it first reopens itself in a terminal emulator:
-# $TERMINAL, xdg-terminal-exec, x-terminal-emulator, then a list of known ones. APLITE_NO_TERMINAL=1 skips that.
+# `aplite` at the top of the Linux tar.gz, and the AppImage's AppRun (a link to it); aplite/build_dist.sh copies it.
+# Runs aplite with the bundled Python, for people and tools alike: `aplite <component|patch|url> [args]`.
+# Started without a terminal and without arguments (double-clicked in a file manager), it first reopens itself in a
+# terminal emulator: $TERMINAL, xdg-terminal-exec, x-terminal-emulator, then a list of known ones. With arguments
+# (a tool running `aplite Generate ...` with its output captured) it runs in place. APLITE_NO_TERMINAL=1 never reopens.
 HERE=$(dirname "$(readlink -f "$0")")
 MARK=--aplite-opened-terminal  # first argument of the relaunch: an environment variable wouldn't survive
                                # terminals that start commands from a server process (gnome-terminal, kgx, ptyxis)
@@ -11,9 +13,9 @@ if [ "${1:-}" = "$MARK" ]; then
     shift
 fi
 
-if [ -z "$opened_terminal" ] && [ -z "${APLITE_NO_TERMINAL:-}" ] && ! { [ -t 0 ] && [ -t 1 ]; }; then
+if [ -z "$opened_terminal" ] && [ -z "${APLITE_NO_TERMINAL:-}" ] && [ $# -eq 0 ] && ! { [ -t 0 ] && [ -t 1 ]; }; then
     # the command to run in the terminal: this AppImage (the runtime sets $APPIMAGE) or this script, same args
-    set -- "${APPIMAGE:-$HERE/AppRun}" "$MARK" "$@"
+    set -- "${APPIMAGE:-$HERE/aplite}" "$MARK" "$@"
     has() { command -v "$1" >/dev/null 2>&1; }
     if [ -n "${TERMINAL:-}" ] && has "${TERMINAL%% *}"; then
         exec $TERMINAL -e "$@"  # unquoted: $TERMINAL may carry its own options
