@@ -48,6 +48,10 @@ export SKIP_REQUIREMENTS_UPDATE=1
 # tar.gz: user data in this folder, as upstream's tar.gz keeps it (aplite/datadir.py); the AppImage uses the home folder
 [ -z "${APPIMAGE:-}" ] && export APLITE_DATA_DIR="$HERE"
 export PYTHONPATH="$HERE/app${PYTHONPATH:+:$PYTHONPATH}"
+if [ "${1:-}" = "--python" ]; then  # the AppImage's background manager and spares (aplite/background.py)
+    shift
+    exec "$HERE/python/bin/python3" "$@"
+fi
 if [ -n "$opened_terminal" ]; then
     # in a terminal we opened: keep an error on screen before the window closes
     "$HERE/python/bin/python3" -m aplite "$@"

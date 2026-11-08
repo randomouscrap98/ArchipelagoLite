@@ -116,7 +116,7 @@ def fingerprint() -> list:
     """What a background spare's loaded state depends on (it's replaced when this changes)."""
     return background.tree_fingerprint(
         [Utils.user_path("custom_worlds"), Utils.local_path("worlds"), os.path.dirname(os.path.abspath(aplite.__file__))],
-        [Utils.user_path("host.yaml")])
+        [Utils.user_path("host.yaml"), *background.install_files()])
 
 
 def become_spare() -> None:

@@ -43,6 +43,11 @@ SPARE_ARG = "--spare"
 in_spare = False
 """True in a spare process (set by serve_spare)."""
 
+APPIMAGE = os.environ.get("APPIMAGE") if os.path.isfile(os.environ.get("APPIMAGE") or "") else None
+"""The AppImage file when running from one (its runtime sets $APPIMAGE). Each run mounts it at a new path that goes
+away when that run ends, so the manager's address and the update checks go by this file, and the manager and spares
+start through it (each with a mount of its own, outliving the opener's)."""
+
 logger = logging.getLogger("aplite.background")
 
 
@@ -50,7 +55,7 @@ def address() -> str | None:
     """The manager's pipe/socket: one per user, machine (containers share /tmp with their host) and install. None when
     no private folder for the socket can be had (Linux)."""
     from aplite import REPO
-    key = hashlib.sha1(f"{getpass.getuser()}|{socket.gethostname()}|{REPO}".encode()).hexdigest()[:16]
+    key = hashlib.sha1(f"{getpass.getuser()}|{socket.gethostname()}|{APPIMAGE or REPO}".encode()).hexdigest()[:16]
     if sys.platform == "win32":
         return rf"\\.\pipe\aplite-{key}"
     folder = os.environ.get("XDG_RUNTIME_DIR") or os.path.join(tempfile.gettempdir(), f"aplite-{os.getuid()}")
@@ -86,6 +91,12 @@ def running() -> bool:
         return request({"op": "status"}) is not None
     except (OSError, EOFError):
         return False
+
+
+def python_command(*args: str) -> list[str]:
+    """Command line for a Python process that may outlive this one: through the AppImage (see APPIMAGE; its launcher
+    takes --python), else this interpreter."""
+    return [APPIMAGE, "--python", *args] if APPIMAGE else [sys.executable, *args]
 
 
 def child_env() -> dict[str, str]:
@@ -332,9 +343,10 @@ def configure(count: int, log_path: str) -> None:
 
 def start_manager(count: int, log_path: str) -> None:
     from aplite import REPO
-    args = [sys.executable, "-m", "aplite.background", str(count), log_path]
+    args = python_command("-m", "aplite.background", str(count), log_path)
+    cwd = os.path.expanduser("~") if APPIMAGE else REPO  # not in this run's mount: it would keep it busy
     kwargs: dict[str, typing.Any] = dict(stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                                         stderr=subprocess.DEVNULL, env=child_env(), cwd=REPO, close_fds=True)
+                                         stderr=subprocess.DEVNULL, env=child_env(), cwd=cwd, close_fds=True)
     if sys.platform == "win32":
         flags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
         try:  # out of the terminal's job, if it has one that allows it, so closing the window doesn't take it along
@@ -378,10 +390,15 @@ def memory_bytes() -> int | None:
 # --- manager -------------------------------------------------------------------------------------------------------
 
 def code_stamp() -> list:
-    """This file and the dist's _version.txt (sizes, mtimes): any aplite update rewrites them, and a manager whose code
-    was replaced under it steps down rather than talk to a newer thin client with old code."""
+    """This file and the dist's _version.txt (sizes, mtimes), and the AppImage file: any aplite update rewrites them,
+    and a manager whose code was replaced under it steps down rather than talk to a newer thin client with old code."""
     folder = os.path.dirname(os.path.abspath(__file__))
-    return tree_fingerprint([], [os.path.abspath(__file__), os.path.join(folder, "_version.txt")])
+    return tree_fingerprint([], [os.path.abspath(__file__), os.path.join(folder, "_version.txt"), *install_files()])
+
+
+def install_files() -> list[str]:
+    """Files an update replaces outside the loaded code: the AppImage (its mounts keep showing the old contents)."""
+    return [APPIMAGE] if APPIMAGE else []
 
 
 class Spare:
@@ -454,7 +471,7 @@ class Manager:
             self._start_spare()
 
     def _start_spare(self) -> Spare:
-        args = [sys.executable, "-m", "aplite", SPARE_ARG]
+        args = python_command("-m", "aplite", SPARE_ARG)
         kwargs: dict[str, typing.Any] = dict(stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                                              stderr=subprocess.DEVNULL, env=child_env())
         if sys.platform == "win32":
