@@ -106,10 +106,10 @@ class VersionPicker(ModalScreen):
     ApWorldMetadata, or None."""
     CSS = """
     VersionPicker { align: center middle; }
-    VersionPicker Vertical { width: 70; max-width: 90%; height: auto; max-height: 80%; border: thick $primary;
+    VersionPicker Vertical { width: 80%; max-width: 110; height: auto; max-height: 80%; border: thick $primary;
                              background: $surface; }
     VersionPicker #picker-title { padding: 0 1; }
-    VersionPicker OptionList { height: auto; max-height: 30; border: none; }
+    VersionPicker OptionList { height: auto; border: none; }  /* max-height: fit_list */
     VersionPicker #picker-doc { height: 4; border-top: solid $panel; padding: 0 1; }
     VersionPicker #picker-doc:focus { border-top: solid $border; }
     """
@@ -139,7 +139,15 @@ class VersionPicker(ModalScreen):
             yield TextScroll(Static(id="picker-info"), id="picker-doc")
 
     def on_mount(self) -> None:
+        self.fit_list()
         self.explain(0)
+
+    def on_resize(self) -> None:
+        self.fit_list()
+
+    def fit_list(self) -> None:
+        """Cap the list so the info box stays inside the modal (80% of the screen, less border, title and box)."""
+        self.query_one(OptionList).styles.max_height = max(3, min(30, int(self.size.height * 0.8) - 2 - 1 - 4))
 
     def label(self, version, width: int) -> str:
         date = (version.created_at or "")[:10]
@@ -162,20 +170,20 @@ class VersionPicker(ModalScreen):
             version = self.versions[index]
             download = version.data.get("world")
             if page := release_page(download):
-                lines.append(f'Release page (Ctrl+O): [link="{page}"]{page.removeprefix("https://")}[/link]')
+                lines.append(f'(Ctrl+O): [link="{page}"]{page.removeprefix("https://")}[/link]')
             elif download:
                 lines.append(f"Download: {download}")
             if change := repo_change(version, self.versions[0]):
                 lines.append(f"[$warning]\\[!] {change}:[/] {short_repo(release_repo(download))} (the newest version "
                              f"is from {short_repo(release_repo(self.versions[0].data.get('world')))})")
-            newest = self.newest_by_hash.get(version.data.get("hash_sha256"), version.world_version)
-            if newest != version.world_version:
-                lines.append(f"Replaced with {newest}: the author re-uploaded a newer file to this release, so "
-                             f"installing it gets {newest}.")
-            if version.is_prerelease or self.parse(version.world_version).is_prerelease:
-                lines.append("Prerelease: may be unfinished or unstable.")
             if self.installed is not None and self.parse(version.world_version) < self.installed:
                 lines.append("Older than installed: Enter twice to downgrade.")
+            newest = self.newest_by_hash.get(version.data.get("hash_sha256"), version.world_version)
+            if newest != version.world_version:
+                lines.append(f"Replaced with {newest}: author changed release, you will not get "
+                             f"{version.world_version}.")
+            if version.is_prerelease or self.parse(version.world_version).is_prerelease:
+                lines.append("Prerelease: may be unfinished or unstable.")
         self.query_one("#picker-info", Static).update("\n".join(lines))
         self.query_one("#picker-doc", TextScroll).scroll_home(animate=False)
 
