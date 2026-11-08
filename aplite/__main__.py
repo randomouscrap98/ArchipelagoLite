@@ -238,9 +238,16 @@ def run(component, args: tuple[str, ...], come_back: bool) -> None:
             sys.exit(0)
         if not wants_launcher():
             raise
+    except Exception:
+        if not wants_launcher():
+            raise
+        report_crash(component)
+        crashed = True
+    else:
+        crashed = False
     if not wants_launcher():
         return
-    if nav.next_step is None and components.pauses_after(component):
+    if crashed or (nav.next_step is None and components.pauses_after(component)):
         aplite.wait_for_enter()
     # a fresh process rather than looping, so nothing the component left behind leaks into the launcher
     bytecode_cache.flush()  # what the component imported (execve skips atexit)
@@ -248,6 +255,20 @@ def run(component, args: tuple[str, ...], come_back: bool) -> None:
         sys.stdout.flush()
         sys.exit(background.RELAUNCH)  # the thin client that opened us asks for the next spare
     background.relaunch()
+
+
+def report_crash(component) -> None:
+    """A component raised: log it, show the traceback, and say the launcher comes back (a fresh process, so the
+    crash's leftovers don't carry over)."""
+    import traceback
+    logging.getLogger("aplite").exception(f"{component.display_name} crashed", extra={"NoStream": True})
+    log_files = [h.baseFilename for h in logging.getLogger().handlers if isinstance(h, logging.FileHandler)]
+    sys.stdout.flush()
+    print(file=sys.stderr)
+    traceback.print_exc()
+    sys.stderr.flush()
+    print(f"\n{component.display_name} crashed (traceback above"
+          f"{', also in ' + log_files[0] if log_files else ''}). Returning to the launcher is safe.")
 
 
 if __name__ == "__main__":

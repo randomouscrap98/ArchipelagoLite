@@ -71,6 +71,22 @@ def pascal_to_space(s):
               "        await ctx.ui_task \n"
               "    else:\n"
               "        await ctx.exit_event.wait()\n"),
+    Patch("osu/Client.py", "game_watcher lets a failed osu! API request (no network, DNS) end the task, so auto-checks "
+                           "stop and _main's `await progression_watcher` re-raises it on exit, crashing the app; log "
+                           "it and retry on the next poll",
+          old="""\
+            for mode in ctx.auto_modes:
+                await get_last_scores(ctx, mode, print)
+                await asyncio.sleep(1)
+""",
+          new="""\
+            for mode in ctx.auto_modes:
+                try:
+                    await get_last_scores(ctx, mode, print)
+                except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as e:
+                    logger.warning(f"osu! API request failed ({e!r}); retrying")
+                await asyncio.sleep(1)
+"""),
 ]
 
 
