@@ -162,6 +162,13 @@ def context_class() -> type[CommonContext]:
                     return answer
                 logger.info(f"Type a number from 1 to {len(games)}.")
 
+        async def connect(self, address: str | None = None) -> None:
+            """Connects the user starts (connect bar, /connect) ask for the game again, like the slot name; the
+            auto-reconnect doesn't come through here, so it keeps both."""
+            await self.disconnect()  # first: packets from the old connection still need the game
+            self.game = self.locked_game
+            await super().connect(address)
+
         async def server_auth(self, password_requested: bool = False):
             if password_requested and not self.password:
                 await CommonContext.server_auth(self, password_requested)
