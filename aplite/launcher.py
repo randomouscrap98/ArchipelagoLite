@@ -128,7 +128,7 @@ class LauncherApp(AppliteApp):
         self.counts = ""
         """The entry count part of the status line ("62", "3 of 62")."""
         self.spares = ""
-        """Background spares on the status line ("BGS: 2/3"), when that's on."""
+        """Background spares on the status line ("2/3 spares ready"), when that's on."""
 
     def compose(self) -> ComposeResult:
         yield FilterInput(placeholder="Search. Enter launches, ↑/↓ select.", target="OptionList")
@@ -205,9 +205,9 @@ class LauncherApp(AppliteApp):
         try:
             status = background.request({"op": "status"})
             ready = sum(1 for _, loaded, waiting in status["spares"] if loaded and waiting)
-            text = f"BGS: {ready}/{status['count']}"
+            text = f"{ready}/{status['count']} spares ready"
         except (OSError, EOFError, KeyError, TypeError):
-            text = "BGS: off"  # on in aplite.yaml, but no manager (yet, or it died)
+            text = "spares not running"  # on in aplite.yaml, but no manager (yet, or it died)
         if text != self.spares:
             self.call_from_thread(self.show_spares, text)
 
@@ -216,10 +216,11 @@ class LauncherApp(AppliteApp):
         self.update_status()
 
     def update_status(self) -> None:
+        status = Text()  # styles on the parts: a Text's own style would cover the spares part too
         if self.status:
-            status = Text(self.status, style="italic")
+            status.append(self.status, style="italic")
         else:
-            status = Text(f"{self.counts} components", style="dim")
+            status.append(f"{self.counts} components", style="dim")
         if self.spares:
             status.append(f" · {self.spares}", style="dim")
         self.query_one("#status", Static).update(status)
