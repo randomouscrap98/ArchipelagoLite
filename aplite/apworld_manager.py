@@ -57,6 +57,36 @@ def captured_messageboxes(messages: list[tuple[str, bool]]) -> typing.Iterator[N
         Utils.messagebox = original
 
 
+@contextlib.contextmanager
+def worldless_apworlds(manager) -> typing.Iterator[None]:
+    """The manager lists installed apworlds by walking AutoWorldRegister.world_types, so ones that register no World
+    (client-only, like bizhawk_ut) were missing from the installed list and kept being offered for install. While it
+    builds the table, give each such file in the user folder a stand-in entry; it only reads zip_path, __doc__ and
+    world_version there (the version comes from the file's hash or manifest)."""
+    import pathlib
+    from worlds import AutoWorldRegister, user_folder
+    if not user_folder or not os.path.isdir(user_folder):
+        yield
+        return
+    registered = {pathlib.Path(world.zip_path).resolve() for world in AutoWorldRegister.world_types.values() if world.zip_path}
+    extras = {}
+    for file in pathlib.Path(user_folder).glob("*.apworld"):
+        if file.resolve() in registered or not file.is_file():
+            continue
+        remotes = manager.repositories.packages_by_id_version.get(file.stem)
+        title = next((r.name for r in remotes.values() if r.name), None) if remotes else None
+        extras[title or file.stem] = type(file.stem, (), {"zip_path": file, "__doc__": "", "__module__": __name__})
+    if not extras:
+        yield
+        return
+    original = AutoWorldRegister.world_types
+    AutoWorldRegister.world_types = {**extras, **original}
+    try:
+        yield
+    finally:
+        AutoWorldRegister.world_types = original
+
+
 def repo_url(world: dict) -> str | None:
     """Where a world lives: the manifest's repo_url/github, else the repo of a GitHub release download (nearly every
     index entry), else the folder the download comes from. The index has no repo field, and the apworld's own
@@ -243,7 +273,8 @@ class ManagerApp(nav.AppliteApp):
         """refresh_apworld_table, with the latest version of uninstalled worlds picked by full version: it compares only
         major.minor.micro there, so ties (0.1.9a0 vs 0.1.9.post3) went to whichever the index lists last (Balatro
         installed a 2024 release). Installed worlds already compare full versions."""
-        worlds = self.manager.refresh_apworld_table()
+        with worldless_apworlds(self.manager):
+            worlds = self.manager.refresh_apworld_table()
         parse = self.manager.parse_version
         for world in worlds:
             remotes = self.manager.repositories.packages_by_id_version.get(world["id"])
