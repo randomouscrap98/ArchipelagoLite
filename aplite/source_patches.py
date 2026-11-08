@@ -44,6 +44,18 @@ PATCHES: list[Patch] = [
                 _aplite_seen.add(beatmapset["id"])
                 beatmapsets.append(beatmapset)
 """),
+    Patch("sadx/Enums.py", "pascal_to_space runs 12 regexes per call and Locations.get_location_name_by_level rebuilds "
+                           "every capsule/enemy name 77 times at import (232k calls, ~1.2s here, ~2.5s on Windows); "
+                           "memoized (pure function of a str)",
+          old="""\
+def pascal_to_space(s):
+    s = re.sub(r'^(Ss)', 'S.S.', s)
+""",
+          new="""\
+@__import__("functools").cache
+def pascal_to_space(s):
+    s = re.sub(r'^(Ss)', 'S.S.', s)
+"""),
     Patch("burnout3/B3Client.py", "async_main without the GUI awaits ctx.server_task, which ends at once with no server "
                                   "address (\"Please connect...\", then the client exits); wait for quit as "
                                   "CommonClient does (aplite's TUI fallback starts the console)",
