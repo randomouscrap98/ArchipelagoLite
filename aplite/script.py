@@ -2,8 +2,7 @@
 Run a command-line Archipelago script (Generate, MultiServer) in a fresh process, with aplite's bytecode cache and
 terminal file prompts but before any worlds load (Generate refuses to start if they already are).
 Usage: python -m aplite.script [--gui] SCRIPT.py [args]   (with aplite.child_env(): repo importable, no ModuleUpdate)
---gui: desktop tools (LttP/OoT Adjuster) keep their own file dialogs (no terminal prompts). Importing aplite still
-points user data at APLITE_DATA_DIR (datadir), which running the script directly would skip.
+--gui: desktop tools (LttP/OoT Adjuster): no terminal prompts, so their own file dialogs show.
 """
 import builtins
 import os

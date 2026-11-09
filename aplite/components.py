@@ -311,8 +311,7 @@ def _run_cli_script(component: Component, *args: str) -> None:
 
 def _run_gui_script(component: Component, *args: str) -> None:
     """Desktop tool scripts (LttP/OoT Adjuster: tkinter): a child process like upstream's, without aplite's terminal
-    prompts so their own file dialogs show (aplite.script --gui: user data still goes to APLITE_DATA_DIR). Waits for
-    the window to close."""
+    prompts so their own file dialogs show (aplite.script --gui). Waits for the window to close."""
     status = subprocess.call([sys.executable, "-m", "aplite.script", "--gui", _script(component), *args],
                              env=aplite.child_env())
     if status:  # e.g. no display: keep the error on screen

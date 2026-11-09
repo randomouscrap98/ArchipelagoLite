@@ -33,7 +33,8 @@ migration: Migration | None = None
 
 
 def install() -> None:
-    """Point Utils.user_path at APLITE_DATA_DIR. Before anything reads user data (host.yaml, worlds)."""
+    """First-run move and template copy for APLITE_DATA_DIR. Before anything reads user data (host.yaml, worlds).
+    Utils.user_path itself picks APLITE_DATA_DIR (core edit), so processes that never import aplite agree."""
     global migration
     import Utils
     data = os.path.abspath(os.environ[ENV])
@@ -45,7 +46,6 @@ def install() -> None:
         else:
             migration = None
     populate(app, data)
-    Utils.user_path.cached_path = data
 
 
 def populate(app: str, data: str) -> None:
