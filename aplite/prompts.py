@@ -109,11 +109,12 @@ def _ask(title: str, folder: bool, suffixes: tuple[str, ...], suggest: str) -> s
 
 def _quit_aplite() -> None:
     """Ctrl+Q in the picker: end the app on screen (the client then shuts down) or, before/without one, this process.
-    nav.QUIT_STATUS tells a parent aplite process (this one being a command-line script) to quit too."""
+    aplite.QUIT_STATUS tells a parent aplite process (this one being a command-line script) to quit too."""
+    import aplite
     from aplite import nav
     app = active_app
     if app is None:
-        raise SystemExit(nav.QUIT_STATUS)
+        raise SystemExit(aplite.QUIT_STATUS)
     nav.on_app_thread(app, app.exit)
 
 

@@ -29,13 +29,13 @@ import threading
 import time
 import typing
 
+from aplite import RELAUNCH
+
 if typing.TYPE_CHECKING:
     from multiprocessing.connection import Connection, Listener
 
 PREF = "background_spares"
 MAX_SPARES = 3
-RELAUNCH = 75
-"""Exit code for "start again, fresh" (coming back to the launcher); aplite.exe uses the same one."""
 SUPPORTED = sys.platform in ("win32", "linux")
 FAMILY = "AF_PIPE" if sys.platform == "win32" else "AF_UNIX"
 SPARE_ARG = "--spare"
@@ -110,8 +110,8 @@ def relaunch() -> typing.NoReturn:
     """Start aplite again, fresh, in this terminal (back to the launcher without leftovers from the last component)."""
     sys.stdout.flush()
     if sys.platform == "win32":  # no real exec there: the new process would race the shell for the console
-        if os.environ.get("APLITE_RELAUNCH"):  # aplite.exe (Windows dist) starts us again on this exit code
-            sys.exit(int(os.environ["APLITE_RELAUNCH"]))
+        if os.environ.get("APLITE_RELAUNCH"):  # aplite.exe / aplite_fallback.cmd start us again on this exit code
+            sys.exit(RELAUNCH)
         sys.exit(subprocess.call([sys.executable, "-m", "aplite"], env=child_env()))
     os.execve(sys.executable, [sys.executable, "-m", "aplite"], child_env())
 

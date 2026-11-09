@@ -10,7 +10,7 @@
 #include <stdio.h>
 #include <wchar.h>
 
-#define RELAUNCH 75 /* aplite exits with this to be started again, fresh (background.RELAUNCH) */
+#define RELAUNCH 75 /* aplite exits with this to be started again, fresh (aplite.RELAUNCH in aplite/__init__.py) */
 
 static wchar_t here[MAX_PATH]; /* this exe's folder, with a trailing backslash */
 

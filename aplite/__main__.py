@@ -253,7 +253,7 @@ def run(component, args: tuple[str, ...], come_back: bool) -> None:
     bytecode_cache.flush()  # what the component imported (execve skips atexit)
     if background.in_spare:
         sys.stdout.flush()
-        sys.exit(background.RELAUNCH)  # the thin client that opened us asks for the next spare
+        sys.exit(aplite.RELAUNCH)  # the thin client that opened us asks for the next spare
     background.relaunch()
 
 

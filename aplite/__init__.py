@@ -9,6 +9,14 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 """The Archipelago checkout aplite lives in."""
 OFFICIAL_SITE = "https://archipelago.gg"
 
+# Exit codes between aplite processes. Only these two; every parent that loops or quits on them is listed here.
+RELAUNCH = 75
+""""Start me again, fresh" (back to the launcher). Looped on by: background.try_handoff (the next spare),
+launcher_win.c and aplite_fallback.cmd (Windows zip, via APLITE_RELAUNCH). Linux without spares execs instead
+(background.relaunch)."""
+QUIT_STATUS = 86
+"""A child (file picker, command-line script) whose user pressed ctrl+q: quit aplite too (nav.quit_requested)."""
+
 
 def write_atomic(path: str, data: str | bytes) -> None:
     """Write a whole file so readers (other aplite processes, the self-host server) never see half of it. Creates the

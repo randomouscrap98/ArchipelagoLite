@@ -18,6 +18,7 @@ from textual.binding import Binding
 from textual.widgets import OptionList
 from textual.theme import BUILTIN_THEMES, Theme
 
+import aplite
 from aplite import colors, glyphs, prefs  # glyphs patches Textual on import
 
 next_step: typing.Literal["quit", "launcher"] | None = None
@@ -26,16 +27,13 @@ next_step: typing.Literal["quit", "launcher"] | None = None
 TTY_CHECK = 1.0
 """Seconds between checks that the terminal is still there (see AppliteApp.check_terminal)."""
 
-QUIT_STATUS = 86
-"""Exit status of a child process (file picker, command-line script) whose user pressed ctrl+q: quit aplite."""
-
 T = typing.TypeVar("T")
 
 
 def quit_requested(status: object) -> bool:
     """Whether a child's exit status (or a SystemExit code) means its user pressed ctrl+q; if so, aplite quits too."""
     global next_step
-    if status == QUIT_STATUS:
+    if status == aplite.QUIT_STATUS:
         next_step = "quit"
         return True
     return False

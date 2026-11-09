@@ -2,11 +2,12 @@
 Full-screen file/folder picker for prompts.py, as its own process: the code asking for a file blocks until it has an
 answer, often inside the client's event loop, so the picker can't run in that process's Textual app.
 Usage: python -m aplite.pick_file OUT TITLE (file|folder) SUGGEST [SUFFIX ...]
-Writes the chosen path to OUT; leaves it empty when cancelled. Exits with nav.QUIT_STATUS on ctrl+q.
+Writes the chosen path to OUT; leaves it empty when cancelled. Exits with aplite.QUIT_STATUS on ctrl+q.
 """
 import os
 import sys
 
+import aplite
 from aplite import nav
 from aplite.file_picker import FilePicker
 import Utils
@@ -36,7 +37,7 @@ def main() -> None:
     with open(out, "w", encoding="utf-8") as f:
         f.write(path)
     if nav.next_step == "quit":
-        sys.exit(nav.QUIT_STATUS)
+        sys.exit(aplite.QUIT_STATUS)
 
 
 if __name__ == "__main__":
