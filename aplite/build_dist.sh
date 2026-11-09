@@ -47,7 +47,7 @@ tar -C "$REPO" -cf - -T "$BUILD/files.txt" | tar -C "$BUILD/app" -xf -
 # untracked, but Utils.user_path copies it to the home folder (templates: "Generate Template Options" in the launcher)
 echo "$aplite_version" > "$BUILD/app/aplite/_version.txt"  # no git in the package (aplite/version.py)
 mkdir -p "$BUILD/app/Players/Templates"
-cp "$REPO/meta.yaml" "$BUILD/app/Players/Templates/"
+mv "$BUILD/app/meta.yaml" "$BUILD/app/Players/Templates/"  # upstream's root copy: nothing reads it there
 # Utils.user_path copies Players/sprites/lua to the home folder when this differs from the copy there
 printf '{"buildtime": "%s", "hashes": {}, "version": [%s]}\n' "$(date -u '+%Y-%m-%d %H:%M:%S')" \
     "$(echo "$version" | sed 's/\./, /g')" > "$BUILD/app/manifest.json"
