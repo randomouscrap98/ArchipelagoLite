@@ -27,7 +27,8 @@ import Utils
 import aplite
 from aplite import prefs, prompts
 from aplite.combo import keep_scroll
-from aplite.file_picker import FileBrowser, FilteredTree, PathInput, prompt_picker, start_folder
+from aplite.file_picker import (SORT_BINDING, FileBrowser, FilteredTree, PathInput, cycle_sort, prompt_picker,
+                                start_folder)
 from aplite.nav import AppliteApp
 
 SUFFIXES = (".yaml", ".yml")
@@ -277,9 +278,9 @@ class GenerateModal(ModalScreen[None]):
 
 
 class GenerateScreen(Screen):
-    BINDINGS = [Binding("ctrl+t", "toggle_all", "Show all files"), Binding("ctrl+g", "generate", "Generate"),
-                Binding("ctrl+r", "recheck", "Recheck"), Binding("ctrl+o", "add_players", "Add Players folder"),
-                Binding("delete", "remove", "Remove", show=False)]
+    BINDINGS = [Binding("ctrl+t", "toggle_all", "Show all files"), SORT_BINDING,
+                Binding("ctrl+g", "generate", "Generate"), Binding("ctrl+r", "recheck", "Recheck"),
+                Binding("ctrl+o", "add_players", "Add Players folder"), Binding("delete", "remove", "Remove", show=False)]
 
     def __init__(self) -> None:
         super().__init__()
@@ -465,6 +466,9 @@ class GenerateScreen(Screen):
 
     def action_toggle_all(self) -> None:
         self.query_one(FilteredTree).toggle_all()
+
+    def action_cycle_sort(self) -> None:
+        cycle_sort(self)
 
 
 class GenerateApp(AppliteApp):

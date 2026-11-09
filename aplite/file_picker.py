@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import os
+import dataclasses
 import shlex
+import time
 import typing
 import urllib.parse
 from pathlib import Path
@@ -29,6 +31,19 @@ def start_folder(pref_key: str, default_dir: str, start: str | None = None) -> P
     return Path(start if start and os.path.isdir(start) else last if last and os.path.isdir(last) else default_dir)
 
 
+SORTS = ("Name", "Date", "Size")
+SORT_BINDING = Binding("ctrl+d", "cycle_sort", "Sort (Name)")
+
+
+def cycle_sort(screen: Screen) -> None:
+    """A screen's Ctrl+D (SORT_BINDING): its tree's next sort order, shown in the footer."""
+    tree = screen.query_one(FilteredTree)
+    tree.cycle_sort()
+    screen._bindings.key_to_bindings["ctrl+d"] = [  # private Textual attribute: the screen's own copy
+        dataclasses.replace(SORT_BINDING, description=f"Sort ({tree.sort_by})")]
+    screen.refresh_bindings()
+
+
 class FilteredTree(DirectoryTree):
     """Tree keys (research/keyboard.md): Enter (or a click on its name) shows a folder instead, Space / Right expand
     it in place (Right again goes into it), Left closes it / goes up. Posts FolderChanged when it shows another
@@ -47,6 +62,7 @@ class FilteredTree(DirectoryTree):
         self.show_root = False  # ".." is the top line; screens show the folder (FilePicker #folder, border title)
         self.suffixes = tuple(suffixes)
         self.show_all = show_all
+        self.sort_by = "Name"
 
     def filter_paths(self, paths: typing.Iterable[Path]) -> typing.Iterable[Path]:
         return [p for p in paths if self.shows(p)]
@@ -57,6 +73,38 @@ class FilteredTree(DirectoryTree):
         return not path.name.startswith(".") and \
             (path.is_dir() or self.show_all or path.name.endswith(self.suffixes))
 
+    def render_label(self, node, base_style, style) -> Text:
+        """The name, then the size and modified date right-aligned, each only if it fits (date first). Padded to the
+        full width so the cursor highlights the whole row."""
+        label = super().render_label(node, base_style, style)
+        depth = 0
+        parent = node.parent
+        while parent is not None and not parent.is_root:
+            depth += 1
+            parent = parent.parent
+        room = self.scrollable_content_region.width - depth * self.guide_depth - label.cell_len
+        columns = []
+        if node.data is not None and node.data.path.name != "..":
+            try:
+                stat = node.data.path.stat()
+                columns = [time.strftime("%Y-%m-%d %H:%M", time.localtime(stat.st_mtime))]
+                if not node.allow_expand:
+                    columns.insert(0, format_size(stat.st_size))
+            except OSError:
+                pass
+        extra = "  ".join(columns)
+        while columns and len(extra) + 3 > room:  # 2 cells after the name, 1 at the end
+            columns.pop(0)
+            extra = "  ".join(columns)
+        if columns:
+            label.append(" " * (room - len(extra) - 1) + extra + " ", style="dim")
+        elif room > 0:
+            label.append(" " * room)
+        return label
+
+    def on_resize(self) -> None:
+        self._invalidate()  # private Tree method: labels depend on the width
+
     def _directory_content(self, location: Path, worker) -> typing.Iterator[Path]:
         # private DirectoryTree method (no public hook): adds ".." to the root folder; sorting puts it first
         root = Path(self.path).expanduser().resolve()
@@ -65,8 +113,9 @@ class FilteredTree(DirectoryTree):
         yield from super()._directory_content(location, worker)
 
     def _populate_node(self, node, content) -> None:
-        # private DirectoryTree method: a folder's first expansion fills it here, after NodeExpanded
-        super()._populate_node(node, content)
+        # private DirectoryTree method: a folder's first expansion fills it here, after NodeExpanded; content comes
+        # sorted folders first by name
+        super()._populate_node(node, self.sorted_content(content))
         if not node.is_root:
             self.call_after_refresh(self.reveal, node)
         elif len(node.children) > 1 and node.children[0].data.path.name == "..":
@@ -89,6 +138,20 @@ class FilteredTree(DirectoryTree):
             self.scroll_to(y=first, animate=False)
         elif end >= self.scroll_y + height:
             self.scroll_to(y=end - height + 1, animate=False)
+
+    def action_cursor_up(self) -> None:
+        if self.cursor_line == 0:  # wrap to the bottom
+            self.cursor_line = self.last_line
+            self.scroll_to_line(self.cursor_line, animate=False)
+        else:
+            super().action_cursor_up()
+
+    def action_cursor_down(self) -> None:
+        if self.cursor_line == self.last_line:  # wrap to the top
+            self.cursor_line = 0
+            self.scroll_to_line(self.cursor_line, animate=False)
+        else:
+            super().action_cursor_down()
 
     def action_open_node(self) -> None:
         node = self.cursor_node
@@ -124,12 +187,37 @@ class FilteredTree(DirectoryTree):
         self.show_all = not self.show_all
         self.reload()
 
+    def sorted_content(self, content: typing.Iterable[Path]) -> list[Path]:
+        """Folders first (".." on top), then by sort_by: name as given, newest or largest first."""
+        paths = list(content)
+        if self.sort_by != "Name":
+            def key(path: Path) -> tuple:
+                try:
+                    stat = path.stat()
+                    value = stat.st_mtime if self.sort_by == "Date" else 0 if path.is_dir() else stat.st_size
+                except OSError:
+                    value = 0
+                return path.name != "..", not self._safe_is_dir(path), -value
+            paths.sort(key=key)
+        return paths
+
+    def cycle_sort(self) -> None:
+        self.sort_by = SORTS[(SORTS.index(self.sort_by) + 1) % len(SORTS)]
+        self.reload()
+
     def on_directory_tree_directory_selected(self, event: DirectoryTree.DirectorySelected) -> None:
         event.stop()
         if event.path.name == "..":
             self.action_parent()
         else:
             self.go_to(event.path.resolve())
+
+
+def format_size(size: int) -> str:
+    for unit in ("B", "KB", "MB", "GB"):
+        if size < 1024 or unit == "GB":
+            return f"{size:.0f} {unit}" if unit == "B" else f"{size:.1f} {unit}"
+        size /= 1024
 
 
 def dropped_path(text: str) -> Path | None:
@@ -305,7 +393,7 @@ class FilePicker(Screen[Path | None]):
     .tree-box, FilteredTree { height: 1fr; }
     """
     BINDINGS = [Binding("escape", "back", "Back"), Binding("ctrl+t", "toggle_all", "Show all files"),
-                Binding("ctrl+l", "use_folder", "Use this folder")]
+                SORT_BINDING, Binding("ctrl+l", "use_folder", "Use this folder")]
 
     def __init__(self, title: str, suffixes: typing.Sequence[str], pref_key: str, default_dir: str,
                  folders: bool = False, show_all: bool = False, start: str | None = None) -> None:
@@ -367,6 +455,9 @@ class FilePicker(Screen[Path | None]):
     def action_toggle_all(self) -> None:
         self.query_one(FilteredTree).toggle_all()
         self.update_folder()
+
+    def action_cycle_sort(self) -> None:
+        cycle_sort(self)
 
 
 def prompt_picker(title: str, folder: bool, suffixes: typing.Sequence[str], suggest: str) -> FilePicker:
