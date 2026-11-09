@@ -1,3 +1,5 @@
+> **This is Archipelago Lite**, a terminal version of Archipelago. [Read the Lite docs](docs/aplite/README.md) · [Downloads](https://github.com/randomouscrap98/ArchipelagoLite/releases). The original Archipelago README follows.
+
 # [Archipelago](https://archipelago.gg) ![Discord Shield](https://discordapp.com/api/guilds/731205301247803413/widget.png?style=shield) | [Install](https://github.com/ArchipelagoMW/Archipelago/releases)
 
 Archipelago provides a generic framework for developing multiworld capability for game randomizers. In all cases,
