@@ -25,6 +25,7 @@ import Utils
 from aplite import prefs
 from aplite.combo import FilterInput, highlight_first
 from aplite.file_picker import FilePicker
+from aplite.generate_gui import duplicate_names
 from aplite.master_detail import CSS as MASTER_DETAIL_CSS, NOT_A_NUMBER, EditorApp, MasterDetailScreen, Rows, cycle, \
     describe, detail_pane, editor_event, heading, side_pane, yaml_editor
 
@@ -181,6 +182,11 @@ def game_options(world: type[World]) -> dict[str, dict[str, type[Option]]]:
     return {group: options for group, options in get_option_groups(world, Visibility.complex_ui).items() if options}
 
 
+def without_name(doc: dict) -> dict:
+    """A player document without its name (kept apart: the name field edits it)."""
+    return {key: value for key, value in doc.items() if key != "name"}
+
+
 def player_yaml(loaded: dict, name: str, game: str, values: dict[str, typing.Any],
                 others: dict[str, dict[str, typing.Any]] | None = None) -> dict:
     """The YAML document Save writes: `loaded` (the file loaded, if any) with the name, game and this game's values
@@ -234,7 +240,7 @@ class Player:
             games.add(self.game)
         if self.game is None or not games:
             content = self.raw if self.raw is not None else self.doc
-            return {"name": self.name, **{key: value for key, value in content.items() if key != "name"}}
+            return {"name": self.name, **without_name(content)}
         others = {game: self.values_by_game[game] for game in games if game != self.game}
         return player_yaml(self.doc, self.name, self.game, self.values_by_game[self.game], others)
 
@@ -275,44 +281,28 @@ class SaveScreen(ModalScreen[Path | None]):
         self.dismiss(None)
 
 
-class GamePicker(ModalScreen[str | None]):
-    """For loaded YAMLs that weight several games."""
-    CSS = """
-    GamePicker { align: center middle; }
-    OptionList { width: 60%; height: auto; max-height: 80%; border: thick $primary; }
-    """
-    BINDINGS = [Binding("escape", "cancel", "Cancel")]
-
-    def __init__(self, games: list[str]) -> None:
-        super().__init__()
-        self.games = games
-
-    def compose(self) -> ComposeResult:
-        yield OptionList(*[ListOption(game, id=game) for game in self.games])
-
-    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
-        event.stop()
-        self.dismiss(event.option.id)
-
-    def action_cancel(self) -> None:
-        self.dismiss(None)
-
-
 PLAYER_ACTIONS = {"new": "New player", "add": "Add players from a file…", "export": "Export this player to a file…",
                   "remove": "Remove this player"}
 
 
-class PlayersMenu(ModalScreen[str | None]):
-    """Ctrl+Y: everything about YAMLs with several players (documents), out of the way of single-player YAMLs."""
+class MenuModal(ModalScreen[str | None]):
+    """A list to pick from: dismisses with the picked entry's key, or None (Escape). The game picker for loaded YAMLs
+    that weight several games, and Ctrl+Y's Players menu (everything about YAMLs with several players)."""
     CSS = """
-    PlayersMenu { align: center middle; }
-    PlayersMenu OptionList { width: 50; max-width: 90%; height: auto; border: thick $primary; }
+    MenuModal { align: center middle; }
+    MenuModal OptionList { width: 60; max-width: 90%; height: auto; max-height: 80%; border: thick $primary; }
     """
     BINDINGS = [Binding("escape", "cancel", "Cancel")]
 
+    def __init__(self, entries: dict[str, str], title: str = "") -> None:
+        """`entries`: key -> label."""
+        super().__init__()
+        self.entries = entries
+        self.menu_title = title
+
     def compose(self) -> ComposeResult:
-        menu = OptionList(*[ListOption(label, id=action) for action, label in PLAYER_ACTIONS.items()])
-        menu.border_title = "Players"
+        menu = OptionList(*[ListOption(label, id=key) for key, label in self.entries.items()])
+        menu.border_title = self.menu_title
         yield menu
 
     def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
@@ -375,10 +365,6 @@ class OptionsScreen(MasterDetailScreen):
     @property
     def values_by_game(self) -> dict[str, dict[str, typing.Any]]:
         return self.player.values_by_game  # switching games keeps each game's edits
-
-    @property
-    def loaded(self) -> dict:
-        return self.player.doc  # the document loaded, kept so saving preserves everything we don't edit
 
     @property
     def raw_mode(self) -> bool:
@@ -450,7 +436,7 @@ class OptionsScreen(MasterDetailScreen):
         else:
             player.missing = str(game)
         if player.blank:
-            player.raw = {key: value for key, value in doc.items() if key != "name"}
+            player.raw = without_name(doc)
         return player
 
     def relabel(self) -> None:
@@ -517,7 +503,7 @@ class OptionsScreen(MasterDetailScreen):
                     self.select_game(game)
                 elif self.player is player:  # not now: its YAML, asked again next time
                     self.show_raw(asked=True)
-            self.app.push_screen(GamePicker(player.choices), chosen)
+            self.app.push_screen(MenuModal({game: game for game in player.choices}), chosen)
         elif player.raw is not None:
             self.show_raw()
         elif player.game:
@@ -532,7 +518,7 @@ class OptionsScreen(MasterDetailScreen):
         """A player whose game isn't available here (or a weighting not picked yet): one row, the YAML editor."""
         player = self.player
         if asked:
-            player.raw = player.raw if player.raw is not None else {k: v for k, v in player.doc.items() if k != "name"}
+            player.raw = player.raw if player.raw is not None else without_name(player.doc)
         self.groups, self.options, self.values = {}, {}, {}
         label = f"Game: {player.missing} (not available here)" if player.missing else "Game: not picked yet"
         self.query_one("#game-label", Label).update(label)
@@ -629,14 +615,14 @@ class OptionsScreen(MasterDetailScreen):
             if self.query("#custom"):
                 self.query_one("#custom", Input).value = ""
             return True
-        if self.query("#number") and isinstance(value, int):
-            self.query_one("#number", Input).value = str(value)
+        if self.query("#int") and isinstance(value, int):
+            self.query_one("#int", Input).value = str(value)
             return True
         return False
 
     def default_of(self, key: str) -> typing.Any:
         if key == RAW:  # Reset: the YAML as loaded
-            return {k: v for k, v in self.player.doc.items() if k != "name"}
+            return without_name(self.player.doc)
         return default_value(self.options[key])
 
     def set_value(self, key: str, value: typing.Any) -> None:
@@ -686,10 +672,10 @@ class OptionsScreen(MasterDetailScreen):
                 widgets.append(OptionList(*[ListOption(f"{name} ({number})")
                                             for name, number in option.special_range_names.items()], id="special"))
             number = value if isinstance(value, int) else ""
-            widgets.append(Input(str(number), type="integer", id="number",
+            widgets.append(Input(str(number), type="integer", id="int",
                                  placeholder=f"{option.range_start}-{option.range_end} (Enter to set)"))
         elif option_kind == "text":
-            widgets.append(Input(str(value), placeholder="Text (Enter to set)", id="text"))
+            widgets.append(Input(str(value), placeholder="Text (Enter to set)", id="str"))
         elif option_kind == "set":
             widgets.append(SetFilter(placeholder=f"Filter {len(option.valid_keys)} entries. Enter marks, "
                                                  f"Shift+↑/↓ carries the mark, Ctrl+A all", id="filter",
@@ -703,7 +689,7 @@ class OptionsScreen(MasterDetailScreen):
         else:
             widgets += yaml_editor(value, "Edit as YAML.")
         if can_randomize(option):
-            widgets.append(Checkbox("Random", is_random(value), id="random"))
+            widgets.append(Checkbox("Random", is_random(value), id="random", classes="secondary"))
             if option_kind in RANGE_KINDS:
                 bias, low, high = parse_random(value) if is_random(value) else ("", None, None)
                 widgets.append(Horizontal(
@@ -715,7 +701,7 @@ class OptionsScreen(MasterDetailScreen):
                     Label("to"),
                     Input("" if high is None else str(high), type="integer", id="random-high",
                           placeholder=str(option.range_end)),
-                    id="random-opts"))
+                    id="random-opts", classes="secondary"))
                 widgets[-1].display = is_random(value)  # before mounting, so the editor is laid out once
         widgets.append(Label("", id="error"))
         await self.mount_editor(widgets)
@@ -812,27 +798,8 @@ class OptionsScreen(MasterDetailScreen):
             self.set_value(self.editor_key, event.value.strip())
             self.back_to_rows()
 
-    @on(Input.Submitted, "#text")
-    @editor_event
-    def text_submitted(self, event: Input.Submitted) -> None:
-        self.set_value(self.editor_key, event.value)
-        self.back_to_rows()
-
-    @on(Input.Submitted, "#number")
-    @editor_event
-    def number_submitted(self, event: Input.Submitted) -> None:
-        option = self.options[self.editor_key]
-        try:
-            number = int(event.value)
-        except ValueError:
-            self.error(NOT_A_NUMBER)
-            return
-        if error := range_error(option, number):
-            self.error(error)
-            return
-        self.error("")
-        self.set_value(self.editor_key, number)
-        self.back_to_rows()
+    def int_error(self, key: str, number: int) -> str | None:
+        return range_error(self.options[key], number)
 
     @on(Input.Changed, "#filter")
     @editor_event
@@ -977,19 +944,21 @@ class OptionsScreen(MasterDetailScreen):
         return True
 
     def warn_duplicates(self) -> None:
-        """Generate rejects two players with the same name ({player}/{number} names are numbered by it)."""
-        names = [p.name.strip().casefold() for p in self.players if p.name.strip() and "{" not in p.name]
-        duplicates = sorted({name for name in names if names.count(name) > 1})
+        """Generate rejects two players with the same name."""
+        duplicates = duplicate_names(p.name for p in self.players)
         if duplicates:
             self.notify(f"Players share a name ({', '.join(duplicates)}): Generate needs each name once.",
                         severity="warning", timeout=8)
 
+    def default_save_path(self) -> str:
+        """<last options folder>/<shown player's name>.yaml"""
+        folder = prefs.get("options_dir") or DEFAULT_DIR
+        return os.path.join(folder, f"{Utils.get_file_safe_name(self.player.name.strip())}.yaml")
+
     def action_save(self) -> None:
         if not self.ready_to_save(self.players):
             return
-        folder = prefs.get("options_dir") or DEFAULT_DIR
-        default = str(self.loaded_path) if self.loaded_path else \
-            os.path.join(folder, f"{Utils.get_file_safe_name(self.player.name.strip())}.yaml")
+        default = str(self.loaded_path) if self.loaded_path else self.default_save_path()
         self.app.push_screen(SaveScreen(default), self.save_file)
 
     def write(self, path: Path, players: list[Player]) -> list[dict] | None:
@@ -1016,7 +985,7 @@ class OptionsScreen(MasterDetailScreen):
         for player, doc in zip(self.players, documents):
             player.doc = doc
             if player.raw is not None:
-                player.raw = {key: value for key, value in doc.items() if key != "name"}
+                player.raw = without_name(doc)
         self.loaded_path = path
         self.dirty = False
         self.notify(f"Saved {path}" + (f" ({len(self.players)} players)" if len(self.players) > 1 else ""))
@@ -1025,7 +994,7 @@ class OptionsScreen(MasterDetailScreen):
     # Ctrl+Y: players
 
     def action_players(self) -> None:
-        self.app.push_screen(PlayersMenu(), lambda action: action and getattr(self, f"player_{action}")())
+        self.app.push_screen(MenuModal(PLAYER_ACTIONS, "Players"), lambda action: action and getattr(self, f"player_{action}")())
 
     def player_new(self) -> None:
         self.players.append(Player())
@@ -1061,8 +1030,7 @@ class OptionsScreen(MasterDetailScreen):
         """The shown player alone, to its own file (a copy: it stays here)."""
         if not self.ready_to_save([self.player]):
             return
-        folder = prefs.get("options_dir") or DEFAULT_DIR
-        default = os.path.join(folder, f"{Utils.get_file_safe_name(self.player.name.strip())}.yaml")
+        default = self.default_save_path()
         player = self.player
 
         def chosen(path: Path | None) -> None:

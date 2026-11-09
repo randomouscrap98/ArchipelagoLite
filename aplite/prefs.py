@@ -21,6 +21,7 @@ DEFAULTS: dict[str, typing.Any] = {
 }
 
 _prefs: dict[str, typing.Any] | None = None
+"""What aplite.yaml holds (no defaults: saving must not freeze them into the file)."""
 
 
 def path() -> str:
@@ -30,7 +31,7 @@ def path() -> str:
 def _load() -> dict[str, typing.Any]:
     global _prefs
     if _prefs is None:
-        _prefs = dict(DEFAULTS)
+        _prefs = {}
         if os.path.exists(path()):
             try:
                 with open(path(), encoding="utf-8") as f:
@@ -54,7 +55,7 @@ def put(key: str, value: typing.Any) -> None:
     """Save one pref. Re-reads aplite.yaml first and changes only `key`: other aplite processes (windows, background
     spares) may have saved theirs since this one loaded, and writing this process's old copy would undo them."""
     global _prefs
-    if _load().get(key) == value:
+    if get(key) == value:
         return
     _prefs = None
     prefs = _load()

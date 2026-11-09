@@ -78,6 +78,7 @@ def main() -> None:
         if game is None:
             kept.append(name)
             continue
+        # compatible_version: as APWorldContainer.get_manifest in worlds/Files.py sets it (check on upstream merges)
         manifest.update({"game": game, "compatible_version": 7, "version": container_version(app),
                          "minimum_ap_version": simple_version, "maximum_ap_version": simple_version})
         with zipfile.ZipFile(folder + ".apworld", "x", zipfile.ZIP_DEFLATED, compresslevel=9) as z:

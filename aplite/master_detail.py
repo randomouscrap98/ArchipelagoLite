@@ -25,8 +25,8 @@ from textual.screen import Screen
 from textual.widgets import Input, Label, OptionList, SelectionList, Static, TextArea
 from textual.widgets.option_list import Option as ListOption
 
-from aplite import glyphs
-from aplite.combo import FilterInput, first_enabled, highlight_first
+from aplite import glyphs, nav
+from aplite.combo import FilterInput, highlight_first
 from aplite.file_picker import FilePicker, PathInput
 from aplite.nav import AppliteApp
 
@@ -35,8 +35,6 @@ if typing.TYPE_CHECKING:
 
 EDITOR_DELAY = 0.06
 """Seconds the row highlight must rest before its editor is built, so holding an arrow key only scrolls."""
-CONFIRM_SECONDS = 6
-"""How long a "press again to confirm" warning stays armed."""
 SIDE_WIDTH = 30
 """Columns of the side list; its entries are cut to fit (SIDE_TEXT_WIDTH, leaving room for border and padding)."""
 SIDE_TEXT_WIDTH = SIDE_WIDTH - 4
@@ -183,7 +181,7 @@ class MasterDetailScreen(Screen):
         self.name_width = 10  # longest row name in the current list
         self._editor_timer = None
         self._editor_lock = asyncio.Lock()  # one build at a time: a timer firing mid-build mounted duplicate ids
-        self._armed: set[str] = set()
+        self._confirm = nav.Confirm()
         self._list_heights: dict[tuple, int] = {}  # editor_shape() -> fitted list max-height, until a resize
 
     # rows
@@ -290,8 +288,9 @@ class MasterDetailScreen(Screen):
                 self._editor_timer.stop()
             await self._build_editor_now()
         focusable = [widget for widget in self.query_one("#editor").query("*") if widget.focusable]
-        preferred = [widget for widget in focusable if widget.id != "random"
-                     and not any(ancestor.id == "random-opts" for ancestor in widget.ancestors)]
+        # .secondary: extras that shouldn't take the focus first (the Options Creator's Random)
+        preferred = [widget for widget in focusable if not widget.has_class("secondary")
+                     and not any(ancestor.has_class("secondary") for ancestor in widget.ancestors)]
         if preferred or focusable:
             (preferred or focusable)[0].focus()
 
@@ -325,8 +324,7 @@ class MasterDetailScreen(Screen):
         options = self.query_one("#rows", OptionList)
         options.clear_options()
         options.add_options(rows)
-        if first_enabled(options) is not None:
-            highlight_first(options)
+        highlight_first(options)
 
     async def action_reset(self) -> None:
         if self.editor_key is not None:
@@ -423,14 +421,8 @@ class MasterDetailScreen(Screen):
         return True, value
 
     def confirm_twice(self, action: str, message: str) -> bool:
-        """For risky actions: the first call warns and returns False; calling again within CONFIRM_SECONDS → True."""
-        if action in self._armed:
-            self._armed.discard(action)
-            return True
-        self._armed.add(action)
-        self.notify(message, severity="warning", timeout=CONFIRM_SECONDS)
-        self.set_timer(CONFIRM_SECONDS, lambda: self._armed.discard(action))
-        return False
+        """For risky actions: the first call warns and returns False; calling again soon after → True (nav.Confirm)."""
+        return self._confirm(self, action, message)
 
     # simple editors (#int, #str) and paths (#path with an #exists line, Ctrl+O browses)
 
@@ -443,9 +435,16 @@ class MasterDetailScreen(Screen):
         except ValueError:
             self.error(NOT_A_NUMBER)
             return
+        if error := self.int_error(self.editor_key, number):
+            self.error(error)
+            return
         self.set_value(self.editor_key, number)
         self.error("")
         self.back_to_rows()
+
+    def int_error(self, key: str, number: int) -> str | None:
+        """Why `number` can't be set on an #int row (e.g. out of range); None: it can."""
+        return None
 
     @on(Input.Submitted, "#str")
     @editor_event
@@ -490,6 +489,7 @@ class MasterDetailScreen(Screen):
         self.back_to_rows()
 
     def check_action(self, action: str, parameters: tuple) -> bool | None:
+        # subclasses with path rows bind ctrl+o to browse (the Options Creator uses ctrl+o for Load)
         return bool(self.query("#path")) if action == "browse" else True
 
     def action_browse(self) -> None:

@@ -15,7 +15,7 @@ RELAUNCH = 75
 launcher_win.c and aplite_fallback.cmd (Windows zip, via APLITE_RELAUNCH). Linux without spares execs instead
 (background.relaunch)."""
 QUIT_STATUS = 86
-"""A child (file picker, command-line script) whose user pressed ctrl+q: quit aplite too (nav.quit_requested)."""
+"""A child (file picker, command-line script) whose user pressed ctrl+q: quit aplite too (nav.quit_if_requested)."""
 
 
 def write_atomic(path: str, data: str | bytes) -> None:
@@ -42,8 +42,3 @@ def wait_for_enter(message: str = "Press Enter to return to the launcher…") ->
         input(f"\n{message}")
     except EOFError:
         pass
-
-
-if os.environ.get("APLITE_DATA_DIR"):  # tar.gz / Windows zip (aplite script, aplite.exe): data next to app/; every aplite process
-    from aplite import datadir
-    datadir.install()

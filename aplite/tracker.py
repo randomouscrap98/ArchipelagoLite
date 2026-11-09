@@ -111,7 +111,7 @@ class TrackerPane(Vertical):
     def compose(self) -> ComposeResult:
         yield Static(id="tracker-summary")
         yield FilterInput(placeholder="Filter locations (Up/Down scroll the list)", id="tracker-filter",
-                          target="#tracker-list", compact=True)
+                          classes="tab-search", target="#tracker-list", compact=True)
         yield OptionList(id="tracker-list")
 
     def on_mount(self) -> None:

@@ -21,7 +21,7 @@ from textual.widgets import Footer, RichLog, Static
 
 import Utils
 from aplite import site_pages
-from aplite.desktop import open_path
+from aplite.desktop import open_link, open_path
 from aplite.nav import AppliteApp
 
 if typing.TYPE_CHECKING:
@@ -152,8 +152,7 @@ class WebOptionsApp(AppliteApp):
         self.query_one(RichLog).write(line)
 
     def action_open_browser(self) -> None:
-        if not open_path(self.url):
-            self.notify(f"No browser opener found; open {self.url}", timeout=10)
+        open_link(self, self.url)
 
     def on_unmount(self) -> None:
         if self.server:

@@ -4,7 +4,8 @@ builds keep it next to their launcher, so Lite can be extracted into an existing
 host.yaml, Players, custom_worlds and output with it. The tar.gz's aplite script and aplite.exe set APLITE_DATA_DIR; the AppImage
 and source checkouts don't.
 
-Lite versions before this kept user data in app/; the first run moves it up (see migrate).
+Lite versions before this kept user data in app/; the first run moves it up (see migrate). Utils.user_path reads
+APLITE_DATA_DIR itself; this module only does the move and template copy, from `python -m aplite` (__main__).
 """
 import dataclasses
 import filecmp
@@ -33,8 +34,7 @@ migration: Migration | None = None
 
 
 def install() -> None:
-    """First-run move and template copy for APLITE_DATA_DIR. Before anything reads user data (host.yaml, worlds).
-    Utils.user_path itself picks APLITE_DATA_DIR (core edit), so processes that never import aplite agree."""
+    """First-run move and template copy for APLITE_DATA_DIR. Before anything reads user data (host.yaml, worlds)."""
     global migration
     import Utils
     data = os.path.abspath(os.environ[ENV])

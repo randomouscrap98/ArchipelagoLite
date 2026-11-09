@@ -8,7 +8,6 @@ from __future__ import annotations
 import html
 import os
 import re
-import threading
 from pathlib import Path
 
 from textual.app import ComposeResult
@@ -78,7 +77,7 @@ class UploadModal(ModalScreen[None]):
                 yield Button("Close", id="upload-close", disabled=True)
 
     def on_mount(self) -> None:
-        threading.Thread(target=self.run_upload, daemon=True).start()
+        self.run_worker(self.run_upload, thread=True)
 
     def run_upload(self) -> None:
         try:

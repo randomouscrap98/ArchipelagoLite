@@ -18,7 +18,7 @@ from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Input, Tree
 
-from aplite import colors
+from aplite import colors, tui
 
 if typing.TYPE_CHECKING:
     from CommonClient import CommonContext
@@ -28,8 +28,14 @@ logger = logging.getLogger("Client")
 NO_CATEGORY = "(No Category)"
 HINTED = "(Hinted)"
 DEFAULT_GOAL = "__Manual Game Complete__"
-REFRESH = 0.5
-"""Seconds between checks for changes to show (the template's UI is told through ctx.ui, which aplite leaves None)."""
+
+
+class Row(typing.NamedTuple):
+    """What a tree row stands for (its node data)."""
+    kind: typing.Literal["category", "item", "location", "goal"]
+    name: str = ""  # the category, item or location name
+    location_id: int | None = None
+    scoutable: bool = False
 
 
 def natural_key(text: str) -> list:
@@ -205,23 +211,28 @@ def context_class() -> type[CommonContext]:
         def world(self):
             return AutoWorldRegister.world_types.get(self.game) if self.game else None
 
+        def lookup(self, table: dict, world_table: str, name: str) -> dict | None:
+            """An entry of one of the Manual's tables: the .apmanual's, else the installed world's attribute."""
+            entry = table.get(name)
+            if not entry and (world := self.world()) is not None:
+                entry = getattr(world, world_table, {}).get(name)
+            return entry
+
         def get_location_by_name(self, name: str) -> dict:
-            location = self.location_table.get(name)
-            if not location and (world := self.world()) is not None:
-                location = getattr(world, "location_name_to_location", {}).get(name)
-            return location or {"name": name}
+            return self.lookup(self.location_table, "location_name_to_location", name) or {"name": name}
 
         def get_item_by_name(self, name: str) -> dict:
-            item = self.item_table.get(name)
-            if not item and (world := self.world()) is not None:
-                item = getattr(world, "item_name_to_item", {}).get(name)
-            return item or {"name": name}
+            return self.lookup(self.item_table, "item_name_to_item", name) or {"name": name}
 
         def category_hidden(self, name: str) -> bool:
-            settings = self.category_table.get(name)
-            if settings is None and (world := self.world()) is not None:
-                settings = getattr(world, "category_table", {}).get(name)
+            settings = self.lookup(self.category_table, "category_table", name)
             return bool(settings and settings.get("hidden"))
+
+        def visible_categories(self, entry: dict, always: bool = False) -> list[str]:
+            """The categories to list an item/location under: its shown ones, else NO_CATEGORY when it has none (or
+            `always`: the goal shows even when all its categories are hidden)."""
+            shown = [c for c in entry.get("category", []) if not self.category_hidden(c)]
+            return shown or ([NO_CATEGORY] if always or not entry.get("category") else [])
 
         def sort_key(self, entry: dict) -> list:
             return natural_key(entry.get("sort-key") or entry["name"])
@@ -291,9 +302,9 @@ class ManualTree(Tree):
 
     def action_scout(self) -> None:
         node = self.cursor_node
-        if node and node.data and node.data[0] == "location" and node.data[2]:
-            self.app.notify(f"Scouting {node.data[3]}")
-            self.screen.query_one(ManualPane).ctx.scout(node.data[1])
+        if node and node.data and node.data.kind == "location" and node.data.scoutable:
+            self.app.notify(f"Scouting {node.data.name}")
+            self.screen.query_one(ManualPane).ctx.scout(node.data.location_id)
 
 
 class ManualPane(Vertical):
@@ -322,7 +333,7 @@ class ManualPane(Vertical):
         for tree in self.query(ManualTree):
             tree.show_root = True
             tree.root.expand()
-        self.set_interval(REFRESH, self.refresh_trees)
+        self.set_interval(tui.STATE_REFRESH, self.refresh_trees)  # the template tells ctx.ui, which aplite leaves None
         self.refresh_trees()
 
     def on_input_changed(self, event: Input.Changed) -> None:
@@ -339,12 +350,12 @@ class ManualPane(Vertical):
         if not data:
             return
         ctx = self.ctx
-        if data[0] == "location":
-            if not ctx.press_allowed(data[3]):
-                self.app.notify(f"{data[3]} is out of logic. /send {data[3]} sends it anyway.", severity="warning")
+        if data.kind == "location":
+            if not ctx.press_allowed(data.name):
+                self.app.notify(f"{data.name} is out of logic. /send {data.name} sends it anyway.", severity="warning")
                 return
-            ctx.send_check(data[1])
-        elif data[0] == "goal":
+            ctx.send_check(data.location_id)
+        elif data.kind == "goal":
             if not ctx.goal_allowed():
                 self.app.notify("The goal is out of logic.", severity="warning")
                 return
@@ -356,7 +367,7 @@ class ManualPane(Vertical):
     def refresh_trees(self) -> None:
         ctx = self.ctx
         query = self.query_one("#manual-search", Input).value.strip().casefold()
-        hints = ctx.stored_data.get(f"_read_hints_{ctx.team}_{ctx.slot}", []) if ctx.slot else []
+        hints = tui.read_hints(ctx)
         key = (ctx.version, query, len(ctx.items_received), len(ctx.missing_locations), len(hints),
                ctx.slot is not None)
         if key == self.shown:
@@ -372,7 +383,7 @@ class ManualPane(Vertical):
         self.fill(items, *self.item_groups(), query)
         self.fill(locations, *self.location_groups(hints), query)
 
-    def item_groups(self) -> tuple[str, dict[str, list[tuple[Text, tuple]]]]:
+    def item_groups(self) -> tuple[str, dict[str, list[tuple[Text, Row]]]]:
         """Received items by category, with counts, in the order they first arrived (the template's default)."""
         ctx = self.ctx
         counts: dict[str, int] = {}
@@ -382,13 +393,11 @@ class ManualPane(Vertical):
         groups: dict[str, list] = {}
         for name, count in counts.items():
             item = ctx.get_item_by_name(name)
-            categories = [c for c in item.get("category", []) if not ctx.category_hidden(c)] or \
-                ([] if item.get("category") else [NO_CATEGORY])
-            for category in categories:
-                groups.setdefault(category, []).append((Text(f"{name} ({count})"), ("item", name)))
+            for category in ctx.visible_categories(item):
+                groups.setdefault(category, []).append((Text(f"{name} ({count})"), Row("item", name)))
         return f"Items Received ({len(ctx.items_received)})", groups
 
-    def location_groups(self, hints: list) -> tuple[str, dict[str, list[tuple[Text, tuple]]]]:
+    def location_groups(self, hints: list) -> tuple[str, dict[str, list[tuple[Text, Row]]]]:
         ctx = self.ctx
         hinted = {hint["location"] for hint in hints if hint["finding_player"] == ctx.slot and not hint["found"]}
         missing = [i for i in ctx.missing_locations if i not in ctx.sent]
@@ -404,9 +413,8 @@ class ManualPane(Vertical):
                 label.append(f"  {location['hint_text']}", style="dim")
             elif location.get("scoutable"):
                 label.append("  [s: scout]", style="dim")
-            entry = (label, ("location", location_id, bool(location.get("scoutable")), name))
-            categories = [c for c in location.get("category", []) if not ctx.category_hidden(c)] or \
-                ([] if location.get("category") else [NO_CATEGORY])
+            entry = (label, Row("location", name, location_id, bool(location.get("scoutable"))))
+            categories = ctx.visible_categories(location)
             if location_id in hinted:
                 categories = [HINTED, *categories]
             for category in categories:
@@ -415,8 +423,8 @@ class ManualPane(Vertical):
             goal = ctx.goal_location
             text = "VICTORY! (seed finished)" if goal["name"] == DEFAULT_GOAL else f"GOAL: {goal['name']}"
             label = Text(text, style="bold")
-            for category in [c for c in goal.get("category", []) if not ctx.category_hidden(c)] or [NO_CATEGORY]:
-                groups.setdefault(category, []).append((label, ("goal",)))
+            for category in ctx.visible_categories(goal, always=True):
+                groups.setdefault(category, []).append((label, Row("goal")))
         return f"Remaining Locations ({len(missing) + (not ctx.goaled)})", groups
 
     def logic_style(self, name: str) -> str:
@@ -429,10 +437,10 @@ class ManualPane(Vertical):
             return colors.style("tracker_glitched")
         return ""
 
-    def fill(self, tree: ManualTree, title: str, groups: dict[str, list[tuple[Text, tuple]]], query: str) -> None:
+    def fill(self, tree: ManualTree, title: str, groups: dict[str, list[tuple[Text, Row]]], query: str) -> None:
         """Rebuild a tree, keeping which categories are open and where the cursor is. A search shows only matches
         (a matching category shows all of its entries) with their categories open."""
-        expanded = {node.data[1] for node in tree.root.children if node.data and node.is_expanded}
+        expanded = {node.data.name for node in tree.root.children if node.data and node.is_expanded}
         cursor = tree.cursor_node.data if tree.cursor_node else None
         line = tree.cursor_line
         tree.clear()
@@ -445,17 +453,17 @@ class ManualPane(Vertical):
                 if not entries:
                     continue
             label = Text(f"{category} ({len(entries)})")
-            names = {data[3] for _, data in entries if data[0] == "location"}
+            names = {data.name for _, data in entries if data.kind == "location"}
             if self.ctx.reachable and names & self.ctx.reachable:  # the template's category colors
                 label.stylize(colors.style("tracker_in_logic"))
             elif names & self.ctx.glitched:
                 label.stylize(colors.style("tracker_glitched"))
-            node = tree.root.add(label, data=("category", category), expand=bool(query) or category in expanded)
+            node = tree.root.add(label, data=Row("category", category), expand=bool(query) or category in expanded)
             for text, data in entries:
                 leaf = node.add_leaf(text, data=data)
                 if data == cursor and found is None and node.is_expanded:
                     found = leaf
-            if cursor == ("category", category):
+            if cursor == Row("category", category):
                 found = node
         tree.root.expand()
         if found is not None:

@@ -7,7 +7,6 @@ from __future__ import annotations
 import contextlib
 import os
 import re
-import time
 import typing
 
 import Utils
@@ -20,9 +19,9 @@ from textual.widgets import Footer, Header, OptionList, Static
 from textual.widgets.option_list import Option
 
 from aplite import nav
-from aplite.master_detail import CONFIRM_SECONDS, TextScroll
+from aplite.master_detail import TextScroll
 from aplite.combo import FilterInput, highlight_first, keep_scroll
-from aplite.desktop import open_path
+from aplite.desktop import open_link
 
 CUSTOM_REPO = "Custom repo available"
 """The description world_manager gives a row whose world names its own repository (adding it, not installing)."""
@@ -73,8 +72,7 @@ def worldless_apworlds(manager) -> typing.Iterator[None]:
     for file in pathlib.Path(user_folder).glob("*.apworld"):
         if file.resolve() in registered or not file.is_file():
             continue
-        remotes = manager.repositories.packages_by_id_version.get(file.stem)
-        title = next((r.name for r in remotes.values() if r.name), None) if remotes else None
+        title = next((r.name for r in remotes(manager, file.stem).values() if r.name), None)
         extras[title or file.stem] = type(file.stem, (), {"zip_path": file, "__doc__": "", "__module__": __name__})
     if not extras:
         yield
@@ -87,12 +85,26 @@ def worldless_apworlds(manager) -> typing.Iterator[None]:
         AutoWorldRegister.world_types = original
 
 
+def remotes(manager, world_id: str) -> dict:
+    """The versions the enabled repositories list for a world: {version: remote}."""
+    return manager.repositories.packages_by_id_version.get(world_id) or {}
+
+
+def newest(manager, versions: typing.Iterable) -> typing.Any:
+    """The newest of some remotes, by full version (pre/post releases included)."""
+    return max(versions, key=lambda r: manager.parse_version(r.world_version))
+
+
+def manifest_repo(manifest: dict) -> str | None:
+    """The repository an apworld's manifest names."""
+    return manifest.get("repo_url") or manifest.get("github")
+
+
 def repo_url(world: dict) -> str | None:
     """Where a world lives: the manifest's repo_url/github, else the repo of a GitHub release download (nearly every
     index entry), else the folder the download comes from. The index has no repo field, and the apworld's own
     release_url is built from the index's address for index worlds (not a github.com link, so None)."""
-    manifest = world.get("manifest") or {}
-    if url := manifest.get("repo_url") or manifest.get("github"):
+    if url := manifest_repo(world.get("manifest") or {}):
         return url
     remote = world.get("latest_version") or next(iter((world.get("remotes") or {}).values()), None)
     download = remote.data.get("world") if remote else None
@@ -121,18 +133,18 @@ def short_repo(url: str) -> str:
 
 
 def repo_change(version, latest) -> str | None:
-    """How `version`'s repo differs from `latest`'s (ApWorldMetadata): "other maintainer" (another owner), "old repo"
-    (same owner, another repo), or None (same, or not GitHub releases). Older versions sometimes come from a
-    different fork or maintainer (Hexcells Infinite <= 1.2)."""
+    """Where `version` comes from when its repo differs from `latest`'s (ApWorldMetadata): "another maintainer"
+    (another owner), "an old repo" (same owner, another repo), or None (same, or not GitHub releases). Older
+    versions sometimes come from a different fork or maintainer (Hexcells Infinite <= 1.2)."""
     mine, theirs = release_repo(version.data.get("world")), release_repo(latest.data.get("world"))
     if not mine or not theirs or mine.lower() == theirs.lower():
         return None
-    return "other maintainer" if mine.lower().split("/")[-2] != theirs.lower().split("/")[-2] else "old repo"
+    return "another maintainer" if mine.lower().split("/")[-2] != theirs.lower().split("/")[-2] else "an old repo"
 
 
 class VersionPicker(ModalScreen):
     """Every listed version of one world, newest first, with the highlighted one explained in a box below. Enter
-    installs; an older one than installed needs a second Enter within CONFIRM_SECONDS. Dismisses with the chosen
+    installs; an older one than installed needs a second Enter (nav.Confirm). Dismisses with the chosen
     ApWorldMetadata, or None."""
     CSS = """
     VersionPicker { align: center middle; }
@@ -158,8 +170,7 @@ class VersionPicker(ModalScreen):
         for version in versions:
             if digest := version.data.get("hash_sha256"):
                 self.newest_by_hash.setdefault(digest, version.world_version)
-        self.armed: tuple[int, float] | None = None
-        """The older version a first Enter picked (index, time); a second Enter on it within CONFIRM_SECONDS installs."""
+        self.confirm_downgrade = nav.Confirm()
 
     def compose(self) -> ComposeResult:
         with Vertical():
@@ -179,13 +190,20 @@ class VersionPicker(ModalScreen):
         """Cap the list so the info box stays inside the modal (80% of the screen, less border, title and box)."""
         self.query_one(OptionList).styles.max_height = max(3, min(30, int(self.size.height * 0.8) - 2 - 1 - 4))
 
+    def replaced_by(self, version) -> str | None:
+        """The newer version whose file this one now serves (see newest_by_hash), if any."""
+        newest = self.newest_by_hash.get(version.data.get("hash_sha256"), version.world_version)
+        return newest if newest != version.world_version else None
+
+    def prerelease(self, version) -> bool:
+        return version.is_prerelease or self.parse(version.world_version).is_prerelease  # flagged, or a1/b2/rc0/dev
+
     def label(self, version, width: int) -> str:
         date = (version.created_at or "")[:10]
         parts = [f"{version.world_version:<{width}}", f"{date:<10}", f"{size_label(version.data.get('size')):>8}"]
-        newest = self.newest_by_hash.get(version.data.get("hash_sha256"), version.world_version)
-        if newest != version.world_version:
+        if newest := self.replaced_by(version):
             parts.append(f"[$error]replaced with {newest}[/]")
-        if version.is_prerelease or self.parse(version.world_version).is_prerelease:  # flagged, or a1/b2/rc0/dev
+        if self.prerelease(version):
             parts.append("[$warning]prerelease[/]")
         if self.installed is not None and self.parse(version.world_version) == self.installed:
             parts.append("[$success]installed[/]")
@@ -204,15 +222,14 @@ class VersionPicker(ModalScreen):
             elif download:
                 lines.append(f"Download: {download}")
             if change := repo_change(version, self.versions[0]):
-                lines.append(f"[$warning]\\[!] {change}:[/] {short_repo(release_repo(download))} (the newest version "
+                lines.append(f"[$warning]\\[!] from {change}:[/] {short_repo(release_repo(download))} (the newest version "
                              f"is from {short_repo(release_repo(self.versions[0].data.get('world')))})")
             if self.installed is not None and self.parse(version.world_version) < self.installed:
                 lines.append("Older than installed: Enter twice to downgrade.")
-            newest = self.newest_by_hash.get(version.data.get("hash_sha256"), version.world_version)
-            if newest != version.world_version:
+            if newest := self.replaced_by(version):
                 lines.append(f"Replaced with {newest}: author changed release, you will not get "
                              f"{version.world_version}.")
-            if version.is_prerelease or self.parse(version.world_version).is_prerelease:
+            if self.prerelease(version):
                 lines.append("Prerelease: may be unfinished or unstable.")
         self.query_one("#picker-info", Static).update("\n".join(lines))
         self.query_one("#picker-doc", TextScroll).scroll_home(animate=False)
@@ -226,18 +243,16 @@ class VersionPicker(ModalScreen):
         page = release_page(self.versions[index].data.get("world")) if index is not None else None
         if not page:
             self.notify("No release page for this version.")
-        elif not open_path(page):
-            self.notify(f"No desktop browser to open it: {page}")
+        else:
+            open_link(self, page)
 
     def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
         event.stop()
         index = event.option_index
         version = self.versions[index]
         older = self.installed is not None and self.parse(version.world_version) < self.installed
-        if older and not (self.armed and self.armed[0] == index and time.monotonic() - self.armed[1] < CONFIRM_SECONDS):
-            self.armed = (index, time.monotonic())
-            self.notify(f"{version.world_version} is older than the installed version: a downgrade. "
-                        f"Press Enter again to install it.", severity="warning", timeout=CONFIRM_SECONDS)
+        if older and not self.confirm_downgrade(self, index, f"{version.world_version} is older than the installed "
+                                                                  f"version: a downgrade. Press Enter again to install it."):
             return
         self.dismiss(version)
 
@@ -266,8 +281,7 @@ class ManagerApp(nav.AppliteApp):
         self.shown: list[dict] = []
         self.busy = False
         self.installed_any = False
-        self.armed: dict | None = None
-        """The world a first ctrl+t asked to delete; a second one within CONFIRM_SECONDS deletes it."""
+        self.confirm_delete = nav.Confirm()
 
     def world_table(self) -> list[dict]:
         """refresh_apworld_table, with the latest version of uninstalled worlds picked by full version: it compares only
@@ -275,11 +289,10 @@ class ManagerApp(nav.AppliteApp):
         installed a 2024 release). Installed worlds already compare full versions."""
         with worldless_apworlds(self.manager):
             worlds = self.manager.refresh_apworld_table()
-        parse = self.manager.parse_version
         for world in worlds:
-            remotes = self.manager.repositories.packages_by_id_version.get(world["id"])
-            if not world["installed"] and world.get("latest_version") and remotes:
-                world["latest_version"] = max(remotes.values(), key=lambda r: parse(r.world_version))
+            listed = remotes(self.manager, world["id"])
+            if not world["installed"] and world.get("latest_version") and listed:
+                world["latest_version"] = newest(self.manager, listed.values())
         return worlds
 
     def compose(self) -> ComposeResult:
@@ -309,18 +322,18 @@ class ManagerApp(nav.AppliteApp):
     @work(thread=True, exclusive=True)
     def load(self) -> None:
         self.busy = True
-        nav.on_app_thread(self, self.status, "Fetching repositories...")
+        self.app.call_from_thread(self.status, "Fetching repositories...")
         try:
             repos = self.manager.repositories
             repos.load_repos_from_settings()
             repos.refresh()
             worlds = self.world_table()
         except Exception as e:  # network, a repo with bad data, or a changed world_manager API
-            nav.on_app_thread(self, self.status, f"Couldn't load the world list: {e}")
+            self.app.call_from_thread(self.status, f"Couldn't load the world list: {e}")
             return
         finally:
             self.busy = False
-        nav.on_app_thread(self, self.loaded, worlds)
+        self.app.call_from_thread(self.loaded, worlds)
 
     def loaded(self, worlds: list[dict]) -> None:
         self.worlds = worlds
@@ -381,18 +394,18 @@ class ManagerApp(nav.AppliteApp):
 
     def installed_repo_note(self, world: dict) -> str:
         """A warning line when the installed version comes from another repo than the newest listed one."""
-        remotes = self.manager.repositories.packages_by_id_version.get(world["id"]) or {}
-        if not remotes or not world.get("installed_version"):
+        listed = remotes(self.manager, world["id"])
+        if not listed or not world.get("installed_version"):
             return ""
         parse = self.manager.parse_version
-        newest = max(remotes.values(), key=lambda r: parse(r.world_version))
-        installed = next((r for r in remotes.values()
+        latest = newest(self.manager, listed.values())
+        installed = next((r for r in listed.values()
                           if parse(r.world_version) == parse(world["installed_version"])), None)
-        change = installed and repo_change(installed, newest)
+        change = installed and repo_change(installed, latest)
         if not change:
             return ""
-        return (f"[$warning]\\[!] installed version is from {'another maintainer' if change == 'other maintainer' else 'an old repo'}: {short_repo(release_repo(installed.data['world']))}"
-                f"[/] (the newest is from {short_repo(release_repo(newest.data['world']))}). Ctrl+Y lists versions.")
+        return (f"[$warning]\\[!] installed version is from {change}: {short_repo(release_repo(installed.data['world']))}"
+                f"[/] (the newest is from {short_repo(release_repo(latest.data['world']))}). Ctrl+Y lists versions.")
 
     def on_input_submitted(self, event: FilterInput.Submitted) -> None:
         event.stop()
@@ -413,13 +426,8 @@ class ManagerApp(nav.AppliteApp):
         if not world["installed"] or not file or bundled or not os.path.isfile(file):
             self.status(f"{world['title']} isn't an installed .apworld file aplite can delete.")
             return
-        if self.armed is not world:
-            self.armed = world
-            self.notify(f"Press Ctrl+T again to delete {os.path.basename(file)}.", severity="warning",
-                        timeout=CONFIRM_SECONDS)
-            self.set_timer(CONFIRM_SECONDS, lambda: setattr(self, "armed", None) if self.armed is world else None)
+        if not self.confirm_delete(self, file, f"Press Ctrl+T again to delete {os.path.basename(file)}."):
             return
-        self.armed = None
         try:
             os.remove(file)
         except OSError as e:
@@ -434,19 +442,19 @@ class ManagerApp(nav.AppliteApp):
         url = repo_url(world) if world else None
         if not url:
             self.status("No repository link for this world.")
-        elif not open_path(url):
-            self.status(f"No desktop browser to open it: {url}")
+        else:
+            open_link(self, url)
 
     def action_versions(self) -> None:
         world = self.highlighted()
         if world is None or self.busy:
             return
         parse = self.manager.parse_version
-        remotes = self.manager.repositories.packages_by_id_version.get(world["id"]) or {}
-        if not remotes:
+        listed = remotes(self.manager, world["id"])
+        if not listed:
             self.status(f"No versions listed for {world['title']}.")
             return
-        versions = sorted(remotes.values(), key=lambda r: parse(r.world_version), reverse=True)
+        versions = sorted(listed.values(), key=lambda r: parse(r.world_version), reverse=True)
         installed = parse(world["installed_version"]) if world["installed"] and world.get("installed_version") else None
 
         def picked(version) -> None:
@@ -462,8 +470,8 @@ class ManagerApp(nav.AppliteApp):
             if world["description"] == CUSTOM_REPO:  # what the kivy app does: enable the world's own repository
                 from worlds.apworld_manager import RepoWorld
                 manifest = world["manifest"]
-                url = manifest.get("repo_url") or manifest.get("github")
-                nav.on_app_thread(self, self.status, f"Adding repository {url}...")
+                url = manifest_repo(manifest)
+                self.app.call_from_thread(self.status, f"Adding repository {url}...")
                 RepoWorld.settings.repositories[url] = True
                 RepoWorld.settings._changed = True
                 Utils.get_settings().save()  # aplite returns to the launcher by exec: no atexit autosave
@@ -472,23 +480,23 @@ class ManagerApp(nav.AppliteApp):
                 done = f"Added repository {url}."
             else:
                 name = f"{world['title']} {version}" if version else world["title"]
-                nav.on_app_thread(self, self.status, f"Installing {name}...")
+                self.app.call_from_thread(self.status, f"Installing {name}...")
                 with captured_messageboxes(messages):
                     self.manager.install_world(world)
                 errors = [text for text, error in messages if error]
                 if errors:
-                    nav.on_app_thread(self, self.status, f"Install failed: {errors[0]}")
+                    self.app.call_from_thread(self.status, f"Install failed: {errors[0]}")
                     return
                 self.installed_any = True
                 done = f"Installed {name}. New worlds load next time the launcher starts."
             worlds = self.world_table()
         except Exception as e:
-            nav.on_app_thread(self, self.status, f"Install failed: {e}")
+            self.app.call_from_thread(self.status, f"Install failed: {e}")
             return
         finally:
             self.busy = False
-        nav.on_app_thread(self, self.loaded, worlds)
-        nav.on_app_thread(self, self.status, done)
+        self.app.call_from_thread(self.loaded, worlds)
+        self.app.call_from_thread(self.status, done)
 
 
 def size_label(size) -> str:

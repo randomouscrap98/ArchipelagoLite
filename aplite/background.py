@@ -29,7 +29,7 @@ import threading
 import time
 import typing
 
-from aplite import RELAUNCH
+from aplite import REPO, RELAUNCH, child_env
 
 if typing.TYPE_CHECKING:
     from multiprocessing.connection import Connection, Listener
@@ -55,7 +55,6 @@ logger = logging.getLogger("aplite.background")
 def address() -> str | None:
     """The manager's pipe/socket: one per user, machine (containers share /tmp with their host) and install. None when
     no private folder for the socket can be had (Linux)."""
-    from aplite import REPO
     install = "appimage" if APPIMAGE else REPO
     key = hashlib.sha1(f"{getpass.getuser()}|{socket.gethostname()}|{install}".encode()).hexdigest()[:16]
     if sys.platform == "win32":
@@ -99,11 +98,6 @@ def python_command(*args: str) -> list[str]:
     """Command line for a Python process that may outlive this one: through the AppImage (see APPIMAGE; its launcher
     takes --python), else this interpreter."""
     return [APPIMAGE, "--python", *args] if APPIMAGE else [sys.executable, *args]
-
-
-def child_env() -> dict[str, str]:
-    from aplite import child_env as env
-    return env()
 
 
 def relaunch() -> typing.NoReturn:
@@ -231,19 +225,29 @@ def spare_start_load(load: typing.Callable[[], object]) -> None:
     threading.Thread(target=run, name="spare-load", daemon=True).start()
 
 
-def serve_spare(fingerprint: typing.Callable[[], object]) -> None:
-    """In a spare: wait for an open, take over its terminal and adopt its cwd, environment and argv, then return (the
-    caller runs it as a normal start). Exits when the manager goes away, or when `fingerprint()` (worlds, settings,
-    aplite itself) changed since this spare started (the manager starts a fresh one)."""
+def loaded_state() -> list:
+    """What a spare's loaded state depends on: worlds, host.yaml, aplite's code, the AppImage file (its mounts keep
+    showing the old contents after an update). A spare whose state changed is replaced. (code_stamp is the other
+    staleness key: an open and the manager compare it, so a manager from another install steps down.)"""
+    import Utils
+    return tree_fingerprint(
+        [Utils.user_path("custom_worlds"), Utils.local_path("worlds"), os.path.dirname(os.path.abspath(__file__))],
+        [Utils.user_path("host.yaml"), *([APPIMAGE] if APPIMAGE else [])])
+
+
+def serve_spare() -> list[str]:
+    """In a spare: wait for an open, take over its terminal and adopt its cwd and environment, then return its argv
+    (the caller runs it as a normal start). Exits when the manager goes away, or when loaded_state() changed since
+    this spare started (the manager starts a fresh one)."""
     global in_spare
     in_spare = True
-    started_with = fingerprint()
+    started_with = loaded_state()
     try:
         conn = connect()
         conn.send({"op": "spare", "pid": os.getpid()})
         message = conn.recv()
         fds = recv_fds(conn, 3) if sys.platform != "win32" else []
-        if fingerprint() != started_with:
+        if loaded_state() != started_with:
             conn.send({"stale": True})
             sys.exit(0)
         conn.send({"ok": True})
@@ -257,7 +261,8 @@ def serve_spare(fingerprint: typing.Callable[[], object]) -> None:
     os.chdir(message["cwd"])
     os.environ.clear()
     os.environ.update(message["env"])
-    sys.argv[1:] = message["argv"]
+    sys.argv[1:] = message["argv"]  # components that read sys.argv themselves
+    return message["argv"]
 
 
 def _attach_console(pid: int) -> None:
@@ -333,7 +338,18 @@ def tree_fingerprint(dirs: list[str], files: list[str]) -> list:
 
 # --- settings side (any aplite process) ----------------------------------------------------------------------------
 
-def configure(count: int, log_path: str) -> None:
+def spare_count() -> int:
+    """The "background_spares" pref (0: off)."""
+    from aplite import prefs
+    return int(prefs.get(PREF) or 0)
+
+
+def log_path() -> str:
+    import Utils
+    return Utils.user_path("logs", "aplite_background.txt")
+
+
+def configure(count: int) -> None:
     """Apply a new spare count: start the manager, change its count, or (0) tell it to quit."""
     try:
         request({"op": "config", "count": count})
@@ -341,17 +357,17 @@ def configure(count: int, log_path: str) -> None:
     except (OSError, EOFError):
         if count <= 0:
             return
-    start_manager(count, log_path)
+    start_manager(count)
 
 
-def start_manager(count: int, log_path: str) -> None:
-    from aplite import REPO
-    args = python_command("-m", "aplite.background", str(count), log_path)
+def start_manager(count: int) -> None:
+    log = log_path()
+    args = python_command("-m", "aplite.background", str(count), log)
     cwd = os.path.expanduser("~") if APPIMAGE else REPO  # not in this run's mount: it would keep it busy
-    os.makedirs(os.path.dirname(log_path), exist_ok=True)
+    os.makedirs(os.path.dirname(log), exist_ok=True)
     # its output to the log too: a manager that dies before it logs (a launcher or AppImage runtime error, a
     # traceback) leaves a reason there
-    with open(log_path, "ab") as output:
+    with open(log, "ab") as output:
         kwargs: dict[str, typing.Any] = dict(stdin=subprocess.DEVNULL, stdout=output, stderr=output, env=child_env(),
                                              cwd=cwd, close_fds=True)
         if sys.platform == "win32":
@@ -404,11 +420,6 @@ def code_stamp() -> list:
         return tree_fingerprint([], [APPIMAGE])
     folder = os.path.dirname(os.path.abspath(__file__))
     return tree_fingerprint([], [os.path.abspath(__file__), os.path.join(folder, "_version.txt")])
-
-
-def install_files() -> list[str]:
-    """Files an update replaces outside the loaded code: the AppImage (its mounts keep showing the old contents)."""
-    return [APPIMAGE] if APPIMAGE else []
 
 
 class Spare:

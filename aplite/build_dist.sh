@@ -14,7 +14,7 @@ REPO=$(cd "$(dirname "$0")/.." && pwd)
 PYVER=3.13
 RUNTIME_URL=${APLITE_RUNTIME_URL:-https://github.com/AppImage/type2-runtime/releases/download/continuous/runtime-x86_64}
 MKSQUASHFS=${MKSQUASHFS:-mksquashfs}
-ZIG=ziglang==0.17.1  # as in aplite/build_speedups.sh; builds aplite.exe
+. "$REPO/aplite/build_pins.sh"  # ZIG
 SNI_VERSION=v0.0.100  # same as upstream's setup.py (SNI_VERSION)
 # Microsoft's VC++ runtime DLLs (msvcp140...) from the msvc-runtime wheel: fresh Windows lacks them, and C++ extensions
 # (dolphin_memory_engine: Luigi's Mansion, TWW, ...) fail to load. Upstream's installer runs vc_redist.x64.exe instead.
@@ -44,8 +44,9 @@ git -C "$REPO" ls-files | grep -Ev "$EXCLUDE" | while read -r f; do
     [ -e "$REPO/$f" ] && echo "$f"
 done > "$BUILD/files.txt"
 tar -C "$REPO" -cf - -T "$BUILD/files.txt" | tar -C "$BUILD/app" -xf -
-# untracked, but Utils.user_path copies it to the home folder (templates: "Generate Template Options" in the launcher)
 echo "$aplite_version" > "$BUILD/app/aplite/_version.txt"  # no git in the package (aplite/version.py)
+# Players/Templates is untracked, but Utils.user_path copies it to the home folder (templates: "Generate Template
+# Options" in the launcher)
 mkdir -p "$BUILD/app/Players/Templates"
 mv "$BUILD/app/meta.yaml" "$BUILD/app/Players/Templates/"  # upstream's root copy: nothing reads it there
 # Utils.user_path copies Players/sprites/lua to the home folder when this differs from the copy there

@@ -79,11 +79,29 @@ LOAD_ERROR = "aplite-load-error: "
 SERVER_NO_SHOW = 15
 """Seconds wait_for_server gives a server that hasn't written server.json yet."""
 
-Info = dict[str, typing.Any]
+class Info(typing.TypedDict):
+    """A loaded game, games/<room>.json (written by server.load_game)."""
+    room: str
+    seed: str
+    tracker: str
+    owner: str
+    name: str  # the generated zip's name
+    source: str  # the zip's path
+    loaded: str  # "%Y-%m-%d %H:%M:%S"
+    players: list[list]  # [slot id, name, game] per slot
 
 
 def root(*path: str) -> str:
     return os.path.join(os.environ.get("APLITE_SELFHOST_DIR") or Utils.user_path("selfhost"), *path)
+
+
+def game_file(room: str) -> str:
+    return root("games", f"{room}.json")
+
+
+def active_file() -> str:
+    """The active games' room ids, in tab order (the server watches its mtime)."""
+    return root("active.json")
 
 
 def data(*path: str) -> str:
@@ -213,28 +231,28 @@ def games() -> list[Info]:
 
 def game(room: str) -> Info | None:
     try:
-        with open(root("games", f"{room}.json"), encoding="utf-8") as f:
+        with open(game_file(room), encoding="utf-8") as f:
             return json.load(f)
     except (OSError, ValueError):
         return None
 
 
 def save_game(info: Info) -> None:
-    write_atomic(root("games", f"{info['room']}.json"), json.dumps(info, indent=1))
+    write_atomic(game_file(info["room"]), json.dumps(info, indent=1))
 
 
 def active() -> list[str]:
     """Room ids of the active games (tab order); ids whose game is gone are dropped."""
     try:
-        with open(root("active.json"), encoding="utf-8") as f:
+        with open(active_file(), encoding="utf-8") as f:
             ids = json.load(f)
     except (OSError, ValueError):
         return []
-    return [room for room in ids if os.path.exists(root("games", f"{room}.json"))]
+    return [room for room in ids if os.path.exists(game_file(room))]
 
 
 def _save_active(ids: list[str]) -> None:
-    write_atomic(root("active.json"), json.dumps(ids))
+    write_atomic(active_file(), json.dumps(ids))
 
 
 def activate(info: Info, config: dict[str, typing.Any]) -> str | None:
@@ -270,7 +288,7 @@ def delete_game(info: Info) -> None:
         if not db.execute("SELECT COUNT(*) FROM Room WHERE seed = ?", (seed,)).fetchone()[0]:
             db.execute("DELETE FROM Slot WHERE seed = ?", (seed,))
             db.execute("DELETE FROM Seed WHERE id = ?", (seed,))
-    for path in (log_path(info), root("games", f"{info['room']}.json")):
+    for path in (log_path(info), game_file(info["room"])):
         try:
             os.remove(path)
         except FileNotFoundError:

@@ -1,4 +1,4 @@
-"""Theme Explorer (Options menu): every client color role with its dark/light color, a preview, and a picker."""
+"""Client Colors (Options menu): every client color role with its dark/light color, a preview, and a picker."""
 from __future__ import annotations
 
 from rich.style import Style
@@ -7,6 +7,7 @@ from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
+from textual.message import Message
 from textual.screen import ModalScreen, Screen
 from textual.widgets import Button, DataTable, Footer, Input, Static
 
@@ -78,14 +79,14 @@ def grid_colors() -> list[list[str]]:
     return [[f"#{value}" for value in (left + " " + right).split()] for left, right in zip(ENDESGA_64, BLK_NX64)]
 
 
-class ThemeExplorer(Screen):
+class ClientColorsScreen(Screen):
     CSS = """
-    ThemeExplorer #info { padding: 0 1; height: auto; }
-    ThemeExplorer DataTable { height: 1fr; }
+    ClientColorsScreen #info { padding: 0 1; height: auto; }
+    ClientColorsScreen DataTable { height: 1fr; }
     /* Textual's unfocused highlight even when focused: colored role names stay readable on it */
-    ThemeExplorer DataTable:focus > .datatable--cursor { background: $block-cursor-blurred-background;
+    ClientColorsScreen DataTable:focus > .datatable--cursor { background: $block-cursor-blurred-background;
         color: $block-cursor-blurred-foreground; }
-    ThemeExplorer #preview { height: auto; padding: 1 2; border-top: solid $panel; }
+    ClientColorsScreen #preview { height: auto; padding: 1 2; border-top: solid $panel; }
     """
     BINDINGS = [Binding("escape", "app.pop_screen", "Back"), Binding("r", "reset", "Reset role"),
                 Binding("R", "reset_all", "Reset all")]
@@ -148,6 +149,12 @@ class Swatches(Static):
     """The picker's color grid. Never focused: arrow keys in a hex field move its selection (combobox-style)."""
     CELL = 4
 
+    class Picked(Message):
+        """A click picked a color."""
+        def __init__(self, value: str) -> None:
+            super().__init__()
+            self.value = value
+
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
         self.rows = grid_colors()
@@ -191,22 +198,26 @@ class Swatches(Static):
         y, x = event.y, event.x // self.CELL
         if 0 <= y < len(self.rows) and 0 <= x < len(self.rows[0]):
             self.position = (y, x)
-            self.screen.grid_picked(self.move(0, 0))
+            self.post_message(self.Picked(self.move(0, 0)))
 
 
 def _contrast(value: str) -> str:
     r, g, b = (int(value[i:i + 2], 16) for i in (1, 3, 5))
-    return "#000000" if 0.299 * r + 0.587 * g + 0.114 * b > 140 else "#FFFFFF"
+    return "#000000" if colors.is_light(r, g, b) else "#FFFFFF"
 
 
 class HexInput(Input):
-    """A hex field: arrow keys pick from the grid instead of moving the text cursor."""
+    """A hex field: arrow keys pick from the grid instead of moving the text cursor (posts Step)."""
     BINDINGS = [Binding(key, f"grid({dx}, {dy})", show=False)
                 for key, dx, dy in (("left", -1, 0), ("right", 1, 0), ("up", 0, -1), ("down", 0, 1))]
 
+    class Step(Message):
+        def __init__(self, field: "HexInput", dx: int, dy: int) -> None:
+            super().__init__()
+            self.field, self.dx, self.dy = field, dx, dy
+
     def action_grid(self, dx: int, dy: int) -> None:
-        self.value = self.screen.query_one(Swatches).move(dx, dy)
-        self.cursor_position = len(self.value)
+        self.post_message(self.Step(self, dx, dy))
 
 
 def color_note(color_system: str | None) -> str:
@@ -284,11 +295,15 @@ class ColorPicker(ModalScreen[bool]):
         if isinstance(event.widget, HexInput):
             self.query_one(Swatches).show(self.value(self.focused_mode()))
 
-    def grid_picked(self, value: str) -> None:
+    def on_swatches_picked(self, event: Swatches.Picked) -> None:
         mode = self.focused_mode() or colors.theme_mode(self.app)
         field = self.query_one(f"#input-{mode}", HexInput)
-        field.value = value
+        field.value = event.value
         field.focus()
+
+    def on_hex_input_step(self, event: HexInput.Step) -> None:
+        event.field.value = self.query_one(Swatches).move(event.dx, event.dy)
+        event.field.cursor_position = len(event.field.value)
 
     @on(Input.Submitted)
     def input_submitted(self, event: Input.Submitted) -> None:

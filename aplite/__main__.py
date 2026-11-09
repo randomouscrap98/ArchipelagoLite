@@ -21,6 +21,10 @@ from aplite import background
 if __name__ == "__main__":  # before anything heavy: a background spare may run this open instead
     background.try_handoff(sys.argv[1:])
 
+if os.environ.get("APLITE_DATA_DIR"):  # tar.gz / Windows zip: first run moves user data out of app/ (Utils.user_path
+    from aplite import datadir  # itself reads the variable, so other aplite processes don't need this)
+    datadir.install()
+
 import ModuleUpdate
 
 import aplite
@@ -102,33 +106,22 @@ def start_background() -> None:
     open's own load is done."""
     if not background.SUPPORTED or background.in_spare or os.environ.get("APLITE_NO_BACKGROUND"):
         return
-    from aplite import prefs
-    count = prefs.get(background.PREF) or 0
+    count = background.spare_count()
     if count > 0 and not background.running():
-        background.start_manager(count, background_log())
+        background.start_manager(count)
 
 
-def background_log() -> str:
-    return Utils.user_path("logs", "aplite_background.txt")
-
-
-def fingerprint() -> list:
-    """What a background spare's loaded state depends on (it's replaced when this changes)."""
-    return background.tree_fingerprint(
-        [Utils.user_path("custom_worlds"), Utils.local_path("worlds"), os.path.dirname(os.path.abspath(aplite.__file__))],
-        [Utils.user_path("host.yaml"), *background.install_files()])
-
-
-def become_spare() -> None:
+def become_spare() -> list[str]:
     """`python -m aplite --spare` (started by the background manager): load worlds, wait for an open to take over,
-    then pick up what changed since this process started."""
+    then pick up what changed since this process started. Returns the opener's arguments."""
     Utils.init_logging("aplite")
     tui.log_buffer.attach()
     background.spare_start_load(load)
-    background.serve_spare(fingerprint)
+    argv = background.serve_spare()
     from aplite import glyphs, prefs
     prefs.reset()  # aplite.yaml may have changed meanwhile
     glyphs.apply(glyphs.chosen_mode())  # depends on the opener's environment (WT_SESSION, TERM)
+    return argv
 
 
 def main() -> None:
@@ -136,8 +129,7 @@ def main() -> None:
     argv = sys.argv[1:]
     spare = argv[:1] == [background.SPARE_ARG]
     if spare:
-        become_spare()
-        argv = sys.argv[1:]  # the opener's
+        argv = become_spare()
     if argv[:1] in (["-h"], ["--help"]):
         print(__doc__.strip().splitlines()[0])
         print("usage: python -m aplite [patch file|component|archipelago:// url] [component args]")
@@ -234,7 +226,7 @@ def run(component, args: tuple[str, ...], come_back: bool) -> None:
     try:
         components.run(component, *args)
     except SystemExit as e:
-        if nav.quit_requested(e.code):  # ctrl+q in a file prompt before the component had a TUI
+        if nav.quit_if_requested(e.code):  # ctrl+q in a file prompt before the component had a TUI
             sys.exit(0)
         if not wants_launcher():
             raise

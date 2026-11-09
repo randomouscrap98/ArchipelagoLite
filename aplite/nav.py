@@ -11,6 +11,7 @@ import os
 import signal
 import sys
 import threading
+import time
 import typing
 
 from textual.app import App, SystemCommand
@@ -29,9 +30,32 @@ TTY_CHECK = 1.0
 
 T = typing.TypeVar("T")
 
+CONFIRM_SECONDS = 6
+"""How long a "press again to confirm" warning stays armed."""
 
-def quit_requested(status: object) -> bool:
-    """Whether a child's exit status (or a SystemExit code) means its user pressed ctrl+q; if so, aplite quits too."""
+
+class Confirm:
+    """"Press again to confirm" for risky actions: the first call for `key` warns and returns False; a second call for
+    the same key within CONFIRM_SECONDS returns True. A call for another key re-arms for that one."""
+    def __init__(self) -> None:
+        self.key: typing.Hashable = None
+        self.armed_at = 0.0
+
+    def __call__(self, widget: typing.Any, key: typing.Hashable, message: str) -> bool:
+        if key == self.key and time.monotonic() - self.armed_at < CONFIRM_SECONDS:
+            self.reset()
+            return True
+        self.key, self.armed_at = key, time.monotonic()
+        widget.notify(message, severity="warning", timeout=CONFIRM_SECONDS)
+        return False
+
+    def reset(self) -> None:
+        self.key = None
+
+
+def quit_if_requested(status: object) -> bool:
+    """If a child's exit status (or a SystemExit code) says its user pressed ctrl+q, set next_step to "quit" (aplite
+    quits too) and return True."""
     global next_step
     if status == aplite.QUIT_STATUS:
         next_step = "quit"
@@ -148,11 +172,10 @@ class AppliteApp(App):
         yield SystemCommand(f"Glyphs: switch to {other}",
                             "Fancy: block-character borders and scrollbars. Simple: plain lines, for consoles "
                             "without block characters (conhost, Linux tty)", lambda: glyphs.set_mode(self, other))
-        yield SystemCommand("Client Colors", "Items, players, locations, hint statuses", self.open_theme_explorer)
+        yield SystemCommand("Client Colors", "Items, players, locations, hint statuses", self.open_client_colors)
         from aplite import background
         if background.SUPPORTED:
-            from aplite.background_ui import count
-            yield SystemCommand(f"Background spares: {count() or 'off'}",
+            yield SystemCommand(f"Background spares: {background.spare_count() or 'off'}",
                                 "Keep aplite loaded in the background so it opens instantly", self.open_background)
 
     def open_background(self) -> None:
@@ -160,10 +183,10 @@ class AppliteApp(App):
         if not isinstance(self.screen, BackgroundModal):
             self.push_screen(BackgroundModal())
 
-    def open_theme_explorer(self) -> None:
-        from aplite.theme_explorer import ThemeExplorer
-        if not isinstance(self.screen, ThemeExplorer):
-            self.push_screen(ThemeExplorer())
+    def open_client_colors(self) -> None:
+        from aplite.client_colors import ClientColorsScreen
+        if not isinstance(self.screen, ClientColorsScreen):
+            self.push_screen(ClientColorsScreen())
 
     def check_action(self, action: str, parameters: tuple) -> bool | None:
         """While another screen is on top (file picker, save dialog), the app's own keys would act on the hidden

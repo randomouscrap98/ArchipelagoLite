@@ -163,7 +163,7 @@ def only_active(autolauncher: types.ModuleType) -> None:
 
     def start_room(self, room_id) -> None:
         try:
-            stamp = os.stat(selfhost.root("active.json")).st_mtime_ns
+            stamp = os.stat(selfhost.active_file()).st_mtime_ns
         except OSError:
             stamp = None
         if stamp != cache["stamp"]:  # called ~10 times a second per room: reread only when it changed
@@ -320,7 +320,7 @@ def load(path: str) -> None:
         room = Room(seed=seed, owner=owner, tracker=uuid.uuid4(), timeout=int(config["room_timeout"]))
         commit()
         players = sorted(((slot.player_id, slot.player_name, slot.game) for slot in seed.slots))
-        info = {
+        info: selfhost.Info = {
             "room": str(room.id), "seed": str(seed.id), "tracker": str(room.tracker), "owner": str(owner),
             "name": os.path.splitext(os.path.basename(path))[0], "source": os.path.abspath(path),
             "loaded": time.strftime("%Y-%m-%d %H:%M:%S"), "players": [list(p) for p in players],

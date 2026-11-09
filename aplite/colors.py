@@ -1,4 +1,4 @@
-"""Client color roles (item kinds, players, locations, hint statuses), editable in the Theme Explorer.
+"""Client color roles (item kinds, players, locations, hint statuses), editable in Client Colors (client_colors.py).
 
 Upstream's JSONtoTextParser colors server messages with 8 ANSI names, which Textual maps through one fixed palette per
 dark/light mode (in its dark one, red and magenta are the same). Instead, the client's parser (RoleParser) tags each
@@ -179,12 +179,17 @@ class RoleFilter(LineFilter):
         return result
 
 
+def is_light(red: int, green: int, blue: int) -> bool:
+    """Whether a background is light enough for black text (perceived brightness)."""
+    return 0.299 * red + 0.587 * green + 0.114 * blue > 140
+
+
 @functools.lru_cache(maxsize=1024)
 def _undim(style: Style, color: str) -> Style:
     """Dim text in a theme with aplite-dim (nav.HIGH_CONTRAST; terminals fade dim): that color on dark backgrounds,
     the text's own color on light ones (cursor rows: gray on cyan / yellow is unreadable)."""
     background = style.bgcolor and style.bgcolor.get_truecolor()
-    if background and 0.299 * background.red + 0.587 * background.green + 0.114 * background.blue > 140:
+    if background and is_light(*background):
         return style + Style(dim=False)
     return style + Style(dim=False, color=color)
 

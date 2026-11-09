@@ -4,13 +4,11 @@ answer, often inside the client's event loop, so the picker can't run in that pr
 Usage: python -m aplite.pick_file OUT TITLE (file|folder) SUGGEST [SUFFIX ...]
 Writes the chosen path to OUT; leaves it empty when cancelled. Exits with aplite.QUIT_STATUS on ctrl+q.
 """
-import os
 import sys
 
 import aplite
 from aplite import nav
-from aplite.file_picker import FilePicker
-import Utils
+from aplite.file_picker import prompt_picker
 
 
 class PickerApp(nav.AppliteApp):
@@ -24,10 +22,7 @@ class PickerApp(nav.AppliteApp):
         self.suffixes = suffixes
 
     def on_mount(self) -> None:
-        suggested = os.path.expanduser(self.suggest) if self.suggest else ""
-        start = suggested if os.path.isdir(suggested) else os.path.dirname(suggested)  # the caller's suggestion
-        picker = FilePicker(self.picker_title, self.suffixes, "prompt_dir", Utils.user_path(), folders=self.folder,
-                            start=start)
+        picker = prompt_picker(self.picker_title, self.folder, self.suffixes, self.suggest)
         self.push_screen(picker, lambda path: self.exit(str(path) if path else ""))
 
 

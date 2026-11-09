@@ -19,6 +19,7 @@ from textual.widgets import DirectoryTree, Footer, Input, Static
 
 from rich.text import Text
 
+import Utils
 from aplite import prefs
 
 
@@ -366,3 +367,11 @@ class FilePicker(Screen[Path | None]):
     def action_toggle_all(self) -> None:
         self.query_one(FilteredTree).toggle_all()
         self.update_folder()
+
+
+def prompt_picker(title: str, folder: bool, suffixes: typing.Sequence[str], suggest: str) -> FilePicker:
+    """The picker for a script's file prompt (prompts.py: pick_file child, or relayed to Generate Seed): starts at the
+    caller's suggestion (a folder itself, else a file's folder), else the last prompt folder, else the user folder."""
+    suggested = os.path.expanduser(suggest) if suggest else ""
+    start = suggested if os.path.isdir(suggested) else os.path.dirname(suggested)
+    return FilePicker(title, suffixes, "prompt_dir", Utils.user_path(), folders=folder, start=start or None)

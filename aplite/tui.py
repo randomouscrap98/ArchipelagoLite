@@ -45,6 +45,11 @@ def hint_status_display() -> tuple[dict[int, str], dict[int, str], dict[int, int
     return names, colors.hint_roles(), order
 
 
+def read_hints(ctx) -> list[dict]:
+    """This slot's hints, as the server keeps them in data storage (the client asks for this key on connect)."""
+    return ctx.stored_data.get(f"_read_hints_{ctx.team}_{ctx.slot}", []) if ctx.slot else []
+
+
 ARCHIPELAGO_LOGGERS = {"Client", "StreamLog"}
 """Top-level logger names shown in the Archipelago tab (StreamLog carries server messages)."""
 NO_TAB_LOGGERS = ARCHIPELAGO_LOGGERS | {"root", "FileLog", "websockets", "asyncio", "textual", "performance",
@@ -172,7 +177,7 @@ class ClientApp(AppliteApp):
     # alt+digit is unreliable (textual reads ESC 3 as the pound key), ctrl+pageup/pagedown are terminal tab keys (GNOME
     # Terminal, Konsole...): Ctrl+N / Ctrl+B switch tabs on every aplite screen with tabs
     BINDINGS = [("ctrl+n", "switch_tab(1)", "Next tab"), ("ctrl+b", "switch_tab(-1)", "Prev tab"),
-                ("ctrl+t", "focus_address", "Address"), Binding("ctrl+f", "focus_tracker", "Search")]
+                ("ctrl+t", "focus_address", "Address"), Binding("ctrl+f", "focus_search", "Search")]
 
     def __init__(self, ctx: CommonContext) -> None:
         super().__init__()
@@ -242,22 +247,19 @@ class ClientApp(AppliteApp):
         self.query_one("#log-archipelago", RichLog).write(line)
 
     def check_action(self, action: str, parameters: tuple) -> bool | None:
-        if action == "focus_tracker" and not tracker.supported(self.ctx) and not self.query(".tab-search"):
+        if action == "focus_search" and not self.query(".tab-search"):
             return False
         return super().check_action(action, parameters)
 
     def action_focus_command(self) -> None:
         self.query_one(CommandInput).focus()
 
-    def action_focus_tracker(self) -> None:
-        """The search of the current tab when it has one (a client's own tab, e.g. Manual), else the tracker's."""
+    def action_focus_search(self) -> None:
+        """The search (`.tab-search`) of the current tab when it has one (Tracker, Manual), else the first tab's."""
         tabs = self.query_one(TabbedContent)
         search = tabs.query_one(f"#{tabs.active}").query(".tab-search")
         if search:
             search.first().focus()
-        elif tracker.supported(self.ctx):
-            tabs.active = "tab-tracker"
-            self.query_one("#tracker-filter").focus()
         elif search := self.query(".tab-search"):
             tabs.active = search.first().query_ancestor(TabPane).id
             search.first().focus()
@@ -291,7 +293,7 @@ class ClientApp(AppliteApp):
 
     def refresh_hints(self) -> None:
         ctx = self.ctx
-        hints = ctx.stored_data.get(f"_read_hints_{ctx.team}_{ctx.slot}", []) if ctx.slot else []
+        hints = read_hints(ctx)
         if hints == self._hints_snapshot:
             return
         self._hints_snapshot = [dict(hint) for hint in hints]

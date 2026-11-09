@@ -160,34 +160,33 @@ def override_for(component: Component) -> Override:
     return table.get(component.func) or table.get(component.script_name) or Override()
 
 
-RENAMED = {"Host": "Host (old)", "Generate": "Generate (old)", "Generate GUI": "Generate Seed",
-           "Install/Update Apworlds": "APWorld Manager"}
-"""Component names aplite shows differently (upstream's, and its own former ones); the old names still work for
-`python -m aplite <name>`."""
-OLD_DESCRIPTIONS = {
-    ("MultiServer", "Host"): "Old, limited hosting: only the game server for a generated multiworld, in this terminal. "
-                             "No room page, trackers or downloads; Self-host has those.",
-    ("Generate", "Generate"): "Old, plain generation: the YAMLs in the players folder, output in this terminal. "
-                              "Generate Seed lets you pick YAMLs and checks them first.",
+RENAMES: dict[str, tuple[str | None, str, str]] = {
+    "Host": ("MultiServer", "Host (old)", "Old, limited hosting: only the game server for a generated multiworld, in "
+             "this terminal. No room page, trackers or downloads; Self-host has those."),
+    "Generate": ("Generate", "Generate (old)", "Old, plain generation: the YAMLs in the players folder, output in this "
+                 "terminal. Generate Seed lets you pick YAMLs and checks them first."),
+    "Install/Update Apworlds": (None, "APWorld Manager",
+                                "Browse the apworld repositories; install, update or pick any version."),
 }
-"""Upstream's Host is only the game server (Self-host is the full room); Generate only runs Generate.py."""
-
-
-MANAGER_DESCRIPTION = "Browse the apworld repositories; install, update or pick any version."
-"""The APWorld Manager apworld's entry has no description."""
+"""Other entries aplite renames: name -> (script_name, aplite's name, description). Upstream's Host is only the game
+server (Self-host is the full room) and Generate only runs Generate.py: their descriptions are replaced. script_name
+None: the APWorld Manager apworld's entry (matched by its launch func), whose missing description is filled in."""
+RENAMED = {"Generate GUI": "Generate Seed", **{old: new for old, (_, new, _) in RENAMES.items()}}
+"""Every renamed entry (with aplite's own former names): the old names still work for `python -m aplite <name>` and
+saved favorites."""
 
 
 def rename_old_components(components: list[Component]) -> None:
     from aplite import apworld_manager
     manager = apworld_manager.launch_func()
     for component in components:
-        description = OLD_DESCRIPTIONS.get((component.script_name, component.display_name))
-        if description:
-            component.display_name = RENAMED[component.display_name]
-            component.description = description
-        elif manager and component.func is manager and component.display_name == "Install/Update Apworlds":
-            component.display_name = RENAMED[component.display_name]
-            component.description = component.description or MANAGER_DESCRIPTION
+        if component.display_name not in RENAMES:
+            continue
+        script_name, new_name, description = RENAMES[component.display_name]
+        if script_name and component.script_name == script_name:
+            component.display_name, component.description = new_name, description
+        elif not script_name and manager and component.func is manager:
+            component.display_name, component.description = new_name, component.description or description
 
 
 def extra_components() -> list[Component]:
@@ -306,7 +305,7 @@ def _run_cli_script(component: Component, *args: str) -> None:
     from aplite import nav
     status = subprocess.call([sys.executable, "-m", "aplite.script", _script(component), *args],
                              env=aplite.child_env())
-    sys.exit(0 if nav.quit_requested(status) else status)
+    sys.exit(0 if nav.quit_if_requested(status) else status)
 
 
 def _run_gui_script(component: Component, *args: str) -> None:

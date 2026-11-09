@@ -8,12 +8,7 @@ from textual.screen import ModalScreen
 from textual.widgets import OptionList, Static
 from textual.widgets.option_list import Option
 
-import Utils
 from aplite import background, prefs
-
-
-def count() -> int:
-    return int(prefs.get(background.PREF) or 0)
 
 
 def size_label(size: float) -> str:
@@ -51,13 +46,13 @@ class BackgroundModal(ModalScreen[None]):
 
     def on_mount(self) -> None:
         options = self.query_one(OptionList)
-        options.highlighted = min(count(), background.MAX_SPARES)
+        options.highlighted = min(background.spare_count(), background.MAX_SPARES)
         options.focus()
 
     def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
         event.stop()
         n = int(event.option.id)
         prefs.put(background.PREF, n)
-        background.configure(n, Utils.user_path("logs", "aplite_background.txt"))
+        background.configure(n)
         self.notify("Background spares off" if n == 0 else f"Background spares: {n}")
         self.dismiss()

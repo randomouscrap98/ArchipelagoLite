@@ -17,6 +17,7 @@ import threading
 import typing
 
 import Utils
+import aplite
 
 active_app = None
 """The Textual app currently on screen that a prompt has to step around; set via around()."""
@@ -110,7 +111,6 @@ def _ask(title: str, folder: bool, suffixes: tuple[str, ...], suggest: str) -> s
 def _quit_aplite() -> None:
     """Ctrl+Q in the picker: end the app on screen (the client then shuts down) or, before/without one, this process.
     aplite.QUIT_STATUS tells a parent aplite process (this one being a command-line script) to quit too."""
-    import aplite
     from aplite import nav
     app = active_app
     if app is None:
@@ -120,7 +120,6 @@ def _quit_aplite() -> None:
 
 def _pick_or_prompt(title: str, folder: bool, suffixes: tuple[str, ...], suggest: str) -> str | None:
     """The full-screen file picker (aplite/pick_file.py) in a child process; a plain terminal prompt if it fails."""
-    import aplite
     from aplite import nav  # here, not at the top: aplite.script children shouldn't load Textual at startup
     fd, out = tempfile.mkstemp(prefix="aplite-pick-", suffix=".txt")
     os.close(fd)
@@ -130,7 +129,7 @@ def _pick_or_prompt(title: str, folder: bool, suffixes: tuple[str, ...], suggest
                                  env=aplite.child_env())
         with open(out, encoding="utf-8") as f:
             answer = f.read().strip()
-        if nav.quit_requested(status):
+        if nav.quit_if_requested(status):
             return QUIT
         if status == 0:
             return answer or None

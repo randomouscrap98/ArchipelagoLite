@@ -27,7 +27,7 @@ import Utils
 import aplite
 from aplite import prefs, prompts
 from aplite.combo import keep_scroll
-from aplite.file_picker import FileBrowser, FilePicker, FilteredTree, PathInput, start_folder
+from aplite.file_picker import FileBrowser, FilteredTree, PathInput, prompt_picker, start_folder
 from aplite.nav import AppliteApp
 
 SUFFIXES = (".yaml", ".yml")
@@ -42,6 +42,13 @@ LIST_GAMES = ("import json; from aplite import bytecode_cache; bytecode_cache.in
               "from worlds.AutoWorld import AutoWorldRegister; "
               "print(json.dumps(sorted(AutoWorldRegister.world_types)))")
 """A fresh process's installed games (this one's loaded worlds can't be reloaded); the JSON is its last line."""
+
+
+def duplicate_names(names: typing.Iterable[str]) -> list[str]:
+    """Slot names Generate refuses because more than one player has them (casefolded). Templated names ({player},
+    {number}, ...) don't count: Generate numbers them."""
+    names = [name.strip().casefold() for name in names if name.strip() and "{" not in name]
+    return sorted({name for name in names if names.count(name) > 1})
 
 
 @dataclasses.dataclass
@@ -78,6 +85,19 @@ def host_meta() -> Path | None:
     if not path.is_absolute():  # Generate.py: relative to the player files folder
         path = Path(generator.player_files_path.resolve()) / path
     return path if path.is_file() else None
+
+
+def meta_plan(entries: list[Entry]) -> tuple[Entry | None, Path | None, str | None]:
+    """Which meta file Generate applies: (the picked meta YAML, host.yaml's meta file, error). host.yaml's is None
+    when it's the picked file itself; with both set, the picked one replaces it."""
+    metas = [entry for entry in entries if entry.meta is not None]
+    if len(metas) > 1:
+        return None, None, f"Only one meta file allowed: {', '.join(entry.path.name for entry in metas)}"
+    picked = metas[0] if metas else None
+    host = host_meta()
+    if picked and host and host.resolve() == picked.path.resolve():
+        host = None
+    return picked, host, None
 
 
 def check_yaml(path: Path, games: typing.Collection[str]) -> Entry:
@@ -124,6 +144,7 @@ class GenerateModal(ModalScreen[None]):
     BINDINGS = [Binding("escape", "close", "Close")]
 
     def __init__(self, files: list[Path], meta: Path | None = None) -> None:
+        """`meta`: the meta file to apply (meta_plan: picked, or host.yaml's), copied in as meta.yaml."""
         super().__init__()
         self.files = files
         self.meta = meta
@@ -151,8 +172,6 @@ class GenerateModal(ModalScreen[None]):
         meta = "meta.yaml"  # relative to the copies; a missing file means no meta
         if self.meta:
             shutil.copy(self.meta, os.path.join(self.folder, meta))
-        elif host := host_meta():  # what Generate.py would pick up from the player files folder on its own
-            meta = str(host)
         env = {**aplite.child_env(), "PYTHONUNBUFFERED": "1", prompts.RELAY_ENV: "1"}
         self.proc = subprocess.Popen(
             [sys.executable, "-m", "aplite.script", Utils.local_path("Generate.py"),
@@ -186,8 +205,7 @@ class GenerateModal(ModalScreen[None]):
     def ask(self, request: str) -> None:
         """A file prompt from the child: show the picker, send back the path (empty line: cancelled)."""
         title, folder, suffixes, suggest = prompts.relay_request(request)
-        start = os.path.dirname(suggest) if suggest else None
-        picker = FilePicker(title, suffixes, "prompt_dir", os.path.expanduser("~"), folders=folder, start=start)
+        picker = prompt_picker(title, folder, suffixes, suggest)
 
         def answer(path: Path | None) -> None:
             try:
@@ -351,8 +369,7 @@ class GenerateScreen(Screen):
         self.update_meta()
 
     def check_names(self) -> None:
-        names = [name.casefold() for entry in self.entries for name, _ in entry.players]
-        for name in sorted({n for n in names if names.count(n) > 1}):
+        for name in duplicate_names(name for entry in self.entries for name, _ in entry.players):
             self.log_line(f"Slot name {name!r} is used more than once; Generate will refuse that.", "yellow")
 
     def action_remove(self) -> None:
@@ -370,14 +387,13 @@ class GenerateScreen(Screen):
     def update_meta(self) -> None:
         """One line under the list: the meta file Generate will apply (picked, or host.yaml's), if any."""
         label = self.query_one("#meta", Label)
-        metas = [entry for entry in self.entries if entry.meta is not None]
-        host = host_meta()
-        if len(metas) > 1:
+        picked, host, error = meta_plan(self.entries)
+        if error:
             text = Text("Only one meta file allowed", "red")
-        elif metas:
-            text = Text(f"Meta: {metas[0].path.name}: {metas[0].meta}", "yellow")
-            if host and host.resolve() != metas[0].path.resolve():
-                text = Text(f"Meta: {metas[0].path.name}, replaces host.yaml's {host.name}: {metas[0].meta}", "yellow")
+        elif picked and host:
+            text = Text(f"Meta: {picked.path.name}, replaces host.yaml's {host.name}: {picked.meta}", "yellow")
+        elif picked:
+            text = Text(f"Meta: {picked.path.name}: {picked.meta}", "yellow")
         elif host:
             text = Text(f"Meta: {host.name} (from host.yaml): {check_yaml(host, self.games).meta}", "yellow")
         else:
@@ -397,7 +413,6 @@ class GenerateScreen(Screen):
 
     def action_generate(self) -> None:
         players = [entry for entry in self.entries if entry.meta is None]
-        metas = [entry for entry in self.entries if entry.meta is not None]
         if not players:
             self.log_line("Add at least one player YAML first.", "yellow")
             return
@@ -405,15 +420,15 @@ class GenerateScreen(Screen):
         if bad:
             self.log_line(f"Fix or remove first: {', '.join(bad)}", "red")
             return
-        if len(metas) > 1:
-            self.log_line(f"Only one meta file allowed: {', '.join(entry.path.name for entry in metas)}", "red")
+        picked, host, error = meta_plan(self.entries)
+        if error:
+            self.log_line(error, "red")
             return
-        host = host_meta()
-        if metas and host and host.resolve() != metas[0].path.resolve():
-            self.log_line(f"{metas[0].path.name} replaces the host.yaml meta file {host}", "yellow")
-        elif host and not metas:
+        if picked and host:
+            self.log_line(f"{picked.path.name} replaces the host.yaml meta file {host}", "yellow")
+        elif host:
             self.log_line(f"Using the host.yaml meta file {host}", "yellow")
-        self.app.push_screen(GenerateModal([entry.path for entry in players], metas[0].path if metas else None))
+        self.app.push_screen(GenerateModal([entry.path for entry in players], picked.path if picked else host))
 
     def action_toggle_all(self) -> None:
         self.query_one(FilteredTree).toggle_all()

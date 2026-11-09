@@ -7,7 +7,7 @@ set -eu
 REPO=$(cd "$(dirname "$0")/.." && pwd)
 CYTHON=cython==3.2.4  # same as requirements.txt
 CYMEM=cymem==2.0.13
-ZIG=ziglang==0.17.1
+. "$REPO/aplite/build_pins.sh"  # ZIG
 out=$1 include=$2 target=${3:-}
 shift 2
 [ $# -gt 0 ] && shift

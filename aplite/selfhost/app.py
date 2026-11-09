@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import datetime
 import os
-import threading
 import typing
 from pathlib import Path
 
@@ -21,7 +20,7 @@ from textual.widgets import Button, Footer, Input, Label, OptionList, RichLog, S
 from textual.widgets.option_list import Option as ListOption
 
 import Utils
-from aplite import colors, glyphs, selfhost
+from aplite import colors, glyphs, nav, selfhost
 from aplite.master_detail import MasterDetailScreen, Rows, TextScroll, detail_pane, heading
 from aplite.nav import AppliteApp
 
@@ -153,7 +152,7 @@ class ServerSettingsScreen(MasterDetailScreen, ModalScreen):
 
 class GamesList(OptionList):
     """A click only highlights a game; Enter (OptionSelected) shows it."""
-    async def _on_click(self, event) -> None:
+    async def _on_click(self, event) -> None:  # Textual's private click handler: re-check on Textual bumps
         option = event.style.meta.get("option")
         if option is not None and not self.get_option_at_index(option).disabled:
             self.highlighted = option
@@ -221,7 +220,7 @@ class GamesScreen(ModalScreen[typing.Optional[str]]):
         self.running = running
         self.config = selfhost.load_config()
         self.games: list[selfhost.Info] = []
-        self.armed: str | None = None  # room id a first Delete press armed
+        self.confirm_delete = nav.Confirm()
 
     def compose(self) -> ComposeResult:
         with Vertical(id="games-box"):
@@ -268,7 +267,7 @@ class GamesScreen(ModalScreen[typing.Optional[str]]):
         return next((info for info in self.games if option and info["room"] == option.id), None)
 
     def on_option_list_option_highlighted(self, event: OptionList.OptionHighlighted) -> None:
-        self.armed = None
+        self.confirm_delete.reset()
         self.show_detail()
 
     def show_detail(self) -> None:
@@ -333,12 +332,9 @@ class GamesScreen(ModalScreen[typing.Optional[str]]):
         if info["room"] in selfhost.active():
             self.notify("Deactivate it first.", severity="warning")
             return
-        if self.armed != info["room"]:
-            self.armed = info["room"]
-            self.notify(f"Delete {info['name']} and its progress for good? Press Delete again to confirm.",
-                        severity="warning", timeout=6)
+        if not self.confirm_delete(self, info["room"], f"Delete {info['name']} and its progress for good? Press Delete "
+                                                       f"again to confirm."):
             return
-        self.armed = None
         selfhost.delete_game(info)
         self.notify(f"Deleted {info['name']}.")
         self.fill()
@@ -373,6 +369,9 @@ class SelfHostScreen(Screen):
         self.initial_load = load
         self.busy = ""  # what's running in the background (start/stop/load), shown instead of the server state
         self.status: dict[str, typing.Any] | None = None
+        """The server process's status file (it exists: starting or serving); None when stopped."""
+        self.serving = False
+        """The server answers (status "serving"): rooms can be opened and woken."""
         self.active: list[str] = []  # active room ids, as the tabs show them
         self.selected: str | None = None  # room id of the shown game
         self.syncing_tabs = False
@@ -414,7 +413,7 @@ class SelfHostScreen(Screen):
     def refresh_state(self) -> None:
         self.status = selfhost.server_status()
         config = selfhost.load_config()
-        running = bool(self.status and self.status.get("serving"))
+        self.serving = bool(self.status and self.status.get("serving"))
         self.refresh_tabs()
         self.info = selfhost.game(self.selected) if self.selected else None
         server = self.query_one("#server", Static)
@@ -424,7 +423,7 @@ class SelfHostScreen(Screen):
             button.disabled = bool(self.busy)
         if self.busy:
             server.update(Text(self.busy, style="yellow"))
-        elif running:
+        elif self.serving:
             url = selfhost.base_url(config, self.status)
             server.update(Text.assemble(
                 (f"{glyphs.symbol('on')} Running ", colors.style("connected") + Style(bold=True)), (url, f"underline link {url}"),
@@ -434,14 +433,14 @@ class SelfHostScreen(Screen):
             server.update(Text("Starting…", style="yellow"))
         else:
             server.update(Text.assemble((f"{glyphs.symbol('off')} Stopped", "bold"), ("  Ctrl+R starts it.", "dim")))
-        self.query_one("#room", Static).update(self.room_text(config, running))
+        self.query_one("#room", Static).update(self.room_text(config, self.serving))
         self.query_one("#room-bar").display = self.info is not None
         if self.info:
             self.query_one("#room-loaded", Label).update(Text(f"loaded {self.info['loaded']}", style="dim"))
         # without tabs (one game) the heading names it
         self.query_one("#room-heading", Label).update(f"Room: {self.info['name']}" if self.info else "Room")
-        self.query_one("#open", Button).disabled = bool(self.busy) or not (running and self.info)
-        self.query_one("#wake", Button).disabled = bool(self.busy) or not (running and self.info)
+        self.query_one("#open", Button).disabled = bool(self.busy) or not (self.serving and self.info)
+        self.query_one("#wake", Button).disabled = bool(self.busy) or not (self.serving and self.info)
         self.tail_log()
 
     def refresh_tabs(self) -> None:
@@ -565,7 +564,7 @@ class SelfHostScreen(Screen):
             except Exception as e:
                 message, error = str(e), True
             self.app.call_from_thread(self.done, message, error)
-        threading.Thread(target=run, daemon=True).start()
+        self.run_worker(run, thread=True)
 
     def done(self, message: str | None, error: bool) -> None:
         self.busy = ""
@@ -621,16 +620,15 @@ class SelfHostScreen(Screen):
         self.app.push_screen(ServerSettingsScreen(saved))
 
     def action_open_room(self) -> None:
-        if not (self.info and self.status):
+        if not (self.info and self.serving):
             return
-        from aplite.desktop import open_path
+        from aplite.desktop import open_link
         # the owner link: the host's browser gets the room page with its console
         url = selfhost.owner_link(self.info, selfhost.base_url(selfhost.load_config(), self.status))
-        if not open_path(url):
-            self.notify(f"No browser opener found; open {url}", timeout=10)
+        open_link(self, url)
 
     def action_wake(self) -> None:
-        if self.info and self.status:
+        if self.info and self.serving:
             selfhost.wake(self.info)
             self.refresh_state()
 

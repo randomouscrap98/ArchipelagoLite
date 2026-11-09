@@ -17,7 +17,7 @@ from textual.widgets import Button, Footer, Input, OptionList, Static
 from textual.widgets.option_list import Option
 
 import Utils
-from aplite import datadir, glyphs, prefs, write_atomic
+from aplite import datadir, glyphs, write_atomic
 from aplite.combo import FilterInput, first_enabled, keep_scroll
 from aplite.version import version
 from aplite.nav import AppliteApp
@@ -120,6 +120,8 @@ class LauncherApp(AppliteApp):
         self.source = components
         self.loading = callable(components)
         self.components: list[Component | Cached] = load_cache() if self.loading else []  # Cached while loading
+        self.listed: list[Component | Cached | None] = []
+        """The component on each list row (None: group headings), in list order."""
         self.status: str | None = "Loading worlds…"  # the line above the list; None: it shows the entry count
         self.sub_title = subtitle
         self.favorites = load_favorites()
@@ -176,9 +178,8 @@ class LauncherApp(AppliteApp):
         pending, self.launch_when_loaded = self.launch_when_loaded, False
         if isinstance(pending, str):
             options = self.query_one(OptionList)
-            try:
-                index = options.get_option_index(pending)
-            except Exception:  # OptionDoesNotExist: gone since the cache was written
+            index = self.option_index(pending)
+            if index is None:  # gone since the cache was written
                 self.notify(f"{pending} is no longer available", severity="error")
                 return
             if options.get_option_at_index(index).disabled:
@@ -194,7 +195,7 @@ class LauncherApp(AppliteApp):
 
     def poll_spares(self) -> None:
         from aplite import background
-        if background.SUPPORTED and prefs.get(background.PREF):
+        if background.SUPPORTED and background.spare_count():
             self.run_worker(self.read_spares, thread=True, exclusive=True, group="spares")
         elif self.spares:
             self.spares = ""
@@ -241,20 +242,29 @@ class LauncherApp(AppliteApp):
         self.counts = f"{len(matches)} of {len(self.components)}" if search else str(len(self.components))
         self.update_status()
 
-        highlighted = options.highlighted_option.id if options.highlighted_option else None
+        highlighted = self.listed[options.highlighted] if options.highlighted is not None else None
+        highlighted = highlighted.display_name if highlighted else None
         if keep_position:
             keep_scroll(options)
         options.clear_options()
+        self.listed = []
         for label, members in groups:
             if not members:
                 continue
             options.add_option(Option(Text(label, style="bold"), disabled=True))
-            for component in members:
-                options.add_option(Option(self.render_component(component), id=component.display_name,
-                                          disabled=not can_run(component)))
-        ids = [option.id for option in options.options if not option.disabled]
-        if ids:
-            options.highlighted = options.get_option_index(highlighted if highlighted in ids else ids[0])
+            self.listed.append(None)
+            for component in members:  # no option ids: display names aren't always unique
+                options.add_option(Option(self.render_component(component), disabled=not can_run(component)))
+                self.listed.append(component)
+        index = self.option_index(highlighted) if highlighted else None
+        if index is None or options.get_option_at_index(index).disabled:
+            index = first_enabled(options)
+        if index is not None:
+            options.highlighted = index
+
+    def option_index(self, name: str) -> int | None:
+        """List index of the first entry for the component called `name`."""
+        return next((i for i, c in enumerate(self.listed) if c and c.display_name == name), None)
 
     def render_component(self, component: Component | Cached) -> Padding:
         if can_run(component):
@@ -269,9 +279,10 @@ class LauncherApp(AppliteApp):
         return Padding(row, (0, 0, 0, 2))
 
     def selected(self) -> Component | Cached | None:
-        option = self.query_one(OptionList).highlighted_option
+        options = self.query_one(OptionList)
+        option = options.highlighted_option
         if option and not option.disabled:
-            return next(c for c in self.components if c.display_name == option.id)
+            return self.listed[options.highlighted]
         return None
 
     def on_option_list_option_highlighted(self, event: OptionList.OptionHighlighted) -> None:
