@@ -6,7 +6,9 @@ process (it refuses to start with worlds loaded); its log and progress show in a
 from __future__ import annotations
 
 import dataclasses
+import io
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -15,6 +17,8 @@ import threading
 import typing
 from pathlib import Path
 
+from rich.console import Console
+from rich.table import Table
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -39,6 +43,9 @@ STAGES = ("Generating for", "Creating MultiWorld.", "Creating Items.", "Calculat
           "Beginning output", "Calculating playthrough.", "Creating final archive", "Done.")
 """Log lines (Generate.py / Main.py) that mark progress, in order; the bar moves to the last one seen."""
 ARCHIVE = "Creating final archive at "
+GAME_ROW = re.compile(r"^(?:\[[^]]*\] )? (?P<game>.+?)\s*: v(?P<version>\S+)\s*\| Items:\s*(?P<items>\d+) \| "
+                      r"Locations:\s*(?P<locations>\d+)\s*$")
+"""Main.py's per-game summary line; padded to the longest installed game name, so it's shown as one table."""
 LIST_GAMES = ("import json; from aplite import bytecode_cache; bytecode_cache.install(); "
               "from worlds.AutoWorld import AutoWorldRegister; "
               "print(json.dumps(sorted(AutoWorldRegister.world_types)))")
@@ -155,7 +162,7 @@ class GenerateModal(ModalScreen[None]):
     ProgressBar { padding: 0 1; }
     #buttons { height: auto; align-horizontal: right; }
     """
-    BINDINGS = [Binding("escape", "close", "Close")]
+    BINDINGS = [Binding("escape", "close", "Close"), Binding("ctrl+c", "copy_log", "Copy log")]
 
     def __init__(self, files: list[Path], meta: Path | None = None) -> None:
         """`meta`: the meta file to apply (meta_plan: picked, or host.yaml's), copied in as meta.yaml."""
@@ -165,6 +172,8 @@ class GenerateModal(ModalScreen[None]):
         self.proc: subprocess.Popen | None = None
         self.folder = ""  # copies of the YAMLs, while Generate runs
         self.stage = 0
+        self.game_rows: list[tuple[str, ...]] = []
+        self.log_text: list[str] = []  # the log as plain text, for Copy log
         self.archive: str | None = None
         self.cancelled = False
 
@@ -172,8 +181,9 @@ class GenerateModal(ModalScreen[None]):
         with Vertical(id="box"):
             yield Label("Starting Generate…", id="status")
             yield ProgressBar(total=len(STAGES), show_eta=False)
-            yield RichLog(id="gen-log", wrap=True, markup=False)
+            yield RichLog(id="gen-log", wrap=True, markup=False, min_width=0)  # wrap at its width, not 78
             with Horizontal(id="buttons"):
+                yield Button("Copy log", id="copy")
                 yield Button("Cancel", id="cancel", variant="error")
                 yield Button("Upload to Archipelago", id="upload", variant="primary")
                 yield Button("Host here", id="selfhost")
@@ -206,7 +216,11 @@ class GenerateModal(ModalScreen[None]):
         self.app.call_from_thread(self.finished, self.proc.wait())
 
     def log_line(self, line: str) -> None:
-        self.query_one(RichLog).write(line)
+        if row := GAME_ROW.match(line):
+            self.game_rows.append(row.group("game", "version", "items", "locations"))
+            return
+        self.flush_games()
+        self.write(line)
         for i, mark in enumerate(STAGES[self.stage:], self.stage):
             if mark in line:
                 self.stage = i + 1
@@ -215,6 +229,37 @@ class GenerateModal(ModalScreen[None]):
                 break
         if ARCHIVE in line:
             self.archive = line.split(ARCHIVE, 1)[1].strip()
+
+    def flush_games(self) -> None:
+        """The buffered summary lines as a table fit to the log's width (long game names wrap)."""
+        if not self.game_rows:
+            return
+        table = Table(box=None, padding=(0, 1), header_style="bold")
+        table.add_column("Game", min_width=10)
+        table.add_column("Version", overflow="fold")
+        table.add_column("Items", justify="right", no_wrap=True)
+        table.add_column("Locations", justify="right", no_wrap=True)
+        for row in self.game_rows:
+            table.add_row(*row)
+        self.game_rows = []
+        self.write(table)
+
+    def write(self, content: str | Text | Table) -> None:
+        self.query_one(RichLog).write(content)
+        if isinstance(content, Table):
+            console = Console(file=io.StringIO(), width=120, color_system=None)
+            console.print(content)
+            self.log_text.extend(line.rstrip() for line in console.file.getvalue().splitlines())
+        else:
+            self.log_text.append(str(content))
+
+    def action_copy_log(self) -> None:
+        """Copies through the terminal (OSC 52): Windows Terminal, kitty, WezTerm, iTerm2; not GNOME Terminal."""
+        self.app.copy_to_clipboard("\n".join(self.log_text) + "\n")
+        status = self.query_one("#status", Label)
+        shown = status.content
+        status.update("Copied the log to the clipboard")
+        self.set_timer(2, lambda: status.update(shown) if status.content == "Copied the log to the clipboard" else None)
 
     def ask(self, request: str) -> None:
         """A file prompt from the child: show the picker, send back the path (empty line: cancelled)."""
@@ -230,19 +275,19 @@ class GenerateModal(ModalScreen[None]):
         self.app.push_screen(picker, answer)
 
     def finished(self, status: int) -> None:
+        self.flush_games()
         shutil.rmtree(self.folder, ignore_errors=True)
-        log = self.query_one(RichLog)
         if status == 0 and self.archive:
             self.query_one(ProgressBar).progress = len(STAGES)
             self.query_one("#status", Label).update("Done")
-            log.write(Text(f"Generated: {self.archive}", style="bold green"))
+            self.write(Text(f"Generated: {self.archive}", style="bold green"))
             self.query_one("#upload", Button).display = True
             self.query_one("#selfhost", Button).display = True
         elif self.cancelled:
             self.query_one("#status", Label).update("Cancelled")
         else:
             self.query_one("#status", Label).update(f"Failed (exit {status})")
-            log.write(Text("Generation failed; see the log above.", style="bold red"))
+            self.write(Text("Generation failed; see the log above.", style="bold red"))
         self.proc = None
         self.query_one("#cancel", Button).disabled = True
         close = self.query_one("#close", Button)
@@ -252,7 +297,9 @@ class GenerateModal(ModalScreen[None]):
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         event.stop()
-        if event.button.id == "cancel":
+        if event.button.id == "copy":
+            self.action_copy_log()
+        elif event.button.id == "cancel":
             self.stop()
         elif event.button.id == "upload":
             from aplite.webhost import UploadModal
