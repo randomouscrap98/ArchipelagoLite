@@ -71,6 +71,16 @@ def pascal_to_space(s):
               "        await ctx.ui_task \n"
               "    else:\n"
               "        await ctx.exit_event.wait()\n"),
+    Patch("tracker/TrackerClient.py", "get_logical_path refuses without the kivy UI (\"No UI, i'm not converting this "
+                                      "back to prints\"), though everything after the check prints through "
+                                      "ctx.print_json, which aplite's client tab shows; the map highlight it also sets "
+                                      "is unused without the UI",
+          old="""\
+    if not ctx.ui:
+        logger.error("No UI, i'm not converting this back to prints, sorry")
+        return
+""",
+          new=""),
     Patch("osu/Client.py", "game_watcher lets a failed osu! API request (no network, DNS) end the task, so auto-checks "
                            "stop and _main's `await progression_watcher` re-raises it on exit, crashing the app; log "
                            "it and retry on the next poll",
