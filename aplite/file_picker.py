@@ -19,6 +19,7 @@ from textual.reactive import reactive
 from textual.screen import Screen
 from textual.widgets import DirectoryTree, Footer, Input, Static
 
+from rich.style import Style
 from rich.text import Text
 
 import Utils
@@ -97,13 +98,11 @@ class FilteredTree(DirectoryTree):
             columns.pop(0)
             extra = "  ".join(columns)
         if columns:
-            label.append(" " * (room - len(extra) - 1) + extra + " ", style="dim")
+            label.append(" " * (room - len(extra) - 1), style)  # style: the cursor's, on its row
+            label.append(extra + " ", style + Style(dim=True))
         elif room > 0:
-            label.append(" " * room)
+            label.append(" " * room, style)
         return label
-
-    def on_resize(self) -> None:
-        self._invalidate()  # private Tree method: labels depend on the width
 
     def _directory_content(self, location: Path, worker) -> typing.Iterator[Path]:
         # private DirectoryTree method (no public hook): adds ".." to the root folder; sorting puts it first
