@@ -18,9 +18,9 @@ everything: your YAMLs, your apworlds and your settings. You can keep using both
 ### Windows
 
 1. Download the Windows zip.
-2. Extract it into your existing Archipelago folder, so `aplite.exe` ends up next to `ArchipelagoLauncher.exe`. If
-   you used the official installer, that's usually `C:\ProgramData\Archipelago`. Don't have Archipelago? Extract it
-   to any folder you like.
+2. Right-click it, choose **Extract All**, and change the destination to your existing Archipelago folder, so
+   `aplite.exe` ends up next to `ArchipelagoLauncher.exe`. If you used the official installer, that's usually
+   `C:\ProgramData\Archipelago`. Don't have Archipelago? Keep the suggested folder, or pick any folder you like.
 3. Double-click `aplite.exe`.
 
 It opens in Windows Terminal if you have it, which looks best. If your antivirus blocks `aplite.exe`, use
@@ -38,6 +38,11 @@ It opens in Windows Terminal if you have it, which looks best. If your antivirus
 
 Download the AppImage, make it executable, and run it. It uses `~/.local/share/Archipelago`, the same folder as the
 official Archipelago AppImage, so there's nothing to set up.
+
+### Updating
+
+Extract the new download over your current one, into the same folder (for the AppImage, just replace the file).
+Your files are kept.
 
 ### Moving over from an older Lite
 

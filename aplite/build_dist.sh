@@ -211,7 +211,9 @@ printf '1 ICON "%s"\n' "$REPO/data/icon.ico" > "$BUILD/aplite.rc"
     -o "$WINDIR/aplite.exe" "$REPO/aplite/launcher_win.c" aplite.rc)  # zig's rc failed (FileSystemFailure) when not run from the .rc's folder
 awk '{ printf "%s\r\n", $0 }' "$REPO/aplite/aplite_fallback.cmd" > "$WINDIR/aplite_fallback.cmd"
 rm -f "$DIST/${name}_windows-x86_64.zip"
-host_python - "$BUILD/windows" "$DIST/${name}_windows-x86_64.zip" <<'EOF'
+# flat (no top folder): extracting into an Archipelago folder puts aplite.exe next to its launcher, sharing its data;
+# Windows' Extract All still makes a folder of its own by default
+host_python - "$WINDIR" "$DIST/${name}_windows-x86_64.zip" <<'EOF'
 import os, sys, zipfile
 root, out = sys.argv[1:]
 with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
