@@ -87,6 +87,19 @@ def host_meta() -> Path | None:
     return path if path.is_file() else None
 
 
+def player_files() -> tuple[Path, list[Path]]:
+    """host.yaml's player files folder and the files Generate.py reads from it: any name (not everyone uses .yaml)
+    but dotfiles, .ini and the meta/weights files, no subfolders."""
+    import settings
+    generator = settings.get_settings().generator
+    folder = Path(generator.player_files_path.resolve())
+    skip = {(folder / name).resolve() for name in (generator.meta_file_path, generator.weights_file_path)}
+    if not folder.is_dir():
+        return folder, []
+    return folder, sorted(f for f in folder.iterdir() if f.is_file() and not f.name.startswith(".")
+                          and not f.name.lower().endswith(".ini") and f.resolve() not in skip)
+
+
 def meta_plan(entries: list[Entry]) -> tuple[Entry | None, Path | None, str | None]:
     """Which meta file Generate applies: (the picked meta YAML, host.yaml's meta file, error). host.yaml's is None
     when it's the picked file itself; with both set, the picked one replaces it."""
@@ -265,7 +278,7 @@ class GenerateModal(ModalScreen[None]):
 
 class GenerateScreen(Screen):
     BINDINGS = [Binding("ctrl+t", "toggle_all", "Show all files"), Binding("ctrl+g", "generate", "Generate"),
-                Binding("ctrl+r", "recheck", "Recheck"),
+                Binding("ctrl+r", "recheck", "Recheck"), Binding("ctrl+o", "add_players", "Add Players folder"),
                 Binding("delete", "remove", "Remove", show=False)]
 
     def __init__(self) -> None:
@@ -311,16 +324,36 @@ class GenerateScreen(Screen):
             self.log_line(f"Not found: {event.path}", "red")
 
     def add(self, path: Path) -> None:
-        if any(entry.path == path for entry in self.entries):
+        if self.listed(path):
             self.log_line(f"{path.name} is already in the list.", "yellow")
             return
         prefs.put(PREF_KEY, str(path.parent))
+        self.append(path)
+        self.check_names()
+        self.update_meta()
+
+    def action_add_players(self) -> None:
+        """Every file Generate (old) would read from host.yaml's player files folder that isn't listed yet."""
+        folder, files = player_files()
+        if not folder.is_dir():
+            self.log_line(f"No player files folder: {folder}", "red")
+            return
+        new = [path for path in files if not self.listed(path)]
+        for path in new:
+            self.append(path)
+        skipped = len(files) - len(new)
+        self.log_line(f"Added {len(new)} from {folder.name}" + (f" ({skipped} already listed)." if skipped else "."))
+        self.check_names()
+        self.update_meta()
+
+    def listed(self, path: Path) -> bool:
+        return any(entry.path.resolve() == path.resolve() for entry in self.entries)
+
+    def append(self, path: Path) -> None:
         entry = check_yaml(path, self.games)
         self.entries.append(entry)
         self.query_one("#yamls", OptionList).add_option(ListOption(entry.label()))
         self.report(entry, "Added")
-        self.check_names()
-        self.update_meta()
 
     def report(self, entry: Entry, verb: str) -> None:
         if entry.problems:
