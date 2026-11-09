@@ -223,6 +223,7 @@ def run(component, args: tuple[str, ...], come_back: bool) -> None:
     def wants_launcher() -> bool:
         return nav.next_step == "launcher" or (come_back and nav.next_step != "quit")
 
+    crashed = False
     try:
         components.run(component, *args)
     except SystemExit as e:
@@ -230,13 +231,12 @@ def run(component, args: tuple[str, ...], come_back: bool) -> None:
             sys.exit(0)
         if not wants_launcher():
             raise
+        crashed = e.code not in (None, 0)  # keep its error on screen
     except Exception:
         if not wants_launcher():
             raise
         report_crash(component)
         crashed = True
-    else:
-        crashed = False
     if not wants_launcher():
         return
     if crashed or (nav.next_step is None and components.pauses_after(component)):
