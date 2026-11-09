@@ -37,6 +37,8 @@ class Override:
     """In the launcher, a screen (e.g. a FilePicker) shown first; its result goes to `picked`."""
     picked: typing.Callable[[Component, typing.Any], tuple[Component, tuple[str, ...]] | str] | None = None
     """Turns the picker's result into (component to run, args), or an error message to show."""
+    screen: typing.Callable[[], Screen] | None = None
+    """In the launcher, shown on top of it instead of running the component (no new process); closing it returns."""
     pauses: bool = False
     """Its terminal output matters: wait for Enter before going back to the launcher."""
     returns: bool | None = None
@@ -131,8 +133,9 @@ def overrides() -> dict[typing.Callable | str, Override]:
     worlds.LauncherComponents loads every world."""
     from worlds.LauncherComponents import export_datapackage, generate_yamls, install_apworld, open_host_yaml, \
         open_patch
-    from aplite import apworld_manager, webhost
+    from aplite import apworld_manager, docs_reader, webhost
     table = {
+        docs_reader.run: Override(screen=docs_reader.DocsScreen),
         webhost.run: Override(picker=webhost.picker, picked=_picked_file),
         open_patch: Override(run=_open_patch, picker=_patch_picker, picked=_patch_picked,
                              returns=True),  # the patch's client comes back to the launcher (user request)
@@ -191,9 +194,10 @@ def rename_old_components(components: list[Component]) -> None:
 
 def extra_components() -> list[Component]:
     """aplite's own launcher entries."""
-    from aplite import generate_gui, web_options, webhost
+    from aplite import docs_reader, generate_gui, web_options, webhost
     from aplite.selfhost import app as selfhost_app
-    return [web_options.component(), generate_gui.component(), webhost.component(), selfhost_app.component()]
+    return [web_options.component(), generate_gui.component(), webhost.component(), selfhost_app.component(),
+            docs_reader.component()]
 
 
 # running

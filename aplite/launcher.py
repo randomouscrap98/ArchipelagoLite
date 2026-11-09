@@ -309,7 +309,9 @@ class LauncherApp(AppliteApp):
         if not component:
             return
         override = override_for(component)
-        if override.picker:  # e.g. Open Patch: pick a file first, then run what it resolves to
+        if override.screen:  # e.g. Documentation: nothing to run, so no fresh launcher afterwards
+            self.push_screen(override.screen())
+        elif override.picker:  # e.g. Open Patch: pick a file first, then run what it resolves to
             self.push_screen(override.picker(), lambda result: self.picked(component, result))
         else:
             self.exit((component, (), returns_to_launcher(component)))
