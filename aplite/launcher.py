@@ -223,7 +223,7 @@ class LauncherApp(AppliteApp):
         else:
             status.append(f"{self.counts} components", style="dim")
         if self.spares:
-            status.append(f" · {self.spares}", style="dim")
+            status.append(f", {self.spares}", style="dim")
         self.query_one("#status", Static).update(status)
 
     def rebuild(self, keep_position: bool = True) -> None:
