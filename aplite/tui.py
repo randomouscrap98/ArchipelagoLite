@@ -20,6 +20,7 @@ from textual.widgets.tabbed_content import ContentTab
 from textual.widgets import Button, DataTable, Footer, Input, OptionList, RichLog, Static, TabbedContent, TabPane
 
 from aplite import colors, glyphs, prompts, tracker
+from aplite.combo import FilterInput
 from aplite.nav import AppliteApp, on_app_thread, terminal_handlers
 
 if typing.TYPE_CHECKING:
@@ -197,6 +198,69 @@ class HintStatusModal(ModalScreen[int | None]):
         self.dismiss(self.statuses[event.option_index])
 
 
+class HintsPane(Vertical):
+    """Hints tab: kvui's "New Hint" box (item names matching anywhere once 3+ characters are typed; Enter sends
+    !hint) above the hints table, which ClientApp fills."""
+    DEFAULT_CSS = """
+    HintsPane { height: 1fr; }
+    HintsPane #hint-input { height: 1; }
+    HintsPane #hint-matches { height: auto; max-height: 8; border: none; }
+    HintsPane DataTable { height: 1fr; }
+    """
+    MIN_CHARS = 3
+    # Esc in an empty input (FilterInput skips it) goes back to the command input
+    BINDINGS = [Binding("escape", "app.focus_command", show=False)]
+
+    def compose(self) -> ComposeResult:
+        yield FilterInput(placeholder="New hint: item name (Up/Down pick a match, Enter sends !hint)",
+                          id="hint-input", classes="tab-search", target="#hint-matches", compact=True)
+        yield OptionList(id="hint-matches")
+        yield DataTable(id="hints", cursor_type="row", zebra_stripes=True)
+
+    def on_mount(self) -> None:
+        self.query_one("#hint-matches").display = False
+
+    @on(Input.Changed, "#hint-input")
+    def refresh_matches(self, event: Input.Changed) -> None:
+        event.stop()
+        query = event.value.strip().casefold()
+        matches = self.query_one("#hint-matches", OptionList)
+        matches.clear_options()
+        matches.display = len(query) >= self.MIN_CHARS
+        if not matches.display:
+            return
+        names = self.app.query_one(CommandInput).suggester.names("item")  # shortest first
+        found = [name for name in names if query in name.casefold()]
+        found.sort(key=lambda name: not name.casefold().startswith(query))
+        options = []
+        for name in found:
+            text = Text(name)
+            start = name.casefold().index(query)
+            text.stylize("bold", start, start + len(query))
+            options.append(Option(text, id=name))
+        matches.add_options(options or [Option(Text("No matching items.", style="dim"), disabled=True)])
+        matches.highlighted = None  # Enter sends what was typed until Up/Down picks a match
+
+    @on(Input.Submitted, "#hint-input")
+    def submitted(self, event: Input.Submitted) -> None:
+        event.stop()
+        matches = self.query_one("#hint-matches", OptionList)
+        index = matches.highlighted if matches.display else None
+        option = matches.get_option_at_index(index) if index is not None else None
+        self.send(option.id if option and not option.disabled else event.value.strip())
+
+    @on(OptionList.OptionSelected, "#hint-matches")
+    def clicked(self, event: OptionList.OptionSelected) -> None:
+        event.stop()
+        self.send(event.option.id)
+
+    def send(self, name: str) -> None:
+        if not name:
+            return
+        self.query_one("#hint-input", Input).value = ""
+        self.app.run_command(f"!hint {name}")
+
+
 class ClientApp(AppliteApp):
     TITLE = "Archipelago"
     CSS = """
@@ -240,7 +304,7 @@ class ClientApp(AppliteApp):
                 with TabPane("Tracker", id="tab-tracker"):
                     yield tracker.TrackerPane(self.ctx)
             with TabPane("Hints", id="tab-hints"):
-                yield DataTable(id="hints", cursor_type="row", zebra_stripes=True)
+                yield HintsPane()
         yield CommandInput(placeholder="Command or chat. /help and !help list commands; Tab completes.",
                            suggester=CommandSuggester(self.ctx))
         yield Footer()
@@ -432,6 +496,9 @@ class ClientApp(AppliteApp):
             ctx.input_requests -= 1
             ctx.input_queue.put_nowait(text)
             return
+        self.run_command(text)
+
+    def run_command(self, text: str) -> None:
         if text.startswith(("/", "!")):
             self.echo(text)
         try:
