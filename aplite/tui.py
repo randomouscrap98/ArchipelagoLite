@@ -7,12 +7,16 @@ import logging
 import sys
 import typing
 
+from rich.segment import Segment
+from rich.style import Style
 from rich.text import Text
 from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
+from textual.selection import Selection as TextSelection
+from textual.strip import Strip
 from textual.suggester import Suggester
 from textual.widgets.input import Selection
 from textual.widgets.option_list import Option
@@ -102,6 +106,34 @@ class LogBuffer(logging.Handler):
 
 
 log_buffer = LogBuffer()
+
+
+class SelectableLog(RichLog):
+    """RichLog with mouse text selection (Ctrl+C copies through the terminal), which Textual only gives Log.
+    Copies the wrapped lines as shown: a long message comes out with line breaks where it wrapped."""
+
+    def get_selection(self, selection: TextSelection) -> tuple[str, str] | None:
+        return selection.extract("\n".join(strip.text.rstrip() for strip in self.lines)), "\n"
+
+    def selection_updated(self, selection: TextSelection | None) -> None:
+        self._line_cache.clear()
+        self.refresh()
+
+    def _render_line(self, y: int, scroll_x: int, width: int) -> Strip:
+        selection = self.text_selection
+        if selection is None or y >= len(self.lines) or (span := selection.get_span(y)) is None:
+            return super()._render_line(y, scroll_x, width).apply_offsets(scroll_x, y)
+        line = self.lines[y]
+        start, end = span
+        length = line.cell_length  # lines aren't padded: a selection can run past a short line's end
+        end = length if end == -1 else min(end, length)
+        start = min(start, end)
+        before, selected, after = line.crop(0, start), line.crop(start, end), line.crop(end, length)
+        # background only: the component style's foreground resolves to its background (letters vanish)
+        highlight = Style(bgcolor=self.screen.get_component_rich_style("screen--selection").bgcolor)
+        selected = Strip(Segment.apply_style(selected, post_style=highlight), selected.cell_length)
+        line = Strip.join([before, selected, after])
+        return line.crop_extend(scroll_x, scroll_x + width, self.rich_style).apply_offsets(scroll_x, y)
 
 
 class CommandSuggester(Suggester):
@@ -294,9 +326,9 @@ class ClientApp(AppliteApp):
             yield Static(id="status")
         with TabbedContent(id="tabs"):
             with TabPane("Archipelago", id="tab-archipelago"):
-                yield RichLog(id="log-archipelago", wrap=True)
+                yield SelectableLog(id="log-archipelago", wrap=True)
             with TabPane("All", id="tab-all"):
-                yield RichLog(id="log-all", wrap=True)
+                yield SelectableLog(id="log-all", wrap=True)
             for title, widget in getattr(self.ctx, "aplite_tabs", list)():  # a client's own tabs (aplite.manual)
                 with TabPane(title, id=f"tab-{title.lower()}"):
                     yield widget
@@ -335,7 +367,7 @@ class ClientApp(AppliteApp):
 
     def logger_tab(self, name: str) -> RichLog:
         if name not in self.logger_tabs:
-            log = RichLog(wrap=True)
+            log = SelectableLog(wrap=True)
             self.logger_tabs[name] = log
             pane_id = f"tab-logger-{len(self.logger_tabs)}"  # logger names aren't valid ids
             self.query_one(TabbedContent).add_pane(TabPane(name, log, id=pane_id), before="tab-hints")
