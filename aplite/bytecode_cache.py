@@ -14,7 +14,6 @@ import importlib.util
 import logging
 import marshal
 import os
-import shutil
 import threading
 import zipimport
 
@@ -65,10 +64,6 @@ def flush() -> None:
 def install() -> None:
     global _cache_file, _version
     _cache_file = Utils.cache_path("aplite", "apworld-code.bin")
-    for old in ("bytecode", "zipcode"):  # former caches: one file per module, then per apworld
-        old = Utils.cache_path("aplite", old)
-        if os.path.isdir(old):
-            shutil.rmtree(old, ignore_errors=True)
     patches = repr([(p.module, p.old, p.new) for p in source_patches.PATCHES]).encode()
     _version = importlib.util.MAGIC_NUMBER + hashlib.sha256(patches).digest()
     original_compile = zipimport._compile_source

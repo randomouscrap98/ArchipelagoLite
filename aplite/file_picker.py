@@ -118,7 +118,14 @@ class FilteredTree(DirectoryTree):
         if not node.is_root:
             self.call_after_refresh(self.reveal, node)
         elif len(node.children) > 1 and node.children[0].data.path.name == "..":
-            self.call_after_refresh(self.move_cursor, node.children[1])  # Enter right away shouldn't go up
+            self.call_after_refresh(self.skip_parent_line, node.children[1])
+
+    def skip_parent_line(self, first) -> None:
+        """A newly shown folder starts below "..", so Enter right away doesn't go up. A reload (Ctrl+T, Ctrl+D) has put
+        the cursor back on its entry by now: leave it there."""
+        cursor = self.cursor_node
+        if cursor is None or cursor.data is None or cursor.data.path.name == "..":
+            self.move_cursor(first)
 
     def on_tree_node_expanded(self, event) -> None:
         if event.node.children and not event.node.is_root:  # expanded again: already filled
@@ -184,7 +191,7 @@ class FilteredTree(DirectoryTree):
 
     def toggle_all(self) -> None:
         self.show_all = not self.show_all
-        self.reload()
+        self.reload_in_place()
 
     def sorted_content(self, content: typing.Iterable[Path]) -> list[Path]:
         """Folders first (".." on top), then by sort_by: name as given, newest or largest first."""
@@ -202,7 +209,18 @@ class FilteredTree(DirectoryTree):
 
     def cycle_sort(self) -> None:
         self.sort_by = SORTS[(SORTS.index(self.sort_by) + 1) % len(SORTS)]
-        self.reload()
+        self.reload_in_place()
+
+    def reload_in_place(self) -> None:
+        """Reload keeping the scroll position (DirectoryTree.reload keeps open folders and the cursor, but scrolls to the
+        top), then bring the cursor into view if its entry moved."""
+        scroll_y = self.scroll_y
+
+        async def reload() -> None:
+            await self.reload()
+            self.scroll_to(y=scroll_y, animate=False, immediate=True)
+            self.scroll_to_line(self.cursor_line, animate=False)
+        self.run_worker(reload(), group="reload", exclusive=True)
 
     def on_directory_tree_directory_selected(self, event: DirectoryTree.DirectorySelected) -> None:
         event.stop()
