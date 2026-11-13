@@ -11,11 +11,13 @@ from rich.text import Text
 from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal
+from textual.containers import Horizontal, Vertical
+from textual.screen import ModalScreen
 from textual.suggester import Suggester
 from textual.widgets.input import Selection
+from textual.widgets.option_list import Option
 from textual.widgets.tabbed_content import ContentTab
-from textual.widgets import Button, DataTable, Footer, Input, RichLog, Static, TabbedContent, TabPane
+from textual.widgets import Button, DataTable, Footer, Input, OptionList, RichLog, Static, TabbedContent, TabPane
 
 from aplite import colors, glyphs, prompts, tracker
 from aplite.nav import AppliteApp, on_app_thread, terminal_handlers
@@ -163,6 +165,38 @@ class CommandInput(Input):
         event.stop()
 
 
+class HintStatusModal(ModalScreen[int | None]):
+    """Pick a hint's priority; the statuses kvui's dropdown offers (the server refuses Found)."""
+    CSS = """
+    HintStatusModal { align: center middle; }
+    HintStatusModal Vertical { width: 30; height: auto; border: thick $primary; background: $surface; }
+    HintStatusModal Static { padding: 0 1; }
+    HintStatusModal OptionList { height: auto; border: none; }
+    """
+    BINDINGS = [Binding("escape", "dismiss", "Close")]
+
+    def __init__(self, current: int) -> None:
+        super().__init__()
+        self.current = current
+
+    def compose(self) -> ComposeResult:
+        from NetUtils import HintStatus
+        names, roles, _ = hint_status_display()
+        self.statuses = [HintStatus.HINT_NO_PRIORITY, HintStatus.HINT_PRIORITY, HintStatus.HINT_AVOID]
+        with Vertical():
+            yield Static("[b]Hint priority[/b]")
+            yield OptionList(*[Option(Text(names[s], style=colors.style(roles[s]))) for s in self.statuses])
+
+    def on_mount(self) -> None:
+        options = self.query_one(OptionList)
+        options.highlighted = self.statuses.index(self.current) if self.current in self.statuses else 0
+        options.focus()
+
+    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+        event.stop()
+        self.dismiss(self.statuses[event.option_index])
+
+
 class ClientApp(AppliteApp):
     TITLE = "Archipelago"
     CSS = """
@@ -185,6 +219,8 @@ class ClientApp(AppliteApp):
         self.command_processor = ctx.command_processor(ctx)
         self.logger_tabs: dict[str, RichLog] = {}
         self._hints_snapshot: list | None = None
+        self._hint_rows: list[tuple[dict, int, bool]] = []
+        """(hint, status, editable) per hints table row; row keys index this."""
 
     def compose(self) -> ComposeResult:
         with Horizontal(id="connect-bar"):
@@ -311,11 +347,13 @@ class ClientApp(AppliteApp):
         table = self.query_one("#hints", DataTable)
         cursor, scroll = table.cursor_row, table.scroll_y
         table.clear()
+        self._hint_rows = []
         for hint in sorted(hints, key=lambda h: order.get(status_of(h), 0), reverse=True):
             status = status_of(hint)
             status_text = Text(names.get(status, "Unknown"),
                                style=colors.style(roles[status]) if status in roles else "red")
-            if status != HintStatus.HINT_FOUND and ctx.slot_concerns_self(hint["receiving_player"]):
+            editable = status != HintStatus.HINT_FOUND and ctx.slot_concerns_self(hint["receiving_player"])
+            if editable:
                 status_text.stylize("underline")
             table.add_row(
                 render({"type": "player_id", "text": hint["receiving_player"]}),
@@ -325,10 +363,26 @@ class ClientApp(AppliteApp):
                 render({"type": "location_id", "text": hint["location"], "player": hint["finding_player"]}),
                 Text(hint["entrance"], style=colors.style("entrance")) if hint["entrance"] else Text("Vanilla"),
                 status_text,
+                key=str(len(self._hint_rows)),
             )
+            self._hint_rows.append((hint, status, editable))
         if table.row_count:
             table.move_cursor(row=min(cursor, table.row_count - 1), animate=False)
             table.scroll_y = scroll
+
+    @on(DataTable.RowSelected, "#hints")
+    def hint_selected(self, event: DataTable.RowSelected) -> None:
+        """Enter on a hint for one of this slot's unfound items picks its priority (kvui's status dropdown)."""
+        hint, status, editable = self._hint_rows[int(event.row_key.value)]
+        if not editable:
+            self.notify("Only hints for your own unfound items can be changed.", severity="warning")
+            return
+
+        def chosen(new_status: int | None) -> None:
+            if new_status is not None and new_status != status:
+                self.ctx.update_hint(hint["location"], hint["finding_player"], new_status)
+
+        self.push_screen(HintStatusModal(status), chosen)
 
     # connect bar (kvui's server bar: Enter or the button connects, the button disconnects)
 
