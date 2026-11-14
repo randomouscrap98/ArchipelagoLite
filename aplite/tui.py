@@ -14,6 +14,7 @@ from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
+from textual.css.query import NoMatches
 from textual.screen import ModalScreen
 from textual.selection import Selection as TextSelection
 from textual.strip import Strip
@@ -348,7 +349,7 @@ class ClientApp(AppliteApp):
         for name, msg in log_buffer.records:
             self.route_log(name, msg)
         log_buffer.sink = self.write_log
-        self.set_interval(STATE_REFRESH, self.refresh_state)
+        self.set_interval(STATE_REFRESH, self.poll_state)
         self.refresh_state()
         self.query_one(CommandInput).focus()
 
@@ -402,6 +403,14 @@ class ClientApp(AppliteApp):
         tabs.active = ids[(ids.index(tabs.active) + step) % len(ids)]
 
     # status bar and hints
+
+    def poll_state(self) -> None:
+        """The STATE_REFRESH timer can still fire while the app closes, after its widgets are removed (they always
+        exist otherwise, so a missing one means closing)."""
+        try:
+            self.refresh_state()
+        except NoMatches:
+            pass
 
     def refresh_state(self) -> None:
         ctx = self.ctx
