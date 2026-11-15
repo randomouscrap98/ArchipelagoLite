@@ -166,10 +166,13 @@ shipped "$APPDIR"
 lib="$APPDIR/python/lib/python$PYVER"
 rm -rf "$APPDIR/python/include" "$APPDIR/python/share" "$lib/idlelib" "$lib/turtledemo" "$lib/ensurepip" \
     "$lib"/config-$PYVER-*
+# no symlinks in the tar.gz: exFAT/FAT drives can't hold them (the extracted python/bin/python3 went missing).
+# The python tree's links are unused aliases; the launcher runs python3, so the real binary takes that name.
+find "$APPDIR/python" -type l -delete
+mv "$APPDIR/python/bin/python$PYVER" "$APPDIR/python/bin/python3"
 cp "$REPO/aplite/dist-launcher.sh" "$APPDIR/aplite"  # also reopens itself in a terminal when double-clicked
 chmod +x "$APPDIR/aplite"
 cp "$REPO/data/icon.png" "$APPDIR/archipelago-lite.png"
-ln -s archipelago-lite.png "$APPDIR/.DirIcon"
 cat > "$APPDIR/archipelago-lite.desktop" <<'EOF'
 [Desktop Entry]
 Type=Application
@@ -186,10 +189,11 @@ if [ "$appimage" = 1 ]; then
     runtime="$REPO/build/appimage-runtime-x86_64"
     [ -f "$runtime" ] || curl -fsSL -o "$runtime" "$RUNTIME_URL"
     ln -s aplite "$APPDIR/AppRun"  # the AppImage's entry point; not in the tar.gz (users wondered what it was)
+    ln -s archipelago-lite.png "$APPDIR/.DirIcon"  # AppImage only, like AppRun: the tar.gz has no symlinks
     "$MKSQUASHFS" "$APPDIR" "$BUILD/app.squashfs" -root-owned -noappend -comp zstd -quiet -no-progress
     cat "$runtime" "$BUILD/app.squashfs" > "$DIST/${name}_x86_64.AppImage"
     chmod +x "$DIST/${name}_x86_64.AppImage"
-    rm "$APPDIR/AppRun"
+    rm "$APPDIR/AppRun" "$APPDIR/.DirIcon"
     echo "  $DIST/${name}_x86_64.AppImage"
 fi
 
