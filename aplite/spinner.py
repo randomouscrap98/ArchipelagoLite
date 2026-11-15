@@ -1,4 +1,4 @@
-"""A small spinner for waits: - + * + in shifting rainbow colors (characters every console font has). Now and then
+"""A small spinner for waits: - + o * o + in shifting rainbow colors (characters every console font has). Now and then
 (ALT_CHANCE) a spinner cycles through a pride flag's colors instead."""
 from __future__ import annotations
 
@@ -9,9 +9,9 @@ from rich.text import Text
 from textual.color import Color
 from textual.widget import Widget
 
-FRAMES = "-+*+"
+FRAMES = "-+o*o+"
 INTERVAL = 0.1
-ALT_CHANCE = 0.05
+ALT_CHANCE = 1  # TEMP: testing, was 0.05
 LIGHT, DARK = "#D0D0D0", "#5C5C5C"  # the flags' white and black, so no frame vanishes on a light or dark theme
 ALT_PALETTES = {
     "trans": ("#5BCEFA", "#F5A9B8", LIGHT),
