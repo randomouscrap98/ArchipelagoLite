@@ -64,6 +64,8 @@ static void set_env(void) {
     SetEnvironmentVariableW(L"SKIP_REQUIREMENTS_UPDATE", L"1");
     SetEnvironmentVariableW(L"APLITE_DATA_DIR", here); /* user data in this folder (aplite/datadir.py) */
     SetEnvironmentVariableW(L"APLITE_RELAUNCH", L"75");
+    /* optimized, like official builds (developer-mode errors stay warnings); APLITE_DEBUG keeps developer mode */
+    if (!GetEnvironmentVariableW(L"APLITE_DEBUG", NULL, 0)) SetEnvironmentVariableW(L"PYTHONOPTIMIZE", L"1");
     if (GetEnvironmentVariableW(L"PYTHONPATH", old, 32000) >= 32000) old[0] = 0;
     _snwprintf(value, 32767, old[0] ? L"%lsapp;%ls" : L"%lsapp%ls", here, old);
     value[32767] = 0;

@@ -10,6 +10,8 @@ if not defined APLITE_NO_WT if not defined WT_SESSION (
 )
 set "HERE=%~dp0"
 set SKIP_REQUIREMENTS_UPDATE=1
+rem optimized, like official builds (developer-mode errors stay warnings); APLITE_DEBUG=1 keeps developer mode
+if not defined APLITE_DEBUG set PYTHONOPTIMIZE=1
 rem user data in this folder, as upstream's Windows build keeps it (aplite/datadir.py)
 set "APLITE_DATA_DIR=%HERE%"
 set "PYTHONPATH=%HERE%app;%PYTHONPATH%"

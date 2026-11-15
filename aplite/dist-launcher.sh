@@ -44,6 +44,9 @@ if [ -z "$opened_terminal" ] && [ -z "${APLITE_NO_TERMINAL:-}" ] && [ $# -eq 0 ]
     exit 1
 fi
 
+# optimized, like official builds (cx_Freeze optimize=1): Archipelago's developer-mode errors (failed accessibility
+# checks, deprecated APIs) stay warnings there. APLITE_DEBUG=1 keeps developer mode.
+[ -n "${APLITE_DEBUG:-}" ] || export PYTHONOPTIMIZE=1
 export SKIP_REQUIREMENTS_UPDATE=1
 # tar.gz: user data in this folder, as upstream's tar.gz keeps it (aplite/datadir.py); the AppImage uses the home folder
 [ -z "${APPIMAGE:-}" ] && export APLITE_DATA_DIR="$HERE"

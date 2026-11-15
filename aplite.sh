@@ -52,6 +52,9 @@ if [ "${1:-}" = "--sync" ] || [ "$(cat "$STAMP" 2>/dev/null)" != "$stamp" ]; the
 fi
 
 # dependencies are handled above, so skip ModuleUpdate's slower check
+# optimized, like official builds (cx_Freeze optimize=1): Archipelago's developer-mode errors (failed accessibility
+# checks, deprecated APIs) stay warnings there. APLITE_DEBUG=1 keeps developer mode.
+[ -n "${APLITE_DEBUG:-}" ] || export PYTHONOPTIMIZE=1
 export SKIP_REQUIREMENTS_UPDATE=1
 # PYTHONPATH rather than cd, so relative paths in args (patch files) still work from any folder
 PYTHONPATH="$REPO${PYTHONPATH:+:$PYTHONPATH}" exec "$PY" -m aplite "$@"

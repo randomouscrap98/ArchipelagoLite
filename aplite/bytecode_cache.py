@@ -14,6 +14,7 @@ import importlib.util
 import logging
 import marshal
 import os
+import sys
 import threading
 import zipimport
 
@@ -66,7 +67,8 @@ def install() -> None:
     _cache_file = Utils.cache_path("aplite", "apworld-code.bin")
     client_fixes.load()  # fills source_patches.PATCHES
     patches = repr([(p.module, p.old, p.new) for p in source_patches.PATCHES]).encode()
-    _version = importlib.util.MAGIC_NUMBER + hashlib.sha256(patches).digest()
+    # optimized (-O: asserts and `if __debug__` blocks compiled out) and plain code differ: keyed by the level
+    _version = importlib.util.MAGIC_NUMBER + bytes([sys.flags.optimize]) + hashlib.sha256(patches).digest()
     original_compile = zipimport._compile_source
     original_get_code = zipimport._get_module_code
 
