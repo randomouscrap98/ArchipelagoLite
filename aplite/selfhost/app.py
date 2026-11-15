@@ -171,8 +171,6 @@ class AlreadyLoaded(ModalScreen[bool]):
     AlreadyLoaded { align: center middle; }
     #loaded-box { width: 70; max-width: 90%; height: auto; border: thick $warning; background: $surface;
                   padding: 0 1; }
-    #loaded-buttons { height: auto; align-horizontal: right; margin-top: 1; }
-    #loaded-buttons Button { margin-left: 1; }
     """
     BINDINGS = [Binding("escape", "cancel", "Cancel")]
 
@@ -186,9 +184,9 @@ class AlreadyLoaded(ModalScreen[bool]):
                 (f"{self.info['name']} is already loaded", "bold"), f" (loaded {self.info['loaded'][:16]}).\n\n",
                 "Its room and saved progress are in Games (Ctrl+G). Another copy is a separate room that starts "
                 "from nothing, and players could join the wrong one."))
-            with Horizontal(id="loaded-buttons"):
-                yield Button("Cancel", id="loaded-cancel", variant="primary")
-                yield Button("Load another copy", id="loaded-again", variant="warning")
+            with nav.DialogButtons(id="loaded-buttons"):
+                yield Button("Cancel", id="loaded-cancel")
+                yield Button("Load another copy", id="loaded-again")
 
     def on_mount(self) -> None:
         self.query_one("#loaded-cancel", Button).focus()
@@ -210,8 +208,6 @@ class GamesScreen(ModalScreen[typing.Optional[str]]):
     #games-list { width: 1fr; height: 1fr; text-wrap: nowrap; text-overflow: ellipsis; }
     #games-detail { width: 1fr; height: 1fr; padding: 0 1; border: tall $border-blurred; }  /* like the list */
     #games-detail:focus { border: tall $border; }
-    #games-buttons { height: auto; align-horizontal: right; }
-    #games-buttons Button { margin-left: 1; }
     """
     BINDINGS = [Binding("enter", "show", "Show"), Binding("space", "toggle", "Activate/deactivate"),
                 Binding("delete", "delete", "Delete"), Binding("escape", "close", "Back")]
@@ -229,9 +225,9 @@ class GamesScreen(ModalScreen[typing.Optional[str]]):
                 yield GamesList(id="games-list")
                 with TextScroll(id="games-detail"):
                     yield Static(id="games-text")
-            with Horizontal(id="games-buttons"):
-                yield Button("Show", id="games-show")
+            with nav.ButtonRow(id="games-buttons"):
                 yield Button("Activate", id="games-toggle", variant="primary")
+                yield Button("Show", id="games-show")
                 yield Button("Delete", id="games-delete", variant="error")
                 yield Button("Back", id="games-back")
         yield Footer()
@@ -349,8 +345,6 @@ SCREEN_CSS = """
 #server-row { height: auto; padding: 0 1; }
 #server { width: 1fr; height: auto; }
 #room { padding: 0 1; height: auto; }
-#buttons { height: auto; }
-#buttons Button { margin-right: 1; }
 #room-bar { height: 1; padding: 0 1; }
 #room-bar Button { margin-right: 2; }
 #room-loaded { padding-left: 1; }
@@ -363,9 +357,9 @@ class SelfHostScreen(Screen):
     CSS = SCREEN_CSS
     BINDINGS = [Binding("ctrl+r", "toggle_server", "Start/stop server"), Binding("ctrl+o", "new_game", "New game"),
                 Binding("ctrl+g", "games", "Games"),
-                Binding("ctrl+e", "settings", "Settings"), Binding("ctrl+t", "open_room", "Open room", show=False),
+                Binding("ctrl+e", "settings", "Settings"), Binding("ctrl+t", "open_room", "Open room"),
                 Binding("ctrl+n", "switch_room(1)", "Next room"), Binding("ctrl+b", "switch_room(-1)", "Prev room"),
-                Binding("ctrl+w", "wake", "Wake room", show=False), Binding("escape", "back", "Back", show=False)]
+                Binding("ctrl+w", "wake", "Wake room"), Binding("escape", "back", "Back", show=False)]
 
     def __init__(self, load: str | None = None) -> None:
         super().__init__()
@@ -388,7 +382,7 @@ class SelfHostScreen(Screen):
         with Horizontal(id="server-row"):
             yield Spinner()
             yield Static(id="server")
-        with Horizontal(id="buttons"):
+        with nav.ButtonRow(id="buttons"):
             yield Button("Start server", id="toggle", variant="primary")
             yield Button("New game", id="new")
             yield Button("Games", id="games")
@@ -396,8 +390,8 @@ class SelfHostScreen(Screen):
         yield Label("Room", id="room-heading", classes="heading")
         yield Tabs(id="rooms")
         with Horizontal(id="room-bar"):  # the selected game's own actions
-            yield Button("Open room ^T", id="open", compact=True)
-            yield Button("Wake room ^W", id="wake", compact=True)
+            yield Button("Open room", id="open", compact=True)
+            yield Button("Wake room", id="wake", compact=True)
             yield Label(id="room-loaded")
         yield Static(id="room")
         yield Label("Server console", classes="heading")

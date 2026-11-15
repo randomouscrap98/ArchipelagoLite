@@ -20,12 +20,12 @@ from rich.text import Text
 from textual import on, work
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal, VerticalScroll
+from textual.containers import VerticalScroll
 from textual.screen import Screen
 from textual.widgets import Button, Footer, Static
 
 from aplite import client_fixes
-from aplite.nav import AppliteApp
+from aplite.nav import AppliteApp, ButtonRow
 
 URL = "https://raw.githubusercontent.com/randomouscrap98/ArchipelagoLite/main/aplite/fixes/fixes.py"
 TIMEOUT = 10
@@ -189,9 +189,8 @@ class ClientFixesScreen(Screen[None]):
     restarts the launcher when this closes: clients run in the launcher's process, which loaded the old fixes."""
     CSS = """
     ClientFixesScreen #intro { height: auto; padding: 1 1 0 1; }
-    ClientFixesScreen #buttons { height: auto; padding: 1 1; }
-    ClientFixesScreen #buttons Button { margin-right: 2; }
     ClientFixesScreen VerticalScroll { height: 1fr; border-top: solid $panel; padding: 0 1; }
+    ClientFixesScreen VerticalScroll:focus { border-top: solid $border; }
     ClientFixesScreen #status { height: 1; padding: 0 1; color: $text-muted; }
     """
     BINDINGS = [Binding("ctrl+r", "check", "Check for updates"), Binding("ctrl+u", "install", "Install update"),
@@ -206,11 +205,11 @@ class ClientFixesScreen(Screen[None]):
 
     def compose(self) -> ComposeResult:
         yield Static(Text.assemble((TITLE, "bold"), "\n", (DESCRIPTION, "dim")), id="intro")
-        with Horizontal(id="buttons"):  # the same actions as the footer keys
-            yield Button("Check for updates", id="check", compact=True, variant="primary")
-            yield Button("Install update", id="install", compact=True)
-            yield Button("Remove update", id="remove", compact=True)
-            yield Button("Back", id="close", compact=True)
+        with ButtonRow(id="buttons"):  # the same actions as the footer keys
+            yield Button("Check for updates", id="check", variant="primary")
+            yield Button("Install update", id="install")
+            yield Button("Remove update", id="remove")
+            yield Button("Back", id="close")
         with VerticalScroll():
             yield Static(id="details")
         yield Static(id="status")

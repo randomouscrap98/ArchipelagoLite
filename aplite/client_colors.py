@@ -12,6 +12,7 @@ from textual.screen import ModalScreen, Screen
 from textual.widgets import Button, DataTable, Footer, Input, Static
 
 from aplite import colors
+from aplite.nav import DialogButtons
 
 BACKGROUND = {"dark": "#0C0C0C", "light": "#F7F7F7"}
 """Picker preview backgrounds (Textual's dark / light ANSI palette backgrounds)."""
@@ -243,7 +244,7 @@ class ColorPicker(ModalScreen[bool]):
     ColorPicker HexInput { width: 9; }
     ColorPicker HexInput:focus { background: $block-cursor-background; color: $block-cursor-foreground; }
     ColorPicker Swatches { width: auto; height: auto; margin: 1 0; }
-    ColorPicker #buttons { height: auto; width: auto; }
+    ColorPicker #buttons { width: auto; }
     """
     BINDINGS = [Binding("escape", "cancel", "Cancel")]
 
@@ -263,10 +264,10 @@ class ColorPicker(ModalScreen[bool]):
                     yield HexInput(colors.color(self.role, mode), id=f"input-{mode}", compact=True, max_length=7)
                     yield Static(id=f"sample-{mode}")
             yield Swatches()
-            with Horizontal(id="buttons"):
-                yield Button("Default", id="default", compact=True)
-                yield Button("Cancel", id="cancel", compact=True)
-                yield Button("Save", id="save", compact=True, variant="primary")
+            with DialogButtons(id="buttons"):
+                yield Button("Default", id="default")
+                yield Button("Cancel", id="cancel")
+                yield Button("Save", id="save", variant="primary")
 
     def on_mount(self) -> None:
         self.refresh_samples()

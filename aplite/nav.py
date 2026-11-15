@@ -16,6 +16,7 @@ import typing
 
 from textual.app import App, SystemCommand
 from textual.binding import Binding
+from textual.containers import Horizontal
 from textual.widgets import OptionList
 from textual.theme import BUILTIN_THEMES, Theme
 
@@ -32,6 +33,35 @@ T = typing.TypeVar("T")
 
 CONFIRM_SECONDS = 6
 """How long a "press again to confirm" warning stays armed."""
+
+
+ROW_BUTTONS_COMPACT = False
+"""The one switch for screen rows' button style: compact (1 line) or full-height (3 lines, bordered)."""
+
+
+class ButtonRow(Horizontal):
+    """A screen's row of buttons. The standard (2026-11-15): style from ROW_BUTTONS_COMPACT, left-aligned, the main
+    action first and the only `primary` one, `error` for destructive or cancelling ones, no keys in labels (the
+    footer shows them). Dialogs that ask for a decision use DialogButtons instead."""
+    DEFAULT_CSS = """
+    ButtonRow { height: auto; padding: 1 1; }
+    ButtonRow > Button { margin-right: 2; }
+    """
+
+    def on_mount(self) -> None:
+        from textual.widgets import Button
+        for button in self.query_children(Button):
+            button.compact = ROW_BUTTONS_COMPACT
+        if not ROW_BUTTONS_COMPACT:  # bordered buttons bring their own space above and below
+            self.styles.padding = (0, 1)
+
+
+class DialogButtons(Horizontal):
+    """A dialog's buttons: full-height buttons, right-aligned, the confirming action last (see ButtonRow)."""
+    DEFAULT_CSS = """
+    DialogButtons { height: auto; align-horizontal: right; margin-top: 1; }
+    DialogButtons > Button { margin-left: 2; }
+    """
 
 
 class Confirm:

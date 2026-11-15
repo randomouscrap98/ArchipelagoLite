@@ -20,7 +20,7 @@ import Utils
 from aplite import datadir, glyphs, write_atomic
 from aplite.combo import FilterInput, first_enabled, keep_scroll
 from aplite.version import version
-from aplite.nav import AppliteApp
+from aplite.nav import AppliteApp, DialogButtons
 from aplite.spinner import Spinner
 from aplite.components import RENAMED, override_for, returns_to_launcher, runnable
 
@@ -82,7 +82,6 @@ class MovedModal(ModalScreen[None]):
     CSS = """
     MovedModal { align: center middle; }
     #moved-box { width: 90%; height: auto; max-height: 90%; padding: 1 2; border: thick $primary; background: $surface; }
-    #moved-buttons { height: auto; align-horizontal: right; margin-top: 1; }
     """
     BINDINGS = [Binding("escape", "dismiss", "Close")]
 
@@ -93,7 +92,7 @@ class MovedModal(ModalScreen[None]):
     def compose(self) -> ComposeResult:
         with Vertical(id="moved-box"):
             yield Static(self.text, markup=False)
-            with Horizontal(id="moved-buttons"):
+            with DialogButtons(id="moved-buttons"):
                 yield Button("OK", id="moved-ok")
 
     def on_mount(self) -> None:

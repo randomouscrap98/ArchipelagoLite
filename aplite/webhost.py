@@ -18,7 +18,7 @@ from textual.widgets import Button, Label
 
 import Utils
 from aplite import prefs
-from aplite.nav import AppliteApp
+from aplite.nav import AppliteApp, DialogButtons
 from aplite.spinner import Spinner
 
 SUFFIXES = (".zip", ".archipelago")
@@ -61,7 +61,6 @@ class UploadModal(ModalScreen[None]):
     #upload-box Label { width: 100%; }
     #upload-row { height: auto; }
     #upload-row Label { width: 1fr; }
-    #upload-buttons { height: auto; align-horizontal: right; }
     """
     BINDINGS = [Binding("escape", "close", "Close")]
 
@@ -76,7 +75,7 @@ class UploadModal(ModalScreen[None]):
                 yield Spinner()
                 yield Label(f"Uploading {self.path.name} to {site()}…", id="upload-status")
             yield Label("", id="upload-url")
-            with Horizontal(id="upload-buttons"):
+            with DialogButtons(id="upload-buttons"):
                 yield Button("Close", id="upload-close", disabled=True)
 
     def on_mount(self) -> None:

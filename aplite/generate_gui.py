@@ -29,11 +29,11 @@ from textual.widgets.option_list import Option as ListOption
 
 import Utils
 import aplite
-from aplite import prefs, prompts
+from aplite import nav, prefs, prompts
 from aplite.combo import keep_scroll
 from aplite.file_picker import (SORT_BINDING, FileBrowser, FilteredTree, PathInput, cycle_sort, prompt_picker,
                                 start_folder)
-from aplite.nav import AppliteApp
+from aplite.nav import AppliteApp, DialogButtons
 from aplite.spinner import Spinner
 
 SUFFIXES = (".yaml", ".yml")
@@ -161,7 +161,6 @@ class GenerateModal(ModalScreen[None]):
     #gen-log { height: 1fr; border: tall $border-blurred; }
     #gen-log:focus { border: tall $border; }
     ProgressBar { padding: 0 1; }
-    #buttons { height: auto; align-horizontal: right; }
     """
     BINDINGS = [Binding("escape", "close", "Close"), Binding("ctrl+c", "copy_log", "Copy log")]
 
@@ -185,7 +184,7 @@ class GenerateModal(ModalScreen[None]):
                 yield Label("Starting Generate…", id="status")
             yield ProgressBar(total=len(STAGES), show_eta=False)
             yield RichLog(id="gen-log", wrap=True, markup=False, min_width=0)  # wrap at its width, not 78
-            with Horizontal(id="buttons"):
+            with DialogButtons(id="buttons"):
                 yield Button("Copy log", id="copy")
                 yield Button("Cancel", id="cancel", variant="error")
                 yield Button("Upload to Archipelago", id="upload", variant="primary")
@@ -350,7 +349,7 @@ class GenerateScreen(Screen):
                 yield Label("YAMLs to generate: Delete removes", classes="heading")
                 yield OptionList(id="yamls")
                 yield Label(id="meta")
-                yield Button("Generate", id="generate", variant="primary")
+                yield Button("Generate", id="generate", compact=nav.ROW_BUTTONS_COMPACT, variant="primary")
         yield Label("Log", classes="heading")
         yield RichLog(id="log", wrap=True, markup=False)
         yield Footer()
