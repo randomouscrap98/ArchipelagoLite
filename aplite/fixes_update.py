@@ -9,16 +9,20 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
 import tempfile
 import types
+import typing
 
+from rich.console import Group
+from rich.table import Table
 from rich.text import Text
-from textual import work
+from textual import on, work
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import VerticalScroll
+from textual.containers import Horizontal, VerticalScroll
 from textual.screen import Screen
-from textual.widgets import Footer, Static
+from textual.widgets import Button, Footer, Static
 
 from aplite import client_fixes
 from aplite.nav import AppliteApp
@@ -160,16 +164,38 @@ DESCRIPTION = ("Many apworlds don't play nicely outside the official launcher en
                "targeted fixes to apworlds to make them function in aplite.")
 
 
+def log_table(lines: typing.Iterable[str]) -> Table:
+    """LOG lines ("2026-11-15 Banjo-Tooie: what changed") as Date / Game / Change columns; a line in another shape
+    goes whole into Change."""
+    table = Table(box=None, padding=(0, 2, 0, 0), header_style="bold", expand=True)
+    table.add_column("Date", no_wrap=True)
+    table.add_column("Game", no_wrap=True, style="bold")
+    table.add_column("Change", ratio=1)
+    for line in lines:
+        date, _, rest = line.partition(" ")
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", date):
+            date, rest = "", line
+        game, sep, change = rest.partition(": ")
+        table.add_row(*((date, game, change) if sep else (date, "", rest)))
+    return table
+
+
+def heading(text: str, first: bool = False) -> Text:
+    return Text(("" if first else "\n") + text, "bold underline")
+
+
 class ClientFixesScreen(Screen[None]):
     """A screen, so it opens on top of the launcher (no reload just to check). Installing or removing an update
     restarts the launcher when this closes: clients run in the launcher's process, which loaded the old fixes."""
     CSS = """
-    ClientFixesScreen #intro { height: auto; padding: 1 1; }
+    ClientFixesScreen #intro { height: auto; padding: 1 1 0 1; }
+    ClientFixesScreen #buttons { height: auto; padding: 1 1; }
+    ClientFixesScreen #buttons Button { margin-right: 2; }
     ClientFixesScreen VerticalScroll { height: 1fr; border-top: solid $panel; padding: 0 1; }
     ClientFixesScreen #status { height: 1; padding: 0 1; color: $text-muted; }
     """
     BINDINGS = [Binding("ctrl+r", "check", "Check for updates"), Binding("ctrl+u", "install", "Install update"),
-                Binding("ctrl+t", "remove", "Remove update"), Binding("escape", "close", "Close")]
+                Binding("ctrl+t", "remove", "Remove update"), Binding("escape", "close", "Back")]
 
     def __init__(self) -> None:
         super().__init__()
@@ -180,6 +206,11 @@ class ClientFixesScreen(Screen[None]):
 
     def compose(self) -> ComposeResult:
         yield Static(Text.assemble((TITLE, "bold"), "\n", (DESCRIPTION, "dim")), id="intro")
+        with Horizontal(id="buttons"):  # the same actions as the footer keys
+            yield Button("Check for updates", id="check", compact=True, variant="primary")
+            yield Button("Install update", id="install", compact=True)
+            yield Button("Remove update", id="remove", compact=True)
+            yield Button("Back", id="close", compact=True)
         with VerticalScroll():
             yield Static(id="details")
         yield Static(id="status")
@@ -196,24 +227,31 @@ class ClientFixesScreen(Screen[None]):
         default = f"Using {source}." + ("" if packaged() else " Running from source: git pull gets new fixes.")
         self.query_one("#status", Static).update(message or default)
         self.refresh_bindings()
+        for button in self.query("#buttons Button").results(Button):
+            allowed = self.check_action(button.id, ())
+            button.display = allowed is not False
+            button.disabled = allowed is None
 
+    @on(Button.Pressed, "#buttons Button")
+    async def pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        await self.run_action(event.button.id)
     def show_local(self, message: str = "") -> None:
         source = client_fixes.read_text(client_fixes.active_path())
         packages = client_fixes.world_packages()
         details = Text()
-        details.append("Fixes\n", "bold underline")
         for game, entry in sorted(client_fixes.read_entries(source).items()):
             versions = f" (made for {', '.join(entry.versions)})" if entry.versions else ""
             details.append(f"{game}{versions}", "bold")
             details.append(f": {entry.why}\n")
-        details.append("\nSource patches\n", "bold underline")
+        details.append("\n")
+        details.append("Source patches\n", "bold underline")
         for patch in client_fixes.read_patches(source):
             details.append(packages.get(patch.why.split("/")[0], patch.why.split("/")[0]), "bold")
             details.append(f" ({patch.why})\n")
-        details.append("\nLog\n", "bold underline")
-        for line in reversed(client_fixes.read_log(source)):
-            details.append(f"{line}\n")
-        self.query_one("#details", Static).update(details)
+        self.query_one("#details", Static).update(Group(
+            heading("Log", first=True), log_table(reversed(client_fixes.read_log(source))), heading("Fixes"),
+            details))
         self.status(message)
 
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
@@ -255,12 +293,9 @@ class ClientFixesScreen(Screen[None]):
         self.remote = source
         known = set(client_fixes.read_log(local))
         new_lines = [line for line in client_fixes.read_log(source) if line not in known]
-        details = Text()
-        details.append("New in the update\n", "bold underline")
-        for line in reversed(new_lines):
-            details.append(f"{line}\n")
-        self.query_one("#details", Static).update(details)
-        self.status("An update is available: Ctrl+U installs it." if packaged() else
+        self.query_one("#details", Static).update(Group(heading("New in the update", first=True),
+                                                        log_table(reversed(new_lines))))
+        self.status("An update is available: Install update (Ctrl+U) installs it." if packaged() else
                     "An update is available: update your checkout (git pull) to get it.")
 
     def action_install(self) -> None:
