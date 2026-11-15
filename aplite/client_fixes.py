@@ -61,6 +61,8 @@ class Fix:
     """ctx.ui = NullUI() for this game's client contexts."""
     null_attrs: tuple[str, ...] = ()
     """Context attributes the world's GUI would have made (e.g. a tab it fills in), each set to a NullUI."""
+    on_start: typing.Callable[[CommonContext], None] | None = None
+    """Called once per client context, on the loop tick after it's made: startup work the world only does in run_gui."""
     setup: typing.Callable[[], None] | None = None
     """Run once at startup (worlds loaded) for world-level state, e.g. a registered SNI handler."""
     stub_imports: tuple[str, tuple[str, ...]] | None = None
@@ -78,6 +80,12 @@ def _dkc_barrel_label() -> None:
         handler.handle_barrel_label = handle_barrel_label  # on this instance only; the class is untouched
 
 
+def _bt_patch_and_run(ctx: CommonContext) -> None:
+    patch_and_run = getattr(sys.modules[type(ctx).__module__], "patch_and_run", None)
+    if patch_and_run is not None:
+        asyncio.create_task(patch_and_run(True), name="Banjo-Tooie patch_and_run")
+
+
 FIXES: dict[str, Fix] = {
     "Warioworld": Fix("WwClient.py: top-level `import kvui` (client can't load without kivy); "
                       "ctx.ui.spritelingcountupdate unguarded in _give_item / give_items / the item prefill (the Dolphin "
@@ -90,7 +98,9 @@ FIXES: dict[str, Fix] = {
                                setup=_dkc_barrel_label),
     "Banjo-Tooie": Fix("BTClient.py: ctx.tab_items is only made in run_gui (GUI build); BanjoTooieItemTracker."
                        "refresh_items sets tab_items.content.data unguarded (error on Connected and every "
-                       "ReceivedItems)", null_attrs=("tab_items",)),
+                       "ReceivedItems); run_gui is also what starts patch_and_run (patch ROM if missing/outdated, "
+                       "then the /autostart program), so it's started here like the GUI does",
+                       null_attrs=("tab_items",), on_start=_bt_patch_and_run),
 }
 
 
@@ -160,6 +170,16 @@ def apply(ctx: CommonContext) -> None:
     for name in fix.null_attrs if fix else ():
         if not hasattr(ctx, name):
             setattr(ctx, name, NullUI())
+    if fix and fix.on_start and not getattr(ctx, "_aplite_started", False):
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:  # no loop yet (first apply of a context made outside it): nothing to start on
+            return
+        ctx._aplite_started = True
+        try:
+            fix.on_start(ctx)
+        except Exception:  # a world's internals changed: the user can still do it by hand (e.g. /patch)
+            logger.exception(f"client fix for {ctx.game}: startup failed")
 
 
 def install() -> None:
