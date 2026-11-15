@@ -261,6 +261,8 @@ def report_crash(component) -> None:
     sys.stderr.flush()
     print(f"\n{component.display_name} crashed (traceback above"
           f"{', also in ' + log_files[0] if log_files else ''}). Returning to the launcher is safe.")
+    from aplite import fixes_update
+    fixes_update.crash_notice(sys.exc_info()[2], getattr(component, "game_name", None))
 
 
 if __name__ == "__main__":

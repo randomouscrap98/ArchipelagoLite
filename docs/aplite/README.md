@@ -89,6 +89,11 @@ completes them.
 
 Manual games are supported too: Lite has its own Manual client, so any manual apworld works.
 
+Some games' clients were written only for the official window and break in Lite. Lite fixes the ones it knows
+about, and those fixes can be updated between releases: if a client crashes and a fix exists, the client says so.
+Open **Client fixes** in the launcher to see the fixes, check for updates and install them. Lite only goes online for
+this when you press Check or after a client crash, and never installs anything without you.
+
 ## Making a game
 
 1. **Options Creator** makes a player YAML for any installed game. It saves to your Players folder.

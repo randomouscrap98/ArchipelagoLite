@@ -16,6 +16,7 @@ if existing=$(git describe --tags --exact-match --match 'v*-lite.*' 2>/dev/null)
 fi
 
 git fetch --quiet --tags "$REMOTE"
+sh "$REPO/aplite/fixes/check.sh"  # a fixes change needs a LOG line, or installed copies would shadow it
 upstream=$(PYTHONPATH="$REPO" uv run --quiet --no-project --python 3.13 python -m aplite.version --upstream)
 last=$(git tag --list "v$upstream-lite.*" | sed -n "s/^v$upstream-lite\.\([0-9][0-9]*\)$/\1/p" | sort -n | tail -1)
 tag="v$upstream-lite.$(( ${last:-0} + 1 ))"

@@ -77,6 +77,12 @@ class LogBuffer(logging.Handler):
     def emit(self, record: logging.LogRecord) -> None:
         if getattr(record, "NoStream", False) or getattr(record, "skip_gui", False):
             return
+        if self.sink and record.exc_info and record.levelno >= logging.ERROR:
+            try:  # a client crashed in a world's code: say if there's a client fix for it
+                from aplite import fixes_update
+                fixes_update.on_error(record)
+            except Exception:
+                pass
         try:
             msg = self.format(record)
         except Exception:

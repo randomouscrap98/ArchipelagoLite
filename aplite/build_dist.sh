@@ -28,6 +28,7 @@ PATH="$PATH:$HOME/.local/bin"
 for tool in uv curl tar git; do
     command -v "$tool" >/dev/null 2>&1 || { echo "build_dist: needs $tool" >&2; exit 1; }
 done
+sh "$REPO/aplite/fixes/check.sh"  # a fixes change needs a LOG line, or installed copies would shadow it
 appimage=1
 command -v "$MKSQUASHFS" >/dev/null 2>&1 || { echo "build_dist: no mksquashfs, skipping the AppImage" >&2; appimage=0; }
 
