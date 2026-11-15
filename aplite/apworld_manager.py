@@ -10,7 +10,7 @@ import re
 import typing
 
 import Utils
-from textual import work
+from textual import events, on, work
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
@@ -298,7 +298,7 @@ class ManagerApp(nav.AppliteApp):
     def compose(self) -> ComposeResult:
         yield Header()
         yield FilterInput(placeholder="Search. Enter installs/updates, ↑/↓ select.", target="OptionList")
-        yield OptionList()
+        yield OptionList(id="worlds")
         with Vertical(id="details"):
             with Horizontal():
                 yield Static(id="heading")
@@ -409,6 +409,15 @@ class ManagerApp(nav.AppliteApp):
 
     def on_input_submitted(self, event: FilterInput.Submitted) -> None:
         event.stop()
+        self.install_highlighted()
+
+    @on(events.Click, "#worlds")
+    def double_clicked(self, event: events.Click) -> None:
+        """Double-click a world: same as Enter (a single click only highlights it)."""
+        if event.chain == 2:
+            self.install_highlighted()
+
+    def install_highlighted(self) -> None:
         world = self.highlighted()
         if world is None or self.busy:
             return
