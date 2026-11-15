@@ -286,7 +286,6 @@ class ManagerApp(nav.AppliteApp):
         self.working: tuple[str, str] | None = None  # (world id, phase) shown on that world's row while installing
         self.spin_frame = 0
         self.spin_timer = None
-        self.spin_palette: tuple[str, ...] | None = None
         self.title_width = 0
 
     def world_table(self) -> list[dict]:
@@ -376,12 +375,11 @@ class ManagerApp(nav.AppliteApp):
         title = f"{world['title']:<{self.title_width}}  "
         if not self.working or self.working[0] != world["id"]:
             return title + world["install_text"]
-        return Text.assemble(title, spinner.frame(self.spin_frame, self.spin_palette), f" {self.working[1]}")
+        return Text.assemble(title, spinner.frame(self.spin_frame), f" {self.working[1]}")
 
     def set_working(self, world: dict, phase: str) -> None:
         self.working = (world["id"], phase)
         if self.spin_timer is None:
-            self.spin_palette = spinner.pick_palette()
             self.spin_timer = self.set_interval(spinner.INTERVAL, self.spin)
         self.refresh_row(world["id"])
 
