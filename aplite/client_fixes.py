@@ -1,13 +1,14 @@
 """Per-world fixes for client code that assumes the kivy GUI exists. aplite keeps ctx.ui None, so `if ctx.ui:` code is
 skipped, but some worlds touch ctx.ui (or import kvui) unguarded and crash; they'd crash the same way under upstream's
 --nogui. Rather than patching their functions, these reshape state: a stand-in for ctx.ui, a no-op for one GUI-only method
-on a registered handler instance, or a kvui stand-in while one client module is imported. A stand-in doesn't care which names the world uses, so world
+on a registered handler instance, a stand-in for a GUI-made context attribute, or a kvui stand-in while one client module is imported. A stand-in doesn't care which names the world uses, so world
 updates rarely break a fix.
 
 To add a fix: one FIXES entry keyed by the world's game name. Remove it once the world fixes its client.
 Notes: ignore/claude/research/world-gui-tabs.md (which worlds, where they crash)."""
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 import importlib.abc
 import logging
@@ -58,6 +59,8 @@ class Fix:
     """The world bug this works around (file:line in the apworld), so it can be dropped once fixed."""
     null_ui: bool = False
     """ctx.ui = NullUI() for this game's client contexts."""
+    null_attrs: tuple[str, ...] = ()
+    """Context attributes the world's GUI would have made (e.g. a tab it fills in), each set to a NullUI."""
     setup: typing.Callable[[], None] | None = None
     """Run once at startup (worlds loaded) for world-level state, e.g. a registered SNI handler."""
     stub_imports: tuple[str, tuple[str, ...]] | None = None
@@ -85,6 +88,9 @@ FIXES: dict[str, Fix] = {
     "Donkey Kong Country": Fix("Client.py game_watcher -> handle_barrel_label: `from kvui import` (first line) + "
                                "ctx.ui.connect_layout unguarded, before items are received: no items ever",
                                setup=_dkc_barrel_label),
+    "Banjo-Tooie": Fix("BTClient.py: ctx.tab_items is only made in run_gui (GUI build); BanjoTooieItemTracker."
+                       "refresh_items sets tab_items.content.data unguarded (error on Connected and every "
+                       "ReceivedItems)", null_attrs=("tab_items",)),
 }
 
 
@@ -151,6 +157,9 @@ def apply(ctx: CommonContext) -> None:
     fix = FIXES.get(getattr(ctx, "game", None) or "")
     if fix and fix.null_ui and ctx.ui is None and not _has_ut_map(ctx.game):
         ctx.ui = NullUI()
+    for name in fix.null_attrs if fix else ():
+        if not hasattr(ctx, name):
+            setattr(ctx, name, NullUI())
 
 
 def install() -> None:
@@ -170,5 +179,11 @@ def install() -> None:
     def __init__(self, *args, **kwargs) -> None:
         original_init(self, *args, **kwargs)
         apply(self)
+        # again once the subclass __init__ is done: some set ctx.game after super().__init__ (Banjo-Tooie).
+        # apply is idempotent, and the next tick comes long before any server message
+        try:
+            asyncio.get_running_loop().call_soon(apply, self)
+        except RuntimeError:  # made outside the event loop: only the first apply
+            pass
 
     CommonContext.__init__ = __init__
