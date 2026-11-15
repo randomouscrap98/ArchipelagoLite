@@ -34,6 +34,7 @@ from aplite.combo import keep_scroll
 from aplite.file_picker import (SORT_BINDING, FileBrowser, FilteredTree, PathInput, cycle_sort, prompt_picker,
                                 start_folder)
 from aplite.nav import AppliteApp
+from aplite.spinner import Spinner
 
 SUFFIXES = (".yaml", ".yml")
 PREF_KEY = "generate_dir"
@@ -156,7 +157,7 @@ class GenerateModal(ModalScreen[None]):
     CSS = """
     GenerateModal { align: center middle; }
     #box { width: 90%; height: 90%; padding: 0 1; border: thick $primary; background: $surface; }
-    #status { padding: 0 1; }
+    #status-row { height: 1; padding: 0 1; }
     #gen-log { height: 1fr; border: tall $border-blurred; }
     #gen-log:focus { border: tall $border; }
     ProgressBar { padding: 0 1; }
@@ -179,7 +180,9 @@ class GenerateModal(ModalScreen[None]):
 
     def compose(self) -> ComposeResult:
         with Vertical(id="box"):
-            yield Label("Starting Generate…", id="status")
+            with Horizontal(id="status-row"):
+                yield Spinner()
+                yield Label("Starting Generate…", id="status")
             yield ProgressBar(total=len(STAGES), show_eta=False)
             yield RichLog(id="gen-log", wrap=True, markup=False, min_width=0)  # wrap at its width, not 78
             with Horizontal(id="buttons"):
@@ -275,6 +278,7 @@ class GenerateModal(ModalScreen[None]):
         self.app.push_screen(picker, answer)
 
     def finished(self, status: int) -> None:
+        self.query_one(Spinner).display = False
         self.flush_games()
         shutil.rmtree(self.folder, ignore_errors=True)
         if status == 0 and self.archive:

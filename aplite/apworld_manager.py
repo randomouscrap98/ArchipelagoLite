@@ -10,6 +10,7 @@ import re
 import typing
 
 import Utils
+from rich.text import Text
 from textual import events, on, work
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -18,7 +19,7 @@ from textual.screen import ModalScreen
 from textual.widgets import Footer, Header, OptionList, Static
 from textual.widgets.option_list import Option
 
-from aplite import nav
+from aplite import nav, spinner
 from aplite.master_detail import TextScroll
 from aplite.combo import FilterInput, highlight_first, keep_scroll
 from aplite.desktop import open_link
@@ -282,6 +283,10 @@ class ManagerApp(nav.AppliteApp):
         self.busy = False
         self.installed_any = False
         self.confirm_delete = nav.Confirm()
+        self.working: tuple[str, str] | None = None  # (world id, phase) shown on that world's row while installing
+        self.spin_frame = 0
+        self.spin_timer = None
+        self.title_width = 0
 
     def world_table(self) -> list[dict]:
         """refresh_apworld_table, with the latest version of uninstalled worlds picked by full version: it compares only
@@ -353,8 +358,8 @@ class ManagerApp(nav.AppliteApp):
         if keep_position:
             keep_scroll(options)
         options.clear_options()
-        width = max((len(w["title"]) for w in self.shown), default=0)
-        options.add_options(Option(f"{w['title']:<{width}}  {w['install_text']}") for w in self.shown)
+        self.title_width = max((len(w["title"]) for w in self.shown), default=0)
+        options.add_options(Option(self.row_prompt(w)) for w in self.shown)
         ids = [w["id"] for w in self.shown]
         if keep_position and old_index is not None and ids:
             options.highlighted = ids.index(old["id"]) if old and old["id"] in ids else min(old_index, len(ids) - 1)
@@ -364,6 +369,38 @@ class ManagerApp(nav.AppliteApp):
 
     def on_option_list_option_highlighted(self, event: OptionList.OptionHighlighted) -> None:
         self.show_details()
+
+    def row_prompt(self, world: dict) -> str | Text:
+        """A world's row: title and action, or a rainbow spinner and the phase while it's installing."""
+        title = f"{world['title']:<{self.title_width}}  "
+        if not self.working or self.working[0] != world["id"]:
+            return title + world["install_text"]
+        return Text.assemble(title, spinner.frame(self.spin_frame), f" {self.working[1]}")
+
+    def set_working(self, world: dict, phase: str) -> None:
+        self.working = (world["id"], phase)
+        if self.spin_timer is None:
+            self.spin_timer = self.set_interval(spinner.INTERVAL, self.spin)
+        self.refresh_row(world["id"])
+
+    def stop_working(self) -> None:
+        if self.spin_timer is not None:
+            self.spin_timer.stop()
+            self.spin_timer = None
+        if self.working:  # back to the action text (a failed install doesn't refill the list)
+            world_id, self.working = self.working[0], None
+            self.refresh_row(world_id)
+
+    def spin(self) -> None:
+        self.spin_frame += 1
+        if self.working:
+            self.refresh_row(self.working[0])
+
+    def refresh_row(self, world_id: str) -> None:
+        index = next((i for i, w in enumerate(self.shown) if w["id"] == world_id), None)
+        if index is not None:
+            options = self.query_one("#worlds", OptionList)
+            options.replace_option_prompt_at_index(index, self.row_prompt(self.shown[index]))
 
     def highlighted(self) -> dict | None:
         index = self.query_one(OptionList).highlighted
@@ -481,6 +518,7 @@ class ManagerApp(nav.AppliteApp):
                 manifest = world["manifest"]
                 url = manifest_repo(manifest)
                 self.app.call_from_thread(self.status, f"Adding repository {url}...")
+                self.app.call_from_thread(self.set_working, world, "Adding repo...")
                 RepoWorld.settings.repositories[url] = True
                 RepoWorld.settings._changed = True
                 Utils.get_settings().save()  # aplite returns to the launcher by exec: no atexit autosave
@@ -490,6 +528,7 @@ class ManagerApp(nav.AppliteApp):
             else:
                 name = f"{world['title']} {version}" if version else world["title"]
                 self.app.call_from_thread(self.status, f"Installing {name}...")
+                self.app.call_from_thread(self.set_working, world, "Installing...")
                 with captured_messageboxes(messages):
                     self.manager.install_world(world)
                 errors = [text for text, error in messages if error]
@@ -498,12 +537,15 @@ class ManagerApp(nav.AppliteApp):
                     return
                 self.installed_any = True
                 done = f"Installed {name}. New worlds load next time the launcher starts."
+            self.app.call_from_thread(self.status, "Refreshing the world list...")
+            self.app.call_from_thread(self.set_working, world, "Refreshing...")
             worlds = self.world_table()
         except Exception as e:
             self.app.call_from_thread(self.status, f"Install failed: {e}")
             return
         finally:
             self.busy = False
+            self.app.call_from_thread(self.stop_working)
         self.app.call_from_thread(self.loaded, worlds)
         self.app.call_from_thread(self.status, done)
 

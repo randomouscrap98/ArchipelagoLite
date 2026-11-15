@@ -21,6 +21,7 @@ from aplite import datadir, glyphs, write_atomic
 from aplite.combo import FilterInput, first_enabled, keep_scroll
 from aplite.version import version
 from aplite.nav import AppliteApp
+from aplite.spinner import Spinner
 from aplite.components import RENAMED, override_for, returns_to_launcher, runnable
 
 if typing.TYPE_CHECKING:
@@ -135,12 +136,14 @@ class LauncherApp(AppliteApp):
     def compose(self) -> ComposeResult:
         yield FilterInput(placeholder="Search. Enter launches, ↑/↓ select.", target="OptionList")
         with Horizontal(id="status-row"):  # its own line, so the list doesn't shift when loading finishes
+            yield Spinner()
             yield Static(id="status")
             yield Static(f"Archipelago Lite {version()}", id="version")
         yield OptionList()
         yield Footer()
 
     def on_mount(self) -> None:
+        self.query_one(Spinner).display = self.loading
         if callable(self.source):
             self.run_worker(self.load_components, thread=True)
         else:
@@ -164,6 +167,7 @@ class LauncherApp(AppliteApp):
 
     def load_failed(self, error: BaseException) -> None:
         self.loading = False
+        self.query_one(Spinner).display = False
         self.components = []
         self.set_status(f"Loading worlds failed: {error!r} (see log)")
 
@@ -174,6 +178,7 @@ class LauncherApp(AppliteApp):
         if self.loading:
             save_cache(self.components)
         self.loading = False
+        self.query_one(Spinner).display = False
         self.set_status(None)
         pending, self.launch_when_loaded = self.launch_when_loaded, False
         if isinstance(pending, str):

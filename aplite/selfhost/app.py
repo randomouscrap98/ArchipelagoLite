@@ -23,6 +23,7 @@ import Utils
 from aplite import colors, glyphs, nav, selfhost
 from aplite.master_detail import MasterDetailScreen, Rows, TextScroll, detail_pane, heading
 from aplite.nav import AppliteApp
+from aplite.spinner import Spinner
 
 LOG_START = 64 * 1024  # bytes of an existing log shown when attaching
 
@@ -345,7 +346,9 @@ class GamesScreen(ModalScreen[typing.Optional[str]]):
 
 SCREEN_CSS = """
 .heading { padding: 0 1; text-style: bold; }
-#server, #room { padding: 0 1; height: auto; }
+#server-row { height: auto; padding: 0 1; }
+#server { width: 1fr; height: auto; }
+#room { padding: 0 1; height: auto; }
 #buttons { height: auto; }
 #buttons Button { margin-right: 1; }
 #room-bar { height: 1; padding: 0 1; }
@@ -382,7 +385,9 @@ class SelfHostScreen(Screen):
 
     def compose(self) -> ComposeResult:
         yield Label("Server", classes="heading")
-        yield Static(id="server")
+        with Horizontal(id="server-row"):
+            yield Spinner()
+            yield Static(id="server")
         with Horizontal(id="buttons"):
             yield Button("Start server", id="toggle", variant="primary")
             yield Button("New game", id="new")
@@ -421,6 +426,8 @@ class SelfHostScreen(Screen):
         toggle.label = "Stop server" if self.status else "Start server"
         for button in self.query("#buttons Button"):
             button.disabled = bool(self.busy)
+        starting = bool(self.status) and not self.serving
+        self.query_one("#server-row Spinner", Spinner).display = bool(self.busy) or starting
         if self.busy:
             server.update(Text(self.busy, style="yellow"))
         elif self.serving:

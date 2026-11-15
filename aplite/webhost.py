@@ -14,11 +14,12 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen, Screen
-from textual.widgets import Button, Label, LoadingIndicator
+from textual.widgets import Button, Label
 
 import Utils
 from aplite import prefs
 from aplite.nav import AppliteApp
+from aplite.spinner import Spinner
 
 SUFFIXES = (".zip", ".archipelago")
 """Generated games (Generate's output zip, or a bare multidata)."""
@@ -58,7 +59,8 @@ class UploadModal(ModalScreen[None]):
     UploadModal { align: center middle; }
     #upload-box { width: 80%; height: auto; padding: 1 2; border: thick $primary; background: $surface; }
     #upload-box Label { width: 100%; }
-    LoadingIndicator { height: 1; }
+    #upload-row { height: auto; }
+    #upload-row Label { width: 1fr; }
     #upload-buttons { height: auto; align-horizontal: right; }
     """
     BINDINGS = [Binding("escape", "close", "Close")]
@@ -70,8 +72,9 @@ class UploadModal(ModalScreen[None]):
 
     def compose(self) -> ComposeResult:
         with Vertical(id="upload-box"):
-            yield Label(f"Uploading {self.path.name} to {site()}…", id="upload-status")
-            yield LoadingIndicator()
+            with Horizontal(id="upload-row"):
+                yield Spinner()
+                yield Label(f"Uploading {self.path.name} to {site()}…", id="upload-status")
             yield Label("", id="upload-url")
             with Horizontal(id="upload-buttons"):
                 yield Button("Close", id="upload-close", disabled=True)
@@ -89,7 +92,7 @@ class UploadModal(ModalScreen[None]):
     def done(self, url: str | None, error: str | None) -> None:
         from aplite.desktop import open_path
         self.busy = False
-        self.query_one(LoadingIndicator).display = False
+        self.query_one(Spinner).display = False
         status = self.query_one("#upload-status", Label)
         if url is None:
             status.update(f"Upload failed: {error}")
