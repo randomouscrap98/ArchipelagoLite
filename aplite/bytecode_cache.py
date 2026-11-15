@@ -18,7 +18,7 @@ import threading
 import zipimport
 
 import Utils
-from aplite import source_patches, write_atomic
+from aplite import client_fixes, source_patches, write_atomic
 
 _bundles: dict[str, dict[str, tuple[int, int, object]]] = {}
 """Per apworld path: {path inside the zip: (crc32, size, code)}, as loaded plus this run's compiles."""
@@ -64,6 +64,7 @@ def flush() -> None:
 def install() -> None:
     global _cache_file, _version
     _cache_file = Utils.cache_path("aplite", "apworld-code.bin")
+    client_fixes.load()  # fills source_patches.PATCHES
     patches = repr([(p.module, p.old, p.new) for p in source_patches.PATCHES]).encode()
     _version = importlib.util.MAGIC_NUMBER + hashlib.sha256(patches).digest()
     original_compile = zipimport._compile_source

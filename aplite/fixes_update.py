@@ -58,10 +58,14 @@ def notice_for(game: str) -> str | None:
     if not newer(remote, local):
         return None
     entry = client_fixes.read_entries(remote).get(game)
-    if entry is None or not client_fixes.applies(entry.versions, game):
-        return None
     current = client_fixes.read_entries(local).get(game)
-    if current is not None and current.code == entry.code:
+    new_fix = (entry is not None and client_fixes.applies(entry.versions, game)
+               and (current is None or current.code != entry.code))
+    package = next((p for p, g in client_fixes.world_packages().items() if g == game), None)
+    local_patches = {patch.code for patch in client_fixes.read_patches(local)}
+    new_patch = any(patch.why.split("/")[0] == package and patch.code not in local_patches
+                    and client_fixes.applies(patch.versions, game) for patch in client_fixes.read_patches(remote))
+    if not new_fix and not new_patch:
         return None
     if packaged():
         return (f'A client fix for {game} is available. Open "Client fixes" in the launcher to install it, then '
@@ -194,9 +198,14 @@ class ClientFixesApp(AppliteApp):
         details = Text()
         details.append("Fixes\n", "bold underline")
         for game, entry in sorted(client_fixes.read_entries(source).items()):
-            versions = f" (version {', '.join(entry.versions)})" if entry.versions else ""
+            versions = f" (made for {', '.join(entry.versions)})" if entry.versions else ""
             details.append(f"{game}{versions}", "bold")
             details.append(f": {entry.why}\n")
+        packages = client_fixes.world_packages()
+        details.append("\nSource patches\n", "bold underline")
+        for patch in client_fixes.read_patches(source):
+            details.append(packages.get(patch.why.split("/")[0], patch.why.split("/")[0]), "bold")
+            details.append(f" ({patch.why})\n")
         details.append("\nLog\n", "bold underline")
         for line in reversed(log):
             details.append(f"{line}\n")

@@ -1,7 +1,7 @@
 """Machinery for per-world fixes of client code that assumes the kivy GUI exists; the fixes themselves are in
 aplite/fixes/fixes.py. aplite keeps ctx.ui None, so `if ctx.ui:` code is skipped, but some worlds touch ctx.ui (or
-import kvui) unguarded and crash; they'd crash the same way under upstream's --nogui. Rather than patching their functions,
-fixes reshape state: a stand-in for ctx.ui, a no-op for one GUI-only method on a registered handler instance, a
+import kvui) unguarded and crash; they'd crash the same way under upstream's --nogui. Rather than patching their
+functions, fixes reshape state: a stand-in for ctx.ui, a no-op for one GUI-only method on a registered handler instance, a
 stand-in for a GUI-made context attribute, or a kvui stand-in while one client module is imported. A stand-in
 doesn't care which names the world uses, so world updates rarely break a fix.
 
@@ -70,7 +70,8 @@ class Fix:
     why: str
     """The world bug this works around (file:line in the apworld), so it can be dropped once fixed."""
     versions: tuple[str, ...] = ()
-    """The apworld's world_version values this fix is for (e.g. "4.13.1"); empty: all. Other versions get nothing."""
+    """For the crash notice only: the apworld's world_version values this fix was made for (e.g. "4.13.1"), so users
+    on other versions aren't told about it; empty: all. The fix itself applies to every version."""
     null_ui: bool = False
     """ctx.ui = NullUI() for this game's client contexts."""
     null_attrs: tuple[str, ...] = ()
@@ -85,7 +86,8 @@ class Fix:
 
 
 FIXES: dict[str, Fix] = {}
-"""The fixes in use, from the active fixes file (install())."""
+"""The fixes in use, from the active fixes file (load()). Its source patches go to source_patches.PATCHES."""
+_loaded = False
 
 
 # reading fixes files without running them (downloaded copies are only run once the user installs them)
@@ -121,6 +123,25 @@ def read_log(source: str) -> list[str]:
     return log
 
 
+def _entry(call: ast.Call, first: str) -> Entry | None:
+    keywords = {k.arg: k.value for k in call.keywords if k.arg}
+    first_node = call.args[0] if call.args else keywords.get(first)
+    try:
+        value = ast.literal_eval(first_node) if first_node is not None else ""
+        versions = tuple(ast.literal_eval(keywords["versions"])) if "versions" in keywords else ()
+    except (ValueError, TypeError):
+        return None
+    return Entry(str(value), tuple(str(v) for v in versions), ast.dump(call))
+
+
+def read_patches(source: str) -> list[Entry]:
+    """The file's PATCHES, read as data: each Entry's `why` is the patch's module (e.g. "osu/Client.py")."""
+    value = _assigned(ast.parse(source), "PATCHES")
+    if not isinstance(value, ast.List):
+        return []
+    return [entry for call in value.elts if isinstance(call, ast.Call) and (entry := _entry(call, "module"))]
+
+
 def read_entries(source: str) -> dict[str, Entry]:
     """The file's FIXES entries: game -> Entry. Entries that aren't a Fix(...) call with literal arguments are left
     out."""
@@ -131,14 +152,9 @@ def read_entries(source: str) -> dict[str, Entry]:
     for key, call in zip(value.keys, value.values, strict=True):
         if not (isinstance(key, ast.Constant) and isinstance(key.value, str) and isinstance(call, ast.Call)):
             continue
-        keywords = {k.arg: k.value for k in call.keywords if k.arg}
-        why_node = call.args[0] if call.args else keywords.get("why")
-        try:
-            why = ast.literal_eval(why_node) if why_node is not None else ""
-            versions = tuple(ast.literal_eval(keywords["versions"])) if "versions" in keywords else ()
-        except (ValueError, TypeError):
-            continue
-        entries[key.value] = Entry(str(why), tuple(str(v) for v in versions), ast.dump(call))
+        entry = _entry(call, "why")
+        if entry is not None:
+            entries[key.value] = entry
     return entries
 
 
@@ -172,17 +188,22 @@ def active_path() -> str:
     return BUNDLED
 
 
-def load_file(path: str) -> dict[str, Fix]:
-    """Run a fixes file and return its FIXES. Raises if it doesn't load here (e.g. it needs a newer aplite)."""
+def load_file(path: str) -> tuple[dict[str, Fix], list]:
+    """Run a fixes file and return its FIXES and PATCHES. Raises if it doesn't load here (e.g. it needs a newer
+    aplite)."""
+    from aplite.source_patches import Patch
     source = read_text(path)
     read_log(source)
     module = types.ModuleType("aplite_client_fixes_list")
     module.__file__ = path
     exec(compile(source, path, "exec"), module.__dict__)  # not an import: no __pycache__ in the user folder
     fixes = getattr(module, "FIXES", None)
+    patches = getattr(module, "PATCHES", [])
     if not isinstance(fixes, dict) or not all(isinstance(g, str) and isinstance(f, Fix) for g, f in fixes.items()):
         raise ValueError("FIXES isn't a dict of game name -> Fix")
-    return fixes
+    if not isinstance(patches, list) or not all(isinstance(p, Patch) for p in patches):
+        raise ValueError("PATCHES isn't a list of Patch")
+    return fixes, patches
 
 
 def world_version(game: str) -> str | None:
@@ -194,18 +215,26 @@ def world_version(game: str) -> str | None:
 
 
 def applies(versions: tuple[str, ...], game: str) -> bool:
+    """Whether a fix made for `versions` is for the installed version of `game` (the crash notice; fixes always
+    apply)."""
     return not versions or world_version(game) in versions
+
+
+def world_packages() -> dict[str, str]:
+    """World package -> game, e.g. "banjo_tooie" -> "Banjo-Tooie"."""
+    from worlds.AutoWorld import AutoWorldRegister
+    packages: dict[str, str] = {}
+    for game, world in AutoWorldRegister.world_types.items():
+        parts = world.__module__.split(".")
+        if len(parts) >= 2 and parts[0] == "worlds":
+            packages.setdefault(parts[1], game)
+    return packages
 
 
 def game_for_traceback(tb: types.TracebackType | None) -> str | None:
     """The game whose world package the innermost world frame of a traceback is in (e.g. a crash in
     worlds.banjo_tooie.BTClient -> "Banjo-Tooie"), or None."""
-    from worlds.AutoWorld import AutoWorldRegister
-    packages = {}
-    for game, world in AutoWorldRegister.world_types.items():
-        parts = world.__module__.split(".")
-        if len(parts) >= 2 and parts[0] == "worlds":
-            packages.setdefault(".".join(parts[:2]), game)
+    packages = {f"worlds.{package}": game for package, game in world_packages().items()}
     found = None
     while tb is not None:
         parts = str(tb.tb_frame.f_globals.get("__name__", "")).split(".")
@@ -279,7 +308,7 @@ def _has_ut_map(game: str) -> bool:
 def apply(ctx: CommonContext) -> None:
     game = getattr(ctx, "game", None) or ""
     fix = FIXES.get(game)
-    if not fix or not applies(fix.versions, game):
+    if not fix:
         return
     if fix.null_ui and ctx.ui is None and not _has_ut_map(game):
         ctx.ui = NullUI()
@@ -298,7 +327,7 @@ def apply(ctx: CommonContext) -> None:
             logger.exception(f"client fix for {game}: startup failed")
 
 
-def _load_active() -> dict[str, Fix]:
+def _load_active() -> tuple[dict[str, Fix], list]:
     path = active_path()
     if path != BUNDLED:
         try:
@@ -309,17 +338,28 @@ def _load_active() -> dict[str, Fix]:
     return load_file(BUNDLED)
 
 
-def install() -> None:
-    """Call after the worlds are loaded: loads the fixes, runs the setups, then applies fixes to every client context
-    as it's made."""
-    from CommonClient import CommonContext
+def load() -> None:
+    """Load the active fixes file: FIXES here, PATCHES into source_patches. Before any apworld is imported (source
+    patches apply as worlds load; bytecode_cache.install calls this). Safe to call again."""
+    global _loaded
+    if _loaded:
+        return
+    from aplite import source_patches
+    fixes, patches = _load_active()
     FIXES.clear()
-    FIXES.update(_load_active())
-    active = {game: fix for game, fix in FIXES.items() if applies(fix.versions, game)}
-    targets = {fix.stub_imports[0]: fix.stub_imports[1] for fix in active.values() if fix.stub_imports}
+    FIXES.update(fixes)
+    source_patches.PATCHES[:] = patches
+    _loaded = True
+
+
+def install() -> None:
+    """Call after the worlds are loaded: runs the setups, then applies fixes to every client context as it's made."""
+    from CommonClient import CommonContext
+    load()
+    targets = {fix.stub_imports[0]: fix.stub_imports[1] for fix in FIXES.values() if fix.stub_imports}
     if targets:
         sys.meta_path.insert(0, _StubFinder(targets))
-    for game, fix in active.items():
+    for game, fix in FIXES.items():
         if fix.setup:
             try:
                 fix.setup()
@@ -350,6 +390,7 @@ def _check(refs: list[str]) -> int:
     try:
         length = len(read_log(current))
         read_entries(current)
+        read_patches(current)
     except (ValueError, SyntaxError) as e:
         print(f"{relative}: {e}", file=sys.stderr)
         return 1
