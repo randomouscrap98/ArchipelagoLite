@@ -83,6 +83,12 @@ python_tree() {
             done
         }
     done
+    # never used by aplite, and file count is what makes extracting the zip slow on Windows: pip (requirements are
+    # installed here; the launchers skip ModuleUpdate), Cython + pyximport (only build _speedups when the compiled one
+    # is missing, and builds ship it) and the packages' own test suites (~2300 files)
+    rm -rf "$site"/pip "$site"/pip-*.dist-info "$site"/Cython "$site"/cython.py "$site"/cython-*.dist-info \
+        "$site"/pyximport
+    find "$site" -depth -type d \( -name tests -o -name test \) -exec rm -rf {} +
     cp -a "$BUILD/app" "$dest/app"
     # the AppImage is read-only, so compile now (bytecode doesn't depend on the platform, only the Python version).
     # Hash-based: a timestamp .pyc never matches after unzipping (zip stores 2-second, timezone-less times), so Windows
