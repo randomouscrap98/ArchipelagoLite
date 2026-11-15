@@ -91,7 +91,7 @@ Manual games are supported too: Lite has its own Manual client, so any manual ap
 
 Some games' clients were written only for the official window and break in Lite. Lite fixes the ones it knows
 about, and those fixes can be updated between releases: if a client crashes and a fix exists, the client says so.
-Open **Client fixes** in the launcher to see the fixes, check for updates and install them. Lite only goes online for
+Open **Manage Client Fixes** in the launcher to see the fixes, check for updates and install them. Lite only goes online for
 this when you press Check or after a client crash, and never installs anything without you.
 
 ## Making a game

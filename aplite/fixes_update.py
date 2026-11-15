@@ -1,7 +1,7 @@
 """
 Client fixes between releases: aplite/fixes/fixes.py is downloaded from the main branch only (1) when the user opens
-"Client fixes" in the launcher and checks, or (2) after a client crash, once per game per run, to say whether a fix for
-that game exists. Nothing is installed without the user. An installed copy lives in the user folder and is used while
+"Manage Client Fixes" in the launcher and checks, or (2) after a client crash, once per game per run, to say whether a
+fix for that game exists. Nothing is installed without the user. An installed copy lives in the user folder and is used while
 its LOG is longer than the bundled one's (aplite/client_fixes.py, active_path). Source checkouts update with git.
 """
 from __future__ import annotations
@@ -13,10 +13,12 @@ import tempfile
 import types
 
 from rich.text import Text
-from textual import on, work
+from textual import work
 from textual.app import ComposeResult
-from textual.containers import Horizontal, VerticalScroll
-from textual.widgets import Button, Footer, Static
+from textual.binding import Binding
+from textual.containers import VerticalScroll
+from textual.screen import Screen
+from textual.widgets import Footer, Static
 
 from aplite import client_fixes
 from aplite.nav import AppliteApp
@@ -152,69 +154,84 @@ def uninstall() -> bool:
         return False
 
 
-class ClientFixesApp(AppliteApp):
-    TITLE = "Client fixes"
+TITLE = "Manage Client Fixes"
+"""The launcher entry's name and the screen's heading."""
+DESCRIPTION = ("Many apworlds don't play nicely outside the official launcher environment. We maintain a collection of "
+               "targeted fixes to apworlds to make them function in aplite.")
+
+
+class ClientFixesScreen(Screen[None]):
+    """A screen, so it opens on top of the launcher (no reload just to check). Installing or removing an update
+    restarts the launcher when this closes: clients run in the launcher's process, which loaded the old fixes."""
     CSS = """
-    #status { padding: 1 2 0 2; height: auto; }
-    #buttons { height: auto; padding: 1 2; }
-    #buttons Button { margin-right: 2; }
-    VerticalScroll { height: 1fr; border-top: solid $panel; padding: 0 2; }
+    ClientFixesScreen #intro { height: auto; padding: 1 1; }
+    ClientFixesScreen VerticalScroll { height: 1fr; border-top: solid $panel; padding: 0 1; }
+    ClientFixesScreen #status { height: 1; padding: 0 1; color: $text-muted; }
     """
+    BINDINGS = [Binding("ctrl+r", "check", "Check for updates"), Binding("ctrl+u", "install", "Install update"),
+                Binding("ctrl+t", "remove", "Remove update"), Binding("escape", "close", "Close")]
 
     def __init__(self) -> None:
         super().__init__()
         self.remote: str | None = None
+        self.checking = False
+        self.changed = False
+        """An update was installed or removed: the launcher restarts on close."""
 
     def compose(self) -> ComposeResult:
-        yield Static(id="status")
-        with Horizontal(id="buttons"):
-            yield Button("Check for updates", id="check", compact=True, variant="primary")
-            yield Button("Install update", id="install", compact=True, disabled=True)
-            yield Button("Remove update", id="remove", compact=True)
+        yield Static(Text.assemble((TITLE, "bold"), "\n", (DESCRIPTION, "dim")), id="intro")
         with VerticalScroll():
             yield Static(id="details")
+        yield Static(id="status")
         yield Footer()
 
     def on_mount(self) -> None:
         self.show_local()
 
+    def installed(self) -> bool:
+        return client_fixes.active_path() != client_fixes.BUNDLED
+
+    def status(self, message: str = "") -> None:
+        source = "a downloaded update" if self.installed() else "the fixes included with this version"
+        default = f"Using {source}." + ("" if packaged() else " Running from source: git pull gets new fixes.")
+        self.query_one("#status", Static).update(message or default)
+        self.refresh_bindings()
+
     def show_local(self, message: str = "") -> None:
-        path = client_fixes.active_path()
-        source = client_fixes.read_text(path)
-        log = client_fixes.read_log(source)
-        installed = path != client_fixes.BUNDLED
-        status = Text.assemble(
-            ("Fixes for game clients that break in aplite. ", "bold"),
-            "They can be updated between releases; a fix only affects its own game's client.\n",
-            f"In use: {'downloaded update' if installed else 'the fixes included with this version'} "
-            f"({len(log)} log entr{'y' if len(log) == 1 else 'ies'}).")
-        if not packaged():
-            status.append("\nRunning from source: update your checkout (git pull) to get new fixes.", "dim")
-        if message:
-            status.append(f"\n{message}", "bold")
-        self.query_one("#status", Static).update(status)
-        self.query_one("#remove", Button).display = installed and packaged()
-        self.query_one("#install", Button).display = packaged()
+        source = client_fixes.read_text(client_fixes.active_path())
+        packages = client_fixes.world_packages()
         details = Text()
         details.append("Fixes\n", "bold underline")
         for game, entry in sorted(client_fixes.read_entries(source).items()):
             versions = f" (made for {', '.join(entry.versions)})" if entry.versions else ""
             details.append(f"{game}{versions}", "bold")
             details.append(f": {entry.why}\n")
-        packages = client_fixes.world_packages()
         details.append("\nSource patches\n", "bold underline")
         for patch in client_fixes.read_patches(source):
             details.append(packages.get(patch.why.split("/")[0], patch.why.split("/")[0]), "bold")
             details.append(f" ({patch.why})\n")
         details.append("\nLog\n", "bold underline")
-        for line in reversed(log):
+        for line in reversed(client_fixes.read_log(source)):
             details.append(f"{line}\n")
         self.query_one("#details", Static).update(details)
+        self.status(message)
 
-    @on(Button.Pressed, "#check")
-    def check(self) -> None:
-        self.query_one("#check", Button).disabled = True
-        self.query_one("#status", Static).update("Checking…")
+    def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
+        if action == "install":
+            return self.remote is not None and packaged()
+        if action == "remove":
+            return packaged() and self.installed()
+        if action == "check":
+            return None if self.checking else True  # shown, greyed out while checking
+        if action == "close":
+            return self.app.screen_stack[0] is not self  # on top of the launcher, not alone
+        return True
+
+    def action_check(self) -> None:
+        if self.checking:
+            return
+        self.checking = True
+        self.status("Checking for updates…")
         self.download()
 
     @work(thread=True, exclusive=True)
@@ -224,55 +241,70 @@ class ClientFixesApp(AppliteApp):
             client_fixes.read_log(source)
         except Exception as e:
             source, error = None, str(e)
-        self.call_from_thread(self.downloaded, source, error)
+        self.app.call_from_thread(self.downloaded, source, error)
 
     def downloaded(self, source: str | None, error: str | None) -> None:
-        self.query_one("#check", Button).disabled = False
+        self.checking = False
         if source is None:
-            self.show_local(f"Couldn't check for updates: {error}")
+            self.status(f"Couldn't check for updates: {error}")
             return
         local = local_source()
         if not newer(source, local):
-            self.show_local("Up to date.")
+            self.status("Up to date.")
             return
         self.remote = source
         known = set(client_fixes.read_log(local))
         new_lines = [line for line in client_fixes.read_log(source) if line not in known]
-        self.show_local("An update is available" + (": install it, then restart your clients." if packaged() else
-                                                    ": update your checkout (git pull) to get it."))
-        self.query_one("#install", Button).disabled = not packaged()
         details = Text()
         details.append("New in the update\n", "bold underline")
         for line in reversed(new_lines):
             details.append(f"{line}\n")
         self.query_one("#details", Static).update(details)
+        self.status("An update is available: Ctrl+U installs it." if packaged() else
+                    "An update is available: update your checkout (git pull) to get it.")
 
-    @on(Button.Pressed, "#install")
-    def install_update(self) -> None:
+    def action_install(self) -> None:
         if self.remote is None:
             return
         try:
             install(self.remote)
         except (OSError, ValueError) as e:
+            self.remote = None
             self.show_local(f"Not installed: {e}")
-        else:
-            self.show_local("Installed. Restart any open clients to use it.")
+            return
         self.remote = None
-        self.query_one("#install", Button).disabled = True
+        self.changed = True
+        self.show_local("Installed." + (" The launcher restarts when you close this, to use it."
+                                        if self.check_action("close", ()) else " Restart any open clients to use it."))
 
-    @on(Button.Pressed, "#remove")
-    def remove_update(self) -> None:
-        removed = uninstall()
-        self.show_local("Removed the downloaded update; using the fixes included with this version." if removed else
-                        "")
+    def action_remove(self) -> None:
+        if uninstall():
+            self.changed = True
+            self.show_local("Removed the downloaded update." + (" The launcher restarts when you close this."
+                                                                if self.check_action("close", ()) else ""))
+
+    def action_close(self) -> None:
+        if self.changed:
+            from aplite import nav
+            nav.next_step = "launcher"  # __main__ starts a fresh launcher, which loads the new fixes
+            self.app.exit()
+        else:
+            self.dismiss()
+
+
+class ClientFixesApp(AppliteApp):
+    TITLE = TITLE
+
+    def get_default_screen(self) -> Screen:
+        return ClientFixesScreen()
 
 
 def component():
     """Launcher entry for this tool (added to the component list by aplite)."""
     from worlds.LauncherComponents import Component, Type
-    return Component("Client fixes", func=run, component_type=Type.TOOL,
-                     description="Fixes for game clients that break in aplite, updated between releases: check for "
-                                 "and install them.")
+    return Component(TITLE, func=run, component_type=Type.TOOL,
+                     description="Fixes that make apworlds' clients work in aplite: check for updates and install "
+                                 "them.")
 
 
 def run(*args: str) -> None:  # a component func: the launcher may pass args, which it doesn't use

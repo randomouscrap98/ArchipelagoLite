@@ -213,6 +213,8 @@ def list_components() -> None:
 def launch_from_launcher() -> None:
     choice = launcher.pick(load)
     if not choice:
+        if nav.next_step == "launcher":  # a launcher screen asked for a fresh launcher (e.g. client fixes installed)
+            back_to_launcher()
         return
     component, args, come_back = choice
     run(component, args, come_back)
@@ -241,6 +243,10 @@ def run(component, args: tuple[str, ...], come_back: bool) -> None:
         return
     if crashed or (nav.next_step is None and components.pauses_after(component)):
         aplite.wait_for_enter()
+    back_to_launcher()
+
+
+def back_to_launcher() -> None:
     # a fresh process rather than looping, so nothing the component left behind leaks into the launcher
     bytecode_cache.flush()  # what the component imported (execve skips atexit)
     if background.in_spare:
