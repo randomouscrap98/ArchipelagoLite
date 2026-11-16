@@ -30,6 +30,7 @@ LOG = [
     "2026-11-08 Universal Tracker: /get_logical_path works without the GUI",
     "2026-11-15 Banjo-Tooie: error on connect and on every received item (GUI items tab)",
     "2026-11-15 Banjo-Tooie: patches the ROM and starts the /autostart program on start, like its GUI",
+    "2026-11-16 Metroid: Samus Returns: client tab flooded with debug packet logs",
 ]
 
 
@@ -49,6 +50,12 @@ def _bt_patch_and_run(ctx) -> None:
         ctx._aplite_patch_task = asyncio.create_task(patch_and_run(True), name="Banjo-Tooie patch_and_run")
 
 
+def _info_only_log(ctx) -> None:
+    import logging
+    from aplite.tui import log_buffer
+    log_buffer.setLevel(logging.INFO)  # aplite 15 does this for every client
+
+
 FIXES = {
     "Warioworld": Fix("WwClient.py: top-level `import kvui` (client can't load without kivy); "
                       "ctx.ui.spritelingcountupdate unguarded in _give_item / give_items / the item prefill (the "
@@ -64,6 +71,10 @@ FIXES = {
                        "ReceivedItems); run_gui is also what starts patch_and_run (patch ROM if missing/outdated, "
                        "then the /autostart program), so it's started here like the GUI does",
                        versions=("4.13.1",), null_attrs=("tab_items",), on_start=_bt_patch_and_run),
+    "Metroid: Samus Returns": Fix("client.py launch: Utils.init_logging(loglevel=logging.DEBUG) sets the root logger to "
+                                  "DEBUG and connector.py logs every game packet at debug; kvui's log handler is INFO "
+                                  "so its GUI hides them, aplite's LogBuffer (before 15) had no level",
+                                  versions=("0.3.2",), on_start=_info_only_log),
 }
 """Runtime fixes, game -> Fix (aplite/client_fixes.py)."""
 
