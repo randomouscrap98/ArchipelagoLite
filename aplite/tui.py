@@ -70,7 +70,7 @@ class LogBuffer(logging.Handler):
     replayed, and forwards new ones to the TUI (sink) while it runs."""
 
     def __init__(self) -> None:
-        super().__init__()
+        super().__init__(logging.INFO)  # like upstream kvui's LogtoUI: clients may set root to DEBUG (MSR does)
         self.records: list[tuple[str, str]] = []
         self.sink: typing.Callable[[str, str], None] | None = None
 
