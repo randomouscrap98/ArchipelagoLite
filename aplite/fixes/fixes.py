@@ -31,6 +31,7 @@ LOG = [
     "2026-11-15 Banjo-Tooie: error on connect and on every received item (GUI items tab)",
     "2026-11-15 Banjo-Tooie: patches the ROM and starts the /autostart program on start, like its GUI",
     "2026-11-16 Metroid: Samus Returns: client tab flooded with debug packet logs",
+    "2026-11-18 A Space Archipelago: closing the game returns to the launcher instead of quitting aplite",
 ]
 
 
@@ -56,6 +57,12 @@ def _info_only_log(ctx) -> None:
     log_buffer.setLevel(logging.INFO)  # aplite 15 does this for every client
 
 
+def _back_to_launcher(ctx) -> None:
+    from aplite import nav
+    if nav.next_step is None:
+        nav.next_step = "launcher"  # as ctrl+l would; ctrl+q still sets "quit" (aplite 15: components.py returns=True)
+
+
 FIXES = {
     "Warioworld": Fix("WwClient.py: top-level `import kvui` (client can't load without kivy); "
                       "ctx.ui.spritelingcountupdate unguarded in _give_item / give_items / the item prefill (the "
@@ -75,6 +82,9 @@ FIXES = {
                                   "DEBUG and connector.py logs every game packet at debug; kvui's log handler is INFO "
                                   "so its GUI hides them, aplite's LogBuffer (before 15) had no level",
                                   versions=("0.3.2",), on_start=_info_only_log),
+    "A Space Archipelago": Fix("client.py sap_game_watcher sets ctx.exit_event when the game process exits, so "
+                               "closing the game ends the client and, by aplite's clients-quit rule, aplite; users "
+                               "want the launcher back instead", on_start=_back_to_launcher),
 }
 """Runtime fixes, game -> Fix (aplite/client_fixes.py)."""
 
