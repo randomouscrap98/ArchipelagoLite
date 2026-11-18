@@ -153,6 +153,11 @@ def overrides() -> dict[typing.Callable | str, Override]:
         table[apquest_client] = Override(supported=False)  # the game itself is a kivy window
     except ImportError:  # the world was removed
         pass
+    try:
+        from worlds.sap import launch_client as sap_client
+        table[sap_client] = Override(returns=True)  # its client exits when the game does: back to the launcher (users)
+    except ImportError:  # optional custom apworld
+        pass
     manager = apworld_manager.launch_func()  # an optional custom apworld: its UIs are kivy/curses
     if manager:
         table[manager] = Override(run=apworld_manager.run)
