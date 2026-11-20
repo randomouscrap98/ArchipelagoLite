@@ -149,6 +149,12 @@ def version_text(manager, remote) -> str:
     return text + (" (beta)" if looks_like_beta(manager, remote) else "")
 
 
+def release_order(manager, remote) -> tuple:
+    """Sort key for the version picker: release date, then version (469 worlds have same-timestamp entries, such as
+    re-uploads). Dates read better than versions, which often don't follow the releases (user, 2026-11-20)."""
+    return remote.created_at or "", manager.parse_version(remote.world_version)
+
+
 def release_page(download: str | None) -> str | None:
     """The release page (notes, changelog) of a GitHub release download URL, else None."""
     match = RELEASE_DOWNLOAD.match(download or "")
@@ -184,12 +190,14 @@ class VersionPicker(ModalScreen):
     """
     BINDINGS = [Binding("escape", "cancel", "Cancel"), Binding("ctrl+o", "open_release", "Open release page")]
 
-    def __init__(self, title: str, versions: list, installed, manager) -> None:
-        """versions: ApWorldMetadata newest first; installed: the installed version (parsed) or None."""
+    def __init__(self, title: str, versions: list, installed, manager, installed_remote=None) -> None:
+        """versions: ApWorldMetadata newest release first (release_order); installed: the installed version (parsed)
+        or None; installed_remote: its index entry, when known (then "older" means released before it)."""
         super().__init__()
         self.title_text = title
         self.versions = versions
         self.installed = installed
+        self.installed_remote = installed_remote
         self.manager = manager
         self.parse = manager.parse_version
         self.newest_by_hash: dict[str, str] = {}
@@ -223,6 +231,18 @@ class VersionPicker(ModalScreen):
         newest = self.newest_by_hash.get(version.data.get("hash_sha256"), version.world_version)
         return newest if newest != version.world_version else None
 
+    def is_installed(self, version) -> bool:
+        if self.installed_remote is not None:
+            return version.data.get("hash_sha256") == self.installed_remote.data.get("hash_sha256") and \
+                version.world_version == self.installed_remote.world_version
+        return self.installed is not None and self.parse(version.world_version) == self.installed
+
+    def older(self, version) -> bool:
+        """Released before the installed version (the list's order), or by version when that entry isn't known."""
+        if self.installed_remote is not None:
+            return release_order(self.manager, version) < release_order(self.manager, self.installed_remote)
+        return self.installed is not None and self.parse(version.world_version) < self.installed
+
     def prerelease(self, version) -> bool:
         return looks_like_beta(self.manager, version)
 
@@ -235,7 +255,7 @@ class VersionPicker(ModalScreen):
             parts.append(f"[$error]replaced with {newest}[/]")
         if self.prerelease(version):
             parts.append("[$warning]beta[/]")
-        if self.installed is not None and self.parse(version.world_version) == self.installed:
+        if self.is_installed(version):
             parts.append("[$success]installed[/]")
         if repo_change(version, self.versions[0]):
             parts.append("[$warning]\\[!][/]")
@@ -254,8 +274,8 @@ class VersionPicker(ModalScreen):
             if change := repo_change(version, self.versions[0]):
                 lines.append(f"[$warning]\\[!] from {change}:[/] {short_repo(release_repo(download))} (the newest version "
                              f"is from {short_repo(release_repo(self.versions[0].data.get('world')))})")
-            if self.installed is not None and self.parse(version.world_version) < self.installed:
-                lines.append("Older than installed: Enter twice to downgrade.")
+            if self.older(version):
+                lines.append("Released before the installed version: Enter twice to downgrade.")
             if newest := self.replaced_by(version):
                 lines.append(f"Replaced with {newest}: author changed release, you will not get "
                              f"{version.world_version}.")
@@ -280,9 +300,9 @@ class VersionPicker(ModalScreen):
         event.stop()
         index = event.option_index
         version = self.versions[index]
-        older = self.installed is not None and self.parse(version.world_version) < self.installed
-        if older and not self.confirm_downgrade(self, index, f"{version.world_version} is older than the installed "
-                                                                  f"version: a downgrade. Press Enter again to install it."):
+        if self.older(version) and not self.confirm_downgrade(
+                self, index, f"{version.world_version} was released before the installed version: a downgrade. "
+                             f"Press Enter again to install it."):
             return
         self.dismiss(version)
 
@@ -545,7 +565,7 @@ class ManagerApp(nav.AppliteApp):
         if not (dates := self.older_release(world)):
             return ""
         return (f"[$warning]\\[!] the update is an older release than installed ({dates[0]} vs {dates[1]}):[/] its "
-                f"version number may be wrong. Ctrl+Y lists versions with release tags.")
+                f"version number may be wrong. Ctrl+Y lists releases by date.")
 
     def on_input_submitted(self, event: FilterInput.Submitted) -> None:
         event.stop()
@@ -608,13 +628,14 @@ class ManagerApp(nav.AppliteApp):
         if not listed:
             self.status(f"No versions listed for {world['title']}.")
             return
-        versions = sorted(listed.values(), key=lambda r: parse(r.world_version), reverse=True)
+        versions = sorted(listed.values(), key=lambda r: release_order(self.manager, r), reverse=True)
         installed = parse(world["installed_version"]) if world["installed"] and world.get("installed_version") else None
 
         def picked(version) -> None:
             if version is not None:
                 self.install({**world, "latest_version": version}, version.world_version)
-        self.push_screen(VersionPicker(world["title"], versions, installed, self.manager), picked)
+        self.push_screen(VersionPicker(world["title"], versions, installed, self.manager,
+                                       world.get("installed_remote")), picked)
 
     @work(thread=True, exclusive=True)
     def install(self, world: dict, version: str | None = None) -> None:
