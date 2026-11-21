@@ -5,6 +5,7 @@ import asyncio
 import functools
 import logging
 import sys
+import traceback
 import typing
 
 from rich.segment import Segment
@@ -330,6 +331,26 @@ class ClientApp(AppliteApp):
         self._hints_snapshot: list | None = None
         self._hint_rows: list[tuple[dict, int, bool]] = []
         """(hint, status, editable) per hints table row; row keys index this."""
+        self._world_errors: set[tuple] = set()
+        """World UI errors already logged (_handle_exception): (type, file, line)."""
+
+    def _handle_exception(self, error: Exception) -> None:
+        """Textual exits on any error in a widget. One in a world's own UI code (a client's aplite_tabs, Universal
+        Tracker's pane) is logged instead, once per place (those tabs refresh on timers), and the client keeps
+        running; that tab may stop updating. Errors elsewhere still exit."""
+        try:
+            from aplite import client_fixes
+            game = client_fixes.game_for_traceback(error.__traceback__)
+        except Exception:
+            game = None
+        if game is None:
+            return super()._handle_exception(error)
+        frame = traceback.extract_tb(error.__traceback__)[-1]
+        key = (type(error), frame.filename, frame.lineno)
+        if key not in self._world_errors:
+            self._world_errors.add(key)
+            logging.getLogger("Client").error(f"Error in {game}'s client UI; the client keeps running, but its tab "
+                                              f"may stop updating:", exc_info=error)
 
     def compose(self) -> ComposeResult:
         with Horizontal(id="connect-bar"):

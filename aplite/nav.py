@@ -189,6 +189,17 @@ class AppliteApp(App):
         if hasattr(signal, "SIGHUP") and _stdin_is_tty():
             self.set_interval(TTY_CHECK, self.check_terminal)
 
+    def _fatal_error(self) -> None:
+        """Textual's crash report (App._fatal_error) without locals: it prints every frame's variables in full, and a
+        client's name tables (every game's items and locations) took minutes to render and overflowed the console."""
+        import rich
+        from rich.segment import Segments
+        from rich.traceback import Traceback
+        self.bell()
+        traceback = Traceback(width=None, suppress=[rich])
+        self._exit_renderables.append(Segments(self.console.render(traceback, self.console.options)))
+        self._close_messages_no_wait()
+
     def check_terminal(self) -> None:
         """A closed terminal that didn't kill us (SIGHUP ignored or never delivered) makes stdin read EOF forever,
         and Textual's input thread spins on it at 100% CPU: die the way the hangup should have made us."""
