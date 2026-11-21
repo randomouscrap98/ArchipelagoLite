@@ -81,6 +81,16 @@ def supported(ctx: CommonContext) -> bool:
     return hasattr(ctx, "tracker_core")
 
 
+# UT's tab completion: commands whose argument is an item or location name (used by tui.CommandSuggester).
+# /get_logical_path also takes region names; not completed (would need UT's generated world).
+ARG_KINDS = {"/manually_collect": "item", "/get_logical_path": "location", "/explain": "location",
+             "/ignore": "location", "/unignore": "location"}
+
+
+def arg_kinds(ctx: CommonContext) -> dict[str, str]:
+    return ARG_KINDS if supported(ctx) else {}
+
+
 def find_nearest(lines: list, line, index: int) -> int:
     """Index of the `line` in `lines` closest to `index`, or `index` if it's gone."""
     matches = [i for i, other in enumerate(lines) if other == line]

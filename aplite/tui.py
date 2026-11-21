@@ -143,8 +143,13 @@ class SelectableLog(RichLog):
         return line.crop_extend(scroll_x, scroll_x + width, self.rich_style).apply_offsets(scroll_x, y)
 
 
+# server commands whose argument is an item or location name of the slot's game; client-specific ones (Universal
+# Tracker's) come from tracker.arg_kinds
+ARG_KINDS = {"!hint": "item", "!hint_location": "location"}
+
+
 class CommandSuggester(Suggester):
-    """Inline completion for /local and !server commands, and item/location names after !hint / !hint_location."""
+    """Inline completion for /local and !server commands, and item/location names after the arg_kinds commands."""
 
     def __init__(self, ctx: CommonContext) -> None:
         super().__init__(use_cache=False, case_sensitive=False)
@@ -153,6 +158,7 @@ class CommandSuggester(Suggester):
         self.local = sorted(f"/{name}" for name in ctx.command_processor.commands)
         self.server = sorted(f"!{name}" for name in ClientMessageProcessor.commands)
         self._names: dict[tuple[str, str], list[str]] = {}
+        self.arg_kinds = {**ARG_KINDS, **tracker.arg_kinds(ctx)}
 
     def names(self, kind: str) -> list[str]:
         game = self.ctx.game
@@ -171,7 +177,7 @@ class CommandSuggester(Suggester):
         if not space:
             candidates = self.local if value.startswith("/") else self.server if value.startswith("!") else []
             return next((c for c in candidates if c.casefold().startswith(value)), None)
-        kind = {"!hint": "item", "!hint_location": "location"}.get(command)
+        kind = self.arg_kinds.get(command)
         if not kind or not arg:
             return None
         name = next((n for n in self.names(kind) if n.casefold().startswith(arg)), None)
