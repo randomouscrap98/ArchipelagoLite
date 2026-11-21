@@ -194,6 +194,10 @@ class CommandInput(Input):
         self.history_index = 0
 
     def action_accept_suggestion(self) -> None:
+        """Tab takes the suggestion shown; with none, Tab moves focus as everywhere else (no keyboard trap)."""
+        if len(self._suggestion) <= len(self.value) or self.cursor_position < len(self.value):
+            from textual.actions import SkipAction
+            raise SkipAction()
         self.action_cursor_right()  # at the end of the line this accepts the suggestion
 
     def remember(self, text: str) -> None:
@@ -433,7 +437,8 @@ class ClientApp(AppliteApp):
     # alt+digit is unreliable (textual reads ESC 3 as the pound key), ctrl+pageup/pagedown are terminal tab keys (GNOME
     # Terminal, Konsole...): Ctrl+N / Ctrl+B switch tabs on every aplite screen with tabs
     BINDINGS = [("ctrl+n", "switch_tab(1)", "Next tab"), ("ctrl+b", "switch_tab(-1)", "Prev tab"),
-                ("ctrl+t", "focus_address", "Address"), Binding("ctrl+f", "focus_search", "Search")]
+                ("ctrl+t", "focus_address", "Address"), Binding("ctrl+f", "focus_search", "Search"),
+                Binding("escape", "focus_command", show=False)]  # widgets' own Esc (clear a filter...) go first
 
     def __init__(self, ctx: CommonContext) -> None:
         super().__init__()

@@ -359,6 +359,8 @@ class AddSlotModal(ModalScreen[str | None]):
         options.clear_options()
         query = query.strip().casefold()
         matches = [(name, game) for name, game in self.players if query in name.casefold()]
+        # the exact name first, then names starting with it: "Bob" must not pick "Bobby" listed before it
+        matches.sort(key=lambda pair: (pair[0].casefold() != query, not pair[0].casefold().startswith(query)))
         options.add_options([Option(Text.assemble(name, (f"  {game}", "dim")), id=name) for name, game in matches])
         options.display = bool(matches)
         if query:
@@ -441,7 +443,8 @@ class MultiClientApp(AppliteApp):
                 Binding("ctrl+g", "toggle_slots", "Slots"), Binding("ctrl+y", "add_slot", "Add slot"),
                 Binding("ctrl+r", "close_slot", "Close slot"), Binding("ctrl+o", "load", "Load"),
                 Binding("ctrl+s", "save", "Save"), Binding("ctrl+t", "focus_address", "Address", show=False),
-                Binding("ctrl+f", "focus_search", "Search", show=False)]
+                Binding("ctrl+f", "focus_search", "Search", show=False),
+                Binding("escape", "focus_command", show=False)]  # to the input; nothing in "All slots" (input off)
 
     def __init__(self, log: MultiLog) -> None:
         super().__init__()
