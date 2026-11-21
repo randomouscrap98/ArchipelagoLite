@@ -201,6 +201,8 @@ _speedups.html
 #undertale stuff
 /Undertale/
 
+/*.json
+
 # OS General Files
 .DS_Store
 .AppleDouble

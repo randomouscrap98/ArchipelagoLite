@@ -131,6 +131,24 @@ def game_ports(config: dict[str, typing.Any]) -> list[int]:
     return list(range(config["game_port"], config["game_port"] + max(1, config["room_count"])))
 
 
+def clear_stray_ports(config: dict[str, typing.Any], info: Info | None = None) -> int:
+    """Forget remembered ports outside game_ports (only `info`'s room if given); returns how many. Upstream binds a
+    room's last_port again on every start without checking the range, so a game hosted while room_count or game_port
+    were different kept its old (maybe unforwarded) port. Cleared, upstream picks one in range. -1 (failed) is left:
+    upstream retries it, fails, then picks in range."""
+    ports = game_ports(config)
+    query, params = "UPDATE Room SET last_port = 0 WHERE last_port > 0 AND (last_port < ? OR last_port > ?)", \
+        [ports[0], ports[-1]]
+    if info is not None:
+        query += " AND id = ?"
+        params.append(_room_key(info))
+    try:
+        with _db() as db:
+            return db.execute(query, params).rowcount
+    except sqlite3.Error:
+        return 0  # no DB yet
+
+
 # --- server process ---
 
 def server_status() -> dict[str, typing.Any] | None:
@@ -264,6 +282,7 @@ def activate(info: Info, config: dict[str, typing.Any]) -> str | None:
         return (f"All {config['room_count']} room(s) are in use: deactivate a game first, or raise room_count in "
                 "Settings (and forward the extra port).")
     _save_active(ids + [info["room"]])
+    clear_stray_ports(config, info)
     with _db() as db:  # an /exit left from deactivating it would stop it again at once
         db.execute("DELETE FROM Command WHERE room = ? AND commandtext = '/exit'", (_room_key(info),))
     wake(info)

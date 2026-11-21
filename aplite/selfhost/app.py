@@ -152,11 +152,14 @@ class ServerSettingsScreen(MasterDetailScreen, ModalScreen):
 
 
 class GamesList(OptionList):
-    """A click only highlights a game; Enter (OptionSelected) shows it."""
+    """A click only highlights a game; a double click or Enter (OptionSelected) shows it."""
     async def _on_click(self, event) -> None:  # Textual's private click handler: re-check on Textual bumps
+        event.prevent_default()  # else OptionList._on_click still runs (handlers run down the MRO) and selects
         option = event.style.meta.get("option")
         if option is not None and not self.get_option_at_index(option).disabled:
             self.highlighted = option
+            if event.chain == 2:
+                self.action_select()
 
 
 def already_loaded(path: str) -> selfhost.Info | None:

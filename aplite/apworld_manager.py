@@ -123,6 +123,38 @@ def release_repo(download: str | None) -> str | None:
     return match.group(1) if match else None
 
 
+def release_tag(download: str | None) -> str | None:
+    """The git tag of a GitHub release download URL. Not the index's tag_version: that comes from the manifest."""
+    match = RELEASE_DOWNLOAD.match(download or "")
+    return match.group(2) if match else None
+
+
+def shown_tag(manager, remote) -> str | None:
+    """The release tag when it says something other than the version: the index's versions come from the apworld's
+    manifest, which some authors never bump (Crossword's v0.1.1-v0.1.6 are 0.0.0 to 0.0.0.post5)."""
+    tag = release_tag(remote.data.get("world"))
+    return tag if tag and manager.parse_version(tag) != manager.parse_version(remote.world_version) else None
+
+
+def looks_like_beta(manager, remote) -> bool:
+    """A prerelease by the index's flag (GitHub's prerelease flag, in metadata.flags) or by its version (1.7b5)."""
+    return remote.is_prerelease or manager.parse_version(remote.world_version).is_prerelease
+
+
+def version_text(manager, remote) -> str:
+    """A version for the details line: with its release tag when that differs, and (beta)."""
+    text = remote.world_version
+    if tag := shown_tag(manager, remote):
+        text += f" ({tag})"
+    return text + (" (beta)" if looks_like_beta(manager, remote) else "")
+
+
+def release_order(manager, remote) -> tuple:
+    """Sort key for the version picker: release date, then version (469 worlds have same-timestamp entries, such as
+    re-uploads). Dates read better than versions, which often don't follow the releases (user, 2026-11-20)."""
+    return remote.created_at or "", manager.parse_version(remote.world_version)
+
+
 def release_page(download: str | None) -> str | None:
     """The release page (notes, changelog) of a GitHub release download URL, else None."""
     match = RELEASE_DOWNLOAD.match(download or "")
@@ -158,13 +190,16 @@ class VersionPicker(ModalScreen):
     """
     BINDINGS = [Binding("escape", "cancel", "Cancel"), Binding("ctrl+o", "open_release", "Open release page")]
 
-    def __init__(self, title: str, versions: list, installed, parse) -> None:
-        """versions: ApWorldMetadata newest first; installed: the installed version (parsed) or None."""
+    def __init__(self, title: str, versions: list, installed, manager, installed_remote=None) -> None:
+        """versions: ApWorldMetadata newest release first (release_order); installed: the installed version (parsed)
+        or None; installed_remote: its index entry, when known (then "older" means released before it)."""
         super().__init__()
         self.title_text = title
         self.versions = versions
         self.installed = installed
-        self.parse = parse
+        self.installed_remote = installed_remote
+        self.manager = manager
+        self.parse = manager.parse_version
         self.newest_by_hash: dict[str, str] = {}
         """File hash -> the newest version with it: an author re-uploading a newer file to an older release leaves the
         older version pointing at the newer file (Balatro's v0.1.9e now serves post3's file)."""
@@ -196,17 +231,31 @@ class VersionPicker(ModalScreen):
         newest = self.newest_by_hash.get(version.data.get("hash_sha256"), version.world_version)
         return newest if newest != version.world_version else None
 
+    def is_installed(self, version) -> bool:
+        if self.installed_remote is not None:
+            return version.data.get("hash_sha256") == self.installed_remote.data.get("hash_sha256") and \
+                version.world_version == self.installed_remote.world_version
+        return self.installed is not None and self.parse(version.world_version) == self.installed
+
+    def older(self, version) -> bool:
+        """Released before the installed version (the list's order), or by version when that entry isn't known."""
+        if self.installed_remote is not None:
+            return release_order(self.manager, version) < release_order(self.manager, self.installed_remote)
+        return self.installed is not None and self.parse(version.world_version) < self.installed
+
     def prerelease(self, version) -> bool:
-        return version.is_prerelease or self.parse(version.world_version).is_prerelease  # flagged, or a1/b2/rc0/dev
+        return looks_like_beta(self.manager, version)
 
     def label(self, version, width: int) -> str:
         date = (version.created_at or "")[:10]
         parts = [f"{version.world_version:<{width}}", f"{date:<10}", f"{size_label(version.data.get('size')):>8}"]
+        if tag := shown_tag(self.manager, version):
+            parts.append(f"[$text-muted]{tag}[/]")
         if newest := self.replaced_by(version):
             parts.append(f"[$error]replaced with {newest}[/]")
         if self.prerelease(version):
-            parts.append("[$warning]prerelease[/]")
-        if self.installed is not None and self.parse(version.world_version) == self.installed:
+            parts.append("[$warning]beta[/]")
+        if self.is_installed(version):
             parts.append("[$success]installed[/]")
         if repo_change(version, self.versions[0]):
             parts.append("[$warning]\\[!][/]")
@@ -225,13 +274,13 @@ class VersionPicker(ModalScreen):
             if change := repo_change(version, self.versions[0]):
                 lines.append(f"[$warning]\\[!] from {change}:[/] {short_repo(release_repo(download))} (the newest version "
                              f"is from {short_repo(release_repo(self.versions[0].data.get('world')))})")
-            if self.installed is not None and self.parse(version.world_version) < self.installed:
-                lines.append("Older than installed: Enter twice to downgrade.")
+            if self.older(version):
+                lines.append("Released before the installed version: Enter twice to downgrade.")
             if newest := self.replaced_by(version):
                 lines.append(f"Replaced with {newest}: author changed release, you will not get "
                              f"{version.world_version}.")
             if self.prerelease(version):
-                lines.append("Prerelease: may be unfinished or unstable.")
+                lines.append("Beta (prerelease): may be unfinished or unstable.")
         self.query_one("#picker-info", Static).update("\n".join(lines))
         self.query_one("#picker-doc", TextScroll).scroll_home(animate=False)
 
@@ -251,9 +300,9 @@ class VersionPicker(ModalScreen):
         event.stop()
         index = event.option_index
         version = self.versions[index]
-        older = self.installed is not None and self.parse(version.world_version) < self.installed
-        if older and not self.confirm_downgrade(self, index, f"{version.world_version} is older than the installed "
-                                                                  f"version: a downgrade. Press Enter again to install it."):
+        if self.older(version) and not self.confirm_downgrade(
+                self, index, f"{version.world_version} was released before the installed version: a downgrade. "
+                             f"Press Enter again to install it."):
             return
         self.dismiss(version)
 
@@ -287,6 +336,9 @@ class ManagerApp(nav.AppliteApp):
         self.spin_frame = 0
         self.spin_timer = None
         self.title_width = 0
+        self.pending: dict[str, str] = {}
+        """World id -> version installed this session: it only loads once the launcher restarts, so until then the
+        loaded (old) world would make the row offer the update again."""
 
     def world_table(self) -> list[dict]:
         """refresh_apworld_table, with the latest version of uninstalled worlds picked by full version: it compares only
@@ -296,9 +348,71 @@ class ManagerApp(nav.AppliteApp):
             worlds = self.manager.refresh_apworld_table()
         for world in worlds:
             listed = remotes(self.manager, world["id"])
-            if not world["installed"] and world.get("latest_version") and listed:
-                world["latest_version"] = newest(self.manager, listed.values())
+            if world.get("latest_version") and listed:
+                self.pick_latest(world, listed)
+            if world["id"] in self.pending:
+                world["install_text"] = f"Installed {self.pending[world['id']]}, restart to load"
+        worlds.sort(key=lambda w: (100 - w["sort"], self.manager.sort_title(w["title"])))
         return worlds
+
+    def pick_latest(self, world: dict, listed: dict) -> None:
+        """Mark betas on the row ("Update (beta)", "Install (beta)", "1.7b5 (beta)"). Without show_prereleases, skip
+        betas as upstream does for installed worlds (unless the installed one is a beta), but also: for uninstalled
+        worlds (upstream offers the newest, beta or not; still a beta when there is nothing else), and for versions
+        that are betas only by their number (1.7b5, not flagged: 565 index entries, 2026-11)."""
+        from worlds.apworld_manager import RepoWorld
+        manager, stages = self.manager, self.manager.SortStages
+        parse = manager.parse_version
+        installed = world["installed"] and world.get("installed_version")
+        world["installed_remote"] = installed and (self.installed_remote(world) or next(
+            (r for r in listed.values() if parse(r.world_version) == parse(installed)), None)) or None
+        installed_beta = installed and (parse(installed).is_prerelease or bool(
+            world["installed_remote"] and looks_like_beta(manager, world["installed_remote"])))
+        candidates = list(listed.values())
+        if not RepoWorld.settings.show_prereleases and not installed_beta:
+            candidates = [r for r in candidates if not looks_like_beta(manager, r)] or \
+                         ([] if installed else candidates)  # nothing but betas: still installable
+        best = newest(manager, candidates) if candidates else None
+        if not installed:
+            if best:
+                world["latest_version"] = best
+                world["install_text"] = "Install (beta)" if looks_like_beta(manager, best) else "Install"
+            return
+        if world["sort"] == stages.INSTALLED and installed_beta:
+            world["install_text"] = f"{installed} (beta)"
+        if world["sort"] not in (stages.UPDATE_AVAILABLE, stages.BUNDLED_BUT_UPDATABLE):
+            return  # upstream compares every version: only ever an update that becomes up to date here
+        if best is None or parse(best.world_version) <= parse(installed):
+            if bundled_file(world.get("file")):  # what upstream shows for a bundled world without updates
+                world["sort"], world["install_text"], world["description"] = stages.BUNDLED, "-", "Bundled with AP"
+            else:
+                world["sort"], world["install_text"] = stages.INSTALLED, installed
+                world["description"] = "Up to date (newer versions are betas)"
+            world["latest_version"] = best or world["latest_version"]
+            return
+        world["latest_version"] = best
+        world["description"] = f"Update available: {installed} -> {best.world_version}"
+        if world["sort"] == stages.UPDATE_AVAILABLE:
+            world["install_text"] = "Update (beta)" if looks_like_beta(manager, best) else "Update"
+
+    def installed_remote(self, world: dict):
+        """The index entry of the installed file, by hash (versions repeat: Crossword lists 0.0.0.post2 twice)."""
+        import hashlib
+        try:
+            with open(world["file"], "rb") as f:
+                digest = hashlib.sha256(f.read()).hexdigest()
+        except (OSError, TypeError):
+            return None
+        return self.manager.repositories.find_release_by_hash(digest, world["id"])
+
+    def older_release(self, world: dict) -> tuple[str, str] | None:
+        """(latest date, installed date) when the offered update was uploaded before the installed file: the version
+        numbers are probably wrong (Crossword's v0.1.0 says 0.1.0, its newer releases 0.0.0.postN)."""
+        installed, latest = world.get("installed_remote"), world.get("latest_version")
+        if world["sort"] != self.manager.SortStages.UPDATE_AVAILABLE or not installed or not latest:
+            return None
+        mine, theirs = (installed.created_at or "")[:10], (latest.created_at or "")[:10]
+        return (theirs, mine) if theirs and mine and theirs < mine else None
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -374,7 +488,7 @@ class ManagerApp(nav.AppliteApp):
         """A world's row: title and action, or a rainbow spinner and the phase while it's installing."""
         title = f"{world['title']:<{self.title_width}}  "
         if not self.working or self.working[0] != world["id"]:
-            return title + world["install_text"]
+            return title + world["install_text"] + ("  \\[!]" if self.older_release(world) else "")
         return Text.assemble(title, spinner.frame(self.spin_frame), f" {self.working[1]}")
 
     def set_working(self, world: dict, phase: str) -> None:
@@ -411,11 +525,14 @@ class ManagerApp(nav.AppliteApp):
         heading = size = description = link = note = ""
         if world:
             latest = world.get("latest_version")
-            version = f"  (latest {latest.world_version})" if latest else ""
+            version = f"  (latest {version_text(self.manager, latest)})" if latest else ""
             if world["installed"]:
-                version = f"  installed {world['installed_version']}{version}"
+                remote = world.get("installed_remote")
+                mine = version_text(self.manager, remote) if remote else world["installed_version"]
+                version = f"  installed {mine}{version}"
                 size = size_text(world.get("file"))
-                if note := self.installed_repo_note(world):
+                note = "\n".join(filter(None, [self.installed_repo_note(world), self.older_note(world)]))
+                if note:
                     version += "  [$warning]\\[!][/]"
             heading = f"[b]{world['title']}[/b]{version}"
             description = world["description"]
@@ -444,6 +561,12 @@ class ManagerApp(nav.AppliteApp):
         return (f"[$warning]\\[!] installed version is from {change}: {short_repo(release_repo(installed.data['world']))}"
                 f"[/] (the newest is from {short_repo(release_repo(latest.data['world']))}). Ctrl+Y lists versions.")
 
+    def older_note(self, world: dict) -> str:
+        if not (dates := self.older_release(world)):
+            return ""
+        return (f"[$warning]\\[!] the update is an older release than installed ({dates[0]} vs {dates[1]}):[/] its "
+                f"version number may be wrong. Ctrl+Y lists releases by date.")
+
     def on_input_submitted(self, event: FilterInput.Submitted) -> None:
         event.stop()
         self.install_highlighted()
@@ -457,6 +580,10 @@ class ManagerApp(nav.AppliteApp):
     def install_highlighted(self) -> None:
         world = self.highlighted()
         if world is None or self.busy:
+            return
+        if world["id"] in self.pending:
+            self.status(f"{world['title']} {self.pending[world['id']]} is installed: it loads when aplite restarts. "
+                        f"Ctrl+Y picks another version.")
             return
         if world["install_text"] == "-" or not world.get("latest_version") and world["description"] != CUSTOM_REPO:
             self.status(f"Nothing to install for {world['title']}.")
@@ -480,6 +607,7 @@ class ManagerApp(nav.AppliteApp):
             self.status(f"Couldn't delete {file}: {e}")
             return
         self.worlds.remove(world)
+        self.pending.pop(world["id"], None)
         self.fill(keep_position=True)
         self.status(f"Deleted {file}. It stays loaded (and not installable here) until aplite restarts.")
 
@@ -500,13 +628,14 @@ class ManagerApp(nav.AppliteApp):
         if not listed:
             self.status(f"No versions listed for {world['title']}.")
             return
-        versions = sorted(listed.values(), key=lambda r: parse(r.world_version), reverse=True)
+        versions = sorted(listed.values(), key=lambda r: release_order(self.manager, r), reverse=True)
         installed = parse(world["installed_version"]) if world["installed"] and world.get("installed_version") else None
 
         def picked(version) -> None:
             if version is not None:
                 self.install({**world, "latest_version": version}, version.world_version)
-        self.push_screen(VersionPicker(world["title"], versions, installed, parse), picked)
+        self.push_screen(VersionPicker(world["title"], versions, installed, self.manager,
+                                       world.get("installed_remote")), picked)
 
     @work(thread=True, exclusive=True)
     def install(self, world: dict, version: str | None = None) -> None:
@@ -536,6 +665,7 @@ class ManagerApp(nav.AppliteApp):
                     self.app.call_from_thread(self.status, f"Install failed: {errors[0]}")
                     return
                 self.installed_any = True
+                self.pending[world["id"]] = world["latest_version"].world_version
                 done = f"Installed {name}. New worlds load next time the launcher starts."
             self.app.call_from_thread(self.status, "Refreshing the world list...")
             self.app.call_from_thread(self.set_working, world, "Refreshing...")
@@ -548,6 +678,12 @@ class ManagerApp(nav.AppliteApp):
             self.app.call_from_thread(self.stop_working)
         self.app.call_from_thread(self.loaded, worlds)
         self.app.call_from_thread(self.status, done)
+
+
+def bundled_file(file) -> bool:
+    """An .apworld shipped in the install's worlds folder (dists pack core worlds), not the user's."""
+    from worlds import local_folder
+    return bool(file) and os.path.dirname(os.path.abspath(file)) == os.path.abspath(local_folder)
 
 
 def size_label(size) -> str:

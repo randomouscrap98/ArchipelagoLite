@@ -5,6 +5,7 @@ import asyncio
 import functools
 import logging
 import sys
+import traceback
 import typing
 
 from rich.segment import Segment
@@ -70,7 +71,7 @@ class LogBuffer(logging.Handler):
     replayed, and forwards new ones to the TUI (sink) while it runs."""
 
     def __init__(self) -> None:
-        super().__init__()
+        super().__init__(logging.INFO)  # like upstream kvui's LogtoUI: clients may set root to DEBUG (MSR does)
         self.records: list[tuple[str, str]] = []
         self.sink: typing.Callable[[str, str], None] | None = None
 
@@ -143,8 +144,13 @@ class SelectableLog(RichLog):
         return line.crop_extend(scroll_x, scroll_x + width, self.rich_style).apply_offsets(scroll_x, y)
 
 
+# server commands whose argument is an item or location name of the slot's game; client-specific ones (Universal
+# Tracker's) come from tracker.arg_kinds
+ARG_KINDS = {"!hint": "item", "!hint_location": "location"}
+
+
 class CommandSuggester(Suggester):
-    """Inline completion for /local and !server commands, and item/location names after !hint / !hint_location."""
+    """Inline completion for /local and !server commands, and item/location names after the arg_kinds commands."""
 
     def __init__(self, ctx: CommonContext) -> None:
         super().__init__(use_cache=False, case_sensitive=False)
@@ -153,6 +159,7 @@ class CommandSuggester(Suggester):
         self.local = sorted(f"/{name}" for name in ctx.command_processor.commands)
         self.server = sorted(f"!{name}" for name in ClientMessageProcessor.commands)
         self._names: dict[tuple[str, str], list[str]] = {}
+        self.arg_kinds = {**ARG_KINDS, **tracker.arg_kinds(ctx)}
 
     def names(self, kind: str) -> list[str]:
         game = self.ctx.game
@@ -171,7 +178,7 @@ class CommandSuggester(Suggester):
         if not space:
             candidates = self.local if value.startswith("/") else self.server if value.startswith("!") else []
             return next((c for c in candidates if c.casefold().startswith(value)), None)
-        kind = {"!hint": "item", "!hint_location": "location"}.get(command)
+        kind = self.arg_kinds.get(command)
         if not kind or not arg:
             return None
         name = next((n for n in self.names(kind) if n.casefold().startswith(arg)), None)
@@ -187,6 +194,10 @@ class CommandInput(Input):
         self.history_index = 0
 
     def action_accept_suggestion(self) -> None:
+        """Tab takes the suggestion shown; with none, Tab moves focus as everywhere else (no keyboard trap)."""
+        if len(self._suggestion) <= len(self.value) or self.cursor_position < len(self.value):
+            from textual.actions import SkipAction
+            raise SkipAction()
         self.action_cursor_right()  # at the end of the line this accepts the suggestion
 
     def remember(self, text: str) -> None:
@@ -235,6 +246,118 @@ class HintStatusModal(ModalScreen[int | None]):
     def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
         event.stop()
         self.dismiss(self.statuses[event.option_index])
+
+
+class PasswordCancelled(Exception):
+    """Raised out of server_auth when the password dialog is answered with Disconnect: the server loop ends without
+    reconnecting (install_password_prompt)."""
+
+
+class PasswordModal(ModalScreen[str | None]):
+    """The room's password, asked when the server says it needs one (instead of upstream's console prompt): Connect
+    sends it, Disconnect (or Esc) drops the connection. Small, and the screen behind stays readable."""
+    CSS = """
+    PasswordModal { align: center middle; background: transparent; }
+    PasswordModal > Vertical { width: 52; max-width: 90%; height: auto; padding: 0 1; border: thick $primary;
+                               background: $surface; }
+    PasswordModal Static { padding: 0 0 1 0; }
+    PasswordModal DialogButtons { margin-top: 0; }
+    """
+    BINDINGS = [Binding("escape", "disconnect", "Disconnect")]
+
+    def __init__(self, message: str) -> None:
+        super().__init__()
+        self.message = message
+
+    def compose(self) -> ComposeResult:
+        from aplite.nav import DialogButtons
+        with Vertical():
+            yield Static(self.message)
+            yield Input(password=True, placeholder="Password", id="password-input")
+            with DialogButtons():
+                yield Button("Disconnect", id="password-disconnect")
+                yield Button("Connect", id="password-connect", variant="primary")
+
+    def on_mount(self) -> None:
+        self.query_one("#password-input").focus()
+
+    @on(Input.Submitted, "#password-input")
+    @on(Button.Pressed, "#password-connect")
+    def submit(self, event: Input.Submitted | Button.Pressed) -> None:
+        event.stop()
+        password = self.query_one("#password-input", Input).value
+        if password:
+            self.dismiss(password)
+        else:
+            self.query_one("#password-input").focus()
+
+    @on(Button.Pressed, "#password-disconnect")
+    def action_disconnect(self) -> None:
+        self.dismiss(None)
+
+
+class PasswordAsker:
+    """One password dialog at a time for an app; callers that ask while it's open get the same answer (the multi-slot
+    client's slots all ask at once). `close` answers a dialog left open when the app exits with None."""
+
+    def __init__(self, app: AppliteApp) -> None:
+        self.app = app
+        self.pending: asyncio.Future[str | None] | None = None
+
+    async def ask(self, message: str) -> str | None:
+        if self.pending is None or self.pending.done():
+            future: asyncio.Future[str | None] = asyncio.get_running_loop().create_future()
+            self.pending = future
+
+            def answered(password: str | None) -> None:
+                if not future.done():
+                    future.set_result(password)
+            # pushed from the app's own task (the caller is a client's server loop)
+            self.app.call_later(self.app.push_screen, PasswordModal(message), answered)
+        return await asyncio.shield(self.pending)
+
+    def close(self) -> None:
+        if self.pending and not self.pending.done():
+            self.pending.set_result(None)
+
+
+def password_message(ctx: CommonContext, wrong: bool) -> str:
+    where = (ctx.server_address or "").replace("ws://", "").replace("wss://", "")
+    return (f"[b]Wrong password[/b] for {where}. Try again:" if wrong
+            else f"[b]{where or 'This room'}[/b] needs a password:")
+
+
+def install_password_prompt() -> None:
+    """Every client asks for a room password through upstream's CommonContext.server_auth (directly or by super()):
+    while a client TUI runs, ask with PasswordModal instead of a console prompt. The TUI sets
+    ctx.aplite_ask_password(ctx, wrong) -> password or None. None: disconnect, no auto-reconnect."""
+    from CommonClient import CommonContext, logger
+    original_auth = CommonContext.server_auth
+    original_loss = CommonContext.handle_connection_loss
+
+    async def server_auth(self, password_requested: bool = False):
+        ask = getattr(self, "aplite_ask_password", None)
+        if not (password_requested and not self.password and ask):
+            return await original_auth(self, password_requested)
+        # asked again on the same connection: upstream re-asks after InvalidPassword
+        wrong = self.server is not None and getattr(self, "_aplite_password_server", None) is self.server
+        self._aplite_password_server = self.server
+        password = await ask(self, wrong)
+        if not password:
+            self.disconnected_intentionally = True
+            self.cancel_autoreconnect()
+            raise PasswordCancelled()
+        self.password = password
+        return password
+
+    def handle_connection_loss(self, msg: str) -> None:
+        if isinstance(sys.exc_info()[1], PasswordCancelled):
+            logger.info("Disconnected: no password given.")
+            return
+        original_loss(self, msg)
+
+    CommonContext.server_auth = server_auth
+    CommonContext.handle_connection_loss = handle_connection_loss
 
 
 class HintsPane(Vertical):
@@ -314,7 +437,8 @@ class ClientApp(AppliteApp):
     # alt+digit is unreliable (textual reads ESC 3 as the pound key), ctrl+pageup/pagedown are terminal tab keys (GNOME
     # Terminal, Konsole...): Ctrl+N / Ctrl+B switch tabs on every aplite screen with tabs
     BINDINGS = [("ctrl+n", "switch_tab(1)", "Next tab"), ("ctrl+b", "switch_tab(-1)", "Prev tab"),
-                ("ctrl+t", "focus_address", "Address"), Binding("ctrl+f", "focus_search", "Search")]
+                ("ctrl+t", "focus_address", "Address"), Binding("ctrl+f", "focus_search", "Search"),
+                Binding("escape", "focus_command", show=False)]  # widgets' own Esc (clear a filter...) go first
 
     def __init__(self, ctx: CommonContext) -> None:
         super().__init__()
@@ -324,6 +448,26 @@ class ClientApp(AppliteApp):
         self._hints_snapshot: list | None = None
         self._hint_rows: list[tuple[dict, int, bool]] = []
         """(hint, status, editable) per hints table row; row keys index this."""
+        self._world_errors: set[tuple] = set()
+        """World UI errors already logged (_handle_exception): (type, file, line)."""
+
+    def _handle_exception(self, error: Exception) -> None:
+        """Textual exits on any error in a widget. One in a world's own UI code (a client's aplite_tabs, Universal
+        Tracker's pane) is logged instead, once per place (those tabs refresh on timers), and the client keeps
+        running; that tab may stop updating. Errors elsewhere still exit."""
+        try:
+            from aplite import client_fixes
+            game = client_fixes.game_for_traceback(error.__traceback__)
+        except Exception:
+            game = None
+        if game is None:
+            return super()._handle_exception(error)
+        frame = traceback.extract_tb(error.__traceback__)[-1]
+        key = (type(error), frame.filename, frame.lineno)
+        if key not in self._world_errors:
+            self._world_errors.add(key)
+            logging.getLogger("Client").error(f"Error in {game}'s client UI; the client keeps running, but its tab "
+                                              f"may stop updating:", exc_info=error)
 
     def compose(self) -> ComposeResult:
         with Horizontal(id="connect-bar"):
@@ -355,9 +499,15 @@ class ClientApp(AppliteApp):
         for name, msg in log_buffer.records:
             self.route_log(name, msg)
         log_buffer.sink = self.write_log
+        self.passwords = PasswordAsker(self)
+        self.ctx.aplite_ask_password = lambda ctx, wrong: self.passwords.ask(password_message(ctx, wrong))
         self.set_interval(STATE_REFRESH, self.poll_state)
         self.refresh_state()
         self.query_one(CommandInput).focus()
+
+    def on_unmount(self) -> None:
+        self.passwords.close()  # a dialog still open: its client disconnects instead of waiting forever
+        self.ctx.aplite_ask_password = None
 
     # logging
 

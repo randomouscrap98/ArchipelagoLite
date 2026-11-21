@@ -90,6 +90,7 @@ def _load() -> None:
         logging.getLogger().setLevel(level)
         CommonClient.console_loop = tui.console_loop  # before clients do `from CommonClient import console_loop`
         tui.install_fallback()
+        tui.install_password_prompt()
         client_fixes.install()
         import worlds.LauncherComponents as LauncherComponents
         LauncherComponents.run_in_process = True  # core hook: clients need this terminal's stdin

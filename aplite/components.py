@@ -153,6 +153,11 @@ def overrides() -> dict[typing.Callable | str, Override]:
         table[apquest_client] = Override(supported=False)  # the game itself is a kivy window
     except ImportError:  # the world was removed
         pass
+    try:
+        from worlds.sap import launch_client as sap_client
+        table[sap_client] = Override(returns=True)  # its client exits when the game does: back to the launcher (users)
+    except ImportError:  # optional custom apworld
+        pass
     manager = apworld_manager.launch_func()  # an optional custom apworld: its UIs are kivy/curses
     if manager:
         table[manager] = Override(run=apworld_manager.run)
@@ -195,10 +200,10 @@ def rename_old_components(components: list[Component]) -> None:
 
 def extra_components() -> list[Component]:
     """aplite's own launcher entries."""
-    from aplite import docs_reader, fixes_update, generate_gui, web_options, webhost
+    from aplite import docs_reader, fixes_update, generate_gui, multislot, web_options, webhost
     from aplite.selfhost import app as selfhost_app
     return [web_options.component(), generate_gui.component(), webhost.component(), selfhost_app.component(),
-            docs_reader.component(), fixes_update.component()]
+            docs_reader.component(), fixes_update.component(), multislot.component()]
 
 
 # running

@@ -15,7 +15,7 @@ from zipfile import ZipFile, BadZipFile
 
 from NetUtils import DataPackage
 from Utils import local_path, user_path, Version, version_tuple, tuplize_version, messagebox
-from .Files import APWorldContainer
+from .Files import APWorldContainer, InvalidDataError
 
 local_folder = os.path.dirname(__file__)
 user_folder = user_path("worlds") if user_path() != local_path() else user_path("custom_worlds")
@@ -135,32 +135,69 @@ FOLDER_ONLY_WORLDS = {"A Link to the Past", "Adventure", "Archipelago", "Lufia I
 """setup.py's non_apworlds: still folders in official builds, so a user .apworld never replaces them there."""
 
 
+def _raw_manifest(path: str) -> dict:
+    """aplite: an apworld's archipelago.json as is, without APWorldContainer's checks."""
+    with ZipFile(path) as zf:
+        return json.loads(zf.read(next(n for n in zf.namelist() if n.endswith("archipelago.json"))))
+
+
+def _read_lenient(container: APWorldContainer) -> None:
+    """aplite: APWorldContainer.read, but a manifest it rejects (no compatible_version, as in many pre-0.6.4 releases
+    such as Aquaria's) still gives the game and versions; 0.6.x loads such an apworld anyway, and without them it
+    can't win the version sort or replace a core world. Raises InvalidDataError as read does."""
+    try:
+        container.read()
+    except InvalidDataError:
+        try:
+            manifest = _raw_manifest(container.path)
+            container.game = manifest.get("game") or None
+            for key in ("world_version", "minimum_ap_version", "maximum_ap_version"):
+                if key in manifest:
+                    setattr(container, key, tuplize_version(manifest[key]))
+        except Exception:
+            pass
+        raise
+
+
 def _drop_replaced_folders() -> None:
+    """A tie goes to the user's .apworld (the APWorld Manager's index often lists a core world's own release as
+    1.5.2.postN while the file says 1.5.2); a folder without a manifest is replaced by a same-named user .apworld."""
     newest: dict[str, Version] = {}
+    user_stems: dict[str, str] = {}  # file stem -> game, for core folders without a manifest
     for source in world_sources:
         if source.is_zip and not source.relative:
             container = APWorldContainer(source.resolved_path)
             try:
-                container.read()
+                _read_lenient(container)
+            except InvalidDataError:
+                pass  # reported when the apworlds are loaded; the lenient fields are enough here
             except Exception:
-                continue  # reported when the apworlds are loaded
+                continue
             if not container.game or not container.world_version or \
                     (container.minimum_ap_version and container.minimum_ap_version > version_tuple) or \
                     (container.maximum_ap_version and container.maximum_ap_version < version_tuple):
                 continue
             newest[container.game] = max(newest.get(container.game, Version(0, 0, 0)), container.world_version)
+            user_stems[Path(source.path).stem] = container.game
     for source in [source for source in world_sources if not source.is_zip and source.relative]:
         try:
             with open(os.path.join(source.resolved_path, "archipelago.json"), encoding="utf-8") as manifest_file:
                 manifest = json.load(manifest_file)
-        except (OSError, ValueError):
+        except OSError:  # no manifest: same module name as a user .apworld, so only one of them can load anyway
+            game = user_stems.get(source.path)
+            if game and game not in FOLDER_ONLY_WORLDS:
+                world_sources.remove(source)
+                logging.warning(f"Not loading core world {source.path} (no version): "
+                                f"an installed {game} .apworld has the same name.")
+            continue
+        except ValueError:
             continue
         game = manifest.get("game")
         if game in newest and game not in FOLDER_ONLY_WORLDS and \
-                newest[game] > tuplize_version(manifest.get("world_version", "0.0.0")):
+                newest[game] >= tuplize_version(manifest.get("world_version", "0.0.0")):
             world_sources.remove(source)
             logging.warning(f"Not loading core world {source.path} ({manifest.get('world_version', 'no version')}): "
-                         f"a newer {game} .apworld ({'.'.join(map(str, newest[game]))}) is installed.")
+                         f"the installed {game} .apworld ({'.'.join(map(str, newest[game]))}) is as new or newer.")
 
 
 _drop_replaced_folders()
@@ -213,7 +250,7 @@ if apworlds:
             apworld: APWorldContainer = APWorldContainer(apworld_source.resolved_path)
             # populate metadata
             try:
-                apworld.read()
+                _read_lenient(apworld)  # aplite: was apworld.read()
             except InvalidDataError as e:
                 if version_tuple < (0, 7, 0):
                     logging.error(
@@ -273,8 +310,11 @@ if apworlds:
                         AutoWorldRegister.world_types[apworld.game].world_version = apworld.world_version
 
                     assert apworld.path
-                    with ZipFile(apworld.path, "r") as zf:
-                        manifest = apworld.read_contents(zf)
+                    try:
+                        with ZipFile(apworld.path, "r") as zf:
+                            manifest = apworld.read_contents(zf)
+                    except Exception:  # aplite: a manifest _read_lenient accepted
+                        manifest = _raw_manifest(apworld.path)
                     # version/compatible_version shouldn't be needed by world, makes it consistent with folder world
                     manifest.pop("version", None)
                     manifest.pop("compatible_version", None)

@@ -1,0 +1,8 @@
+# Archipelago Lite multi-slot client session
+address: localhost:38281
+password: null
+slots:
+- HalooCritter
+- dzy
+- KojaChronicles
+seed_name: '89020311689418938172'
