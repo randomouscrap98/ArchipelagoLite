@@ -244,6 +244,118 @@ class HintStatusModal(ModalScreen[int | None]):
         self.dismiss(self.statuses[event.option_index])
 
 
+class PasswordCancelled(Exception):
+    """Raised out of server_auth when the password dialog is answered with Disconnect: the server loop ends without
+    reconnecting (install_password_prompt)."""
+
+
+class PasswordModal(ModalScreen[str | None]):
+    """The room's password, asked when the server says it needs one (instead of upstream's console prompt): Connect
+    sends it, Disconnect (or Esc) drops the connection. Small, and the screen behind stays readable."""
+    CSS = """
+    PasswordModal { align: center middle; background: transparent; }
+    PasswordModal > Vertical { width: 52; max-width: 90%; height: auto; padding: 0 1; border: thick $primary;
+                               background: $surface; }
+    PasswordModal Static { padding: 0 0 1 0; }
+    PasswordModal DialogButtons { margin-top: 0; }
+    """
+    BINDINGS = [Binding("escape", "disconnect", "Disconnect")]
+
+    def __init__(self, message: str) -> None:
+        super().__init__()
+        self.message = message
+
+    def compose(self) -> ComposeResult:
+        from aplite.nav import DialogButtons
+        with Vertical():
+            yield Static(self.message)
+            yield Input(password=True, placeholder="Password", id="password-input")
+            with DialogButtons():
+                yield Button("Disconnect", id="password-disconnect")
+                yield Button("Connect", id="password-connect", variant="primary")
+
+    def on_mount(self) -> None:
+        self.query_one("#password-input").focus()
+
+    @on(Input.Submitted, "#password-input")
+    @on(Button.Pressed, "#password-connect")
+    def submit(self, event: Input.Submitted | Button.Pressed) -> None:
+        event.stop()
+        password = self.query_one("#password-input", Input).value
+        if password:
+            self.dismiss(password)
+        else:
+            self.query_one("#password-input").focus()
+
+    @on(Button.Pressed, "#password-disconnect")
+    def action_disconnect(self) -> None:
+        self.dismiss(None)
+
+
+class PasswordAsker:
+    """One password dialog at a time for an app; callers that ask while it's open get the same answer (the multi-slot
+    client's slots all ask at once). `close` answers a dialog left open when the app exits with None."""
+
+    def __init__(self, app: AppliteApp) -> None:
+        self.app = app
+        self.pending: asyncio.Future[str | None] | None = None
+
+    async def ask(self, message: str) -> str | None:
+        if self.pending is None or self.pending.done():
+            future: asyncio.Future[str | None] = asyncio.get_running_loop().create_future()
+            self.pending = future
+
+            def answered(password: str | None) -> None:
+                if not future.done():
+                    future.set_result(password)
+            # pushed from the app's own task (the caller is a client's server loop)
+            self.app.call_later(self.app.push_screen, PasswordModal(message), answered)
+        return await asyncio.shield(self.pending)
+
+    def close(self) -> None:
+        if self.pending and not self.pending.done():
+            self.pending.set_result(None)
+
+
+def password_message(ctx: CommonContext, wrong: bool) -> str:
+    where = (ctx.server_address or "").replace("ws://", "").replace("wss://", "")
+    return (f"[b]Wrong password[/b] for {where}. Try again:" if wrong
+            else f"[b]{where or 'This room'}[/b] needs a password:")
+
+
+def install_password_prompt() -> None:
+    """Every client asks for a room password through upstream's CommonContext.server_auth (directly or by super()):
+    while a client TUI runs, ask with PasswordModal instead of a console prompt. The TUI sets
+    ctx.aplite_ask_password(ctx, wrong) -> password or None. None: disconnect, no auto-reconnect."""
+    from CommonClient import CommonContext, logger
+    original_auth = CommonContext.server_auth
+    original_loss = CommonContext.handle_connection_loss
+
+    async def server_auth(self, password_requested: bool = False):
+        ask = getattr(self, "aplite_ask_password", None)
+        if not (password_requested and not self.password and ask):
+            return await original_auth(self, password_requested)
+        # asked again on the same connection: upstream re-asks after InvalidPassword
+        wrong = self.server is not None and getattr(self, "_aplite_password_server", None) is self.server
+        self._aplite_password_server = self.server
+        password = await ask(self, wrong)
+        if not password:
+            self.disconnected_intentionally = True
+            self.cancel_autoreconnect()
+            raise PasswordCancelled()
+        self.password = password
+        return password
+
+    def handle_connection_loss(self, msg: str) -> None:
+        if isinstance(sys.exc_info()[1], PasswordCancelled):
+            logger.info("Disconnected: no password given.")
+            return
+        original_loss(self, msg)
+
+    CommonContext.server_auth = server_auth
+    CommonContext.handle_connection_loss = handle_connection_loss
+
+
 class HintsPane(Vertical):
     """Hints tab: kvui's "New Hint" box (item names matching anywhere once 3+ characters are typed; Enter sends
     !hint) above the hints table, which ClientApp fills."""
@@ -382,9 +494,15 @@ class ClientApp(AppliteApp):
         for name, msg in log_buffer.records:
             self.route_log(name, msg)
         log_buffer.sink = self.write_log
+        self.passwords = PasswordAsker(self)
+        self.ctx.aplite_ask_password = lambda ctx, wrong: self.passwords.ask(password_message(ctx, wrong))
         self.set_interval(STATE_REFRESH, self.poll_state)
         self.refresh_state()
         self.query_one(CommandInput).focus()
+
+    def on_unmount(self) -> None:
+        self.passwords.close()  # a dialog still open: its client disconnects instead of waiting forever
+        self.ctx.aplite_ask_password = None
 
     # logging
 

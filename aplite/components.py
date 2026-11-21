@@ -200,10 +200,10 @@ def rename_old_components(components: list[Component]) -> None:
 
 def extra_components() -> list[Component]:
     """aplite's own launcher entries."""
-    from aplite import docs_reader, fixes_update, generate_gui, web_options, webhost
+    from aplite import docs_reader, fixes_update, generate_gui, multislot, web_options, webhost
     from aplite.selfhost import app as selfhost_app
     return [web_options.component(), generate_gui.component(), webhost.component(), selfhost_app.component(),
-            docs_reader.component(), fixes_update.component()]
+            docs_reader.component(), fixes_update.component(), multislot.component()]
 
 
 # running

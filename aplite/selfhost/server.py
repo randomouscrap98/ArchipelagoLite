@@ -273,6 +273,8 @@ def serve() -> None:
     try:
         app = create_app(config, serving=True)
         restrict(app)
+        if cleared := selfhost.clear_stray_ports(config):  # no room runs yet
+            logging.info(f"{cleared} game(s) had a port outside the game ports: they get one in range")
         from WebHostLib import autolauncher
         autolauncher.run_server_process = functools.partial(room_process, config["game_bind"])
         only_active(autolauncher)
